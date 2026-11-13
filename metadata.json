@@ -1,0 +1,6 @@
+{
+  "name": "Mandarin HSK Studio",
+  "description": "Interactive offline-ready Mandarin Chinese & HSK learning Progressive Web App featuring 3-stage Hanzi stroke calligraphy, native zh-CN speech synthesis, tone sandhi drills, and adaptive spaced repetition.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

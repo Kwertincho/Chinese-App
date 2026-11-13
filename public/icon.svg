@@ -1,0 +1,24 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <defs>
+    <linearGradient id="bgGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#0f172a" />
+      <stop offset="50%" stop-color="#1e293b" />
+      <stop offset="100%" stop-color="#0f172a" />
+    </linearGradient>
+    <linearGradient id="sealGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#ef4444" />
+      <stop offset="100%" stop-color="#b91c1c" />
+    </linearGradient>
+    <linearGradient id="goldGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#fde68a" />
+      <stop offset="100%" stop-color="#f59e0b" />
+    </linearGradient>
+  </defs>
+  <rect width="512" height="512" rx="112" fill="url(#bgGrad)" />
+  <rect x="44" y="44" width="424" height="424" rx="88" fill="none" stroke="url(#goldGrad)" stroke-width="6" stroke-opacity="0.45" />
+  <line x1="256" y1="64" x2="256" y2="448" stroke="#f59e0b" stroke-width="3" stroke-dasharray="12 10" stroke-opacity="0.28" />
+  <line x1="64" y1="256" x2="448" y2="256" stroke="#f59e0b" stroke-width="3" stroke-dasharray="12 10" stroke-opacity="0.28" />
+  <rect x="96" y="96" width="320" height="320" rx="68" fill="url(#sealGrad)" stroke="url(#goldGrad)" stroke-width="8" />
+  <text x="256" y="328" font-family="'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif" font-size="210" font-weight="900" fill="#ffffff" text-anchor="middle">汉</text>
+  <circle cx="384" cy="128" r="22" fill="url(#goldGrad)" />
+</svg>

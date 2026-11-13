@@ -1,0 +1,154 @@
+@import "tailwindcss";
+
+@layer base {
+  :root {
+    --font-sans: 'Silkscreen', 'Noto Sans SC', monospace, sans-serif;
+    --font-pixel-header: 'Press Start 2P', 'Silkscreen', monospace;
+    --font-hanzi: 'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
+  }
+
+  html,
+  body {
+    font-family: var(--font-sans);
+    background-color: #020617;
+    color: #f1f5f9;
+    overscroll-behavior-y: none;
+    -webkit-tap-highlight-color: transparent;
+    letter-spacing: -0.01em;
+    background-image:
+      linear-gradient(rgba(15, 23, 42, 0.45) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(15, 23, 42, 0.45) 1px, transparent 1px);
+    background-size: 16px 16px;
+  }
+}
+
+/* Strictly preserve razor-sharp Noto Sans SC on all Chinese characters, sentences, character grids & HanziWriter */
+.font-hanzi {
+  font-family: var(--font-hanzi) !important;
+  letter-spacing: normal !important;
+}
+
+/* 16-bit Pixel RPG Typography Helpers */
+.font-pixel-header {
+  font-family: var(--font-pixel-header);
+  letter-spacing: 0.02em;
+  line-height: 1.45;
+}
+
+.font-pixel-ui {
+  font-family: var(--font-sans);
+}
+
+/* 16-Bit Pixel RPG Dialogue Boxes, Beveled Cards & Borders */
+.pixel-rpg-box {
+  border-radius: 2px !important;
+  border-width: 2px !important;
+  border-style: solid;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.08), 0 4px 0 #020617;
+}
+
+/* Global 16-bit RPG sharp-cornered dialogue box overrides for cards & containers */
+#root .rounded-3xl,
+#root .rounded-2xl,
+#root .rounded-xl,
+#root .rounded-lg {
+  border-radius: 2px !important;
+  border-width: 2px;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.07), 0 4px 0 #020617;
+}
+
+#root .rounded-full:not(.pixel-keep-round) {
+  border-radius: 2px !important;
+}
+
+/* Chunky 16-bit Arcade Tactile Buttons with 4px solid bottom pixel ledge */
+.game-btn-3d {
+  border-radius: 2px !important;
+  border-width: 2px;
+  border-style: solid;
+  border-bottom-width: 4px !important;
+  box-shadow: inset 0 2px 0 rgba(255, 255, 255, 0.14), 0 4px 0 #020617;
+  transition: transform 0.08s steps(2, end), filter 0.12s ease, box-shadow 0.08s steps(2, end);
+}
+
+.game-btn-3d:active:not(:disabled) {
+  transform: translateY(3px) !important;
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 0 #020617 !important;
+}
+
+/* Safe area padding for Android & iOS standalone PWA navigation bars */
+.pb-safe {
+  padding-bottom: max(0.5rem, env(safe-area-inset-bottom, 0.5rem));
+}
+
+.pt-safe {
+  padding-top: max(0.625rem, env(safe-area-inset-top, 0.625rem));
+}
+
+/* Gamified 16-bit RPG micro-animations */
+@keyframes gameShake {
+  0%, 100% { transform: translateX(0); }
+  20% { transform: translateX(-6px); }
+  40% { transform: translateX(6px); }
+  60% { transform: translateX(-4px); }
+  80% { transform: translateX(4px); }
+}
+
+@keyframes gameGreenPulse {
+  0% { transform: scale(1); }
+  50% { transform: scale(1.02); box-shadow: 0 0 0 2px #10b981, 0 4px 0 #020617; }
+  100% { transform: scale(1); }
+}
+
+@keyframes xpFloatUp {
+  0% { opacity: 0; transform: translateY(8px) scale(0.95); }
+  25% { opacity: 1; transform: translateY(0px) scale(1.04); }
+  80% { opacity: 1; transform: translateY(-14px) scale(1); }
+  100% { opacity: 0; transform: translateY(-22px) scale(0.95); }
+}
+
+@keyframes floatBob {
+  0%, 100% { transform: translateY(0px); }
+  50% { transform: translateY(-4px); }
+}
+
+@keyframes nodeRingPulse {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50% { transform: scale(1.08); opacity: 0.28; }
+}
+
+.animate-game-shake {
+  animation: gameShake 0.36s steps(4, end);
+}
+
+.animate-game-green-pulse {
+  animation: gameGreenPulse 0.45s steps(4, end);
+}
+
+.animate-xp-float {
+  animation: xpFloatUp 1.15s steps(8, end) forwards;
+}
+
+.animate-float-bob {
+  animation: floatBob 1.6s steps(4, end) infinite;
+}
+
+.animate-node-ring {
+  animation: nodeRingPulse 1.8s steps(4, end) infinite;
+}
+
+/* Custom subtle pixel scrollbars for mobile drawers and lists */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #020617;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #334155;
+  border-radius: 0px;
+  border: 1px solid #0f172a;
+}
