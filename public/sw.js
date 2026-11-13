@@ -1,16 +1,16 @@
-const CACHE_NAME = 'mandarin-hsk-studio-v2';
+const CACHE_NAME = 'mandarin-hsk-studio-v3';
 
 const CORE_ASSETS = [
-  './',
-  './index.html',
-  './manifest.json',
-  './icon.svg',
-  './pwa-192x192.png',
-  './pwa-512x512.png',
-  './pwa-maskable-512x512.png',
-  './apple-touch-icon.png',
+  '/',
+  '/index.html',
+  '/manifest.json',
+  '/icon.svg',
+  '/pwa-192x192.png',
+  '/pwa-512x512.png',
+  '/pwa-maskable-512x512.png',
+  '/apple-touch-icon.png',
   'https://cdn.jsdelivr.net/npm/hanzi-writer@3.5/dist/hanzi-writer.min.js',
-  'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&family=Noto+Sans+SC:wght@400;500;700;900&display=swap'
+  'https://fonts.googleapis.com/css2?family=Noto+Sans+SC:wght@400;500;700;900&family=Press+Start+2P&family=Silkscreen:wght@400;700&display=swap'
 ];
 
 // Pre-warm stroke data for Core Unit 1 & Stroke Dojo characters so offline calligraphy works immediately
@@ -110,7 +110,7 @@ self.addEventListener('fetch', (event) => {
         })
         .catch(() => {
           if (request.mode === 'navigate') {
-            return caches.match('./index.html') || caches.match('/');
+            return caches.match('/index.html') || caches.match('/');
           }
           return cachedResponse;
         });
