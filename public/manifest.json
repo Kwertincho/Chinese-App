@@ -5,10 +5,11 @@
   "description": "Interactive offline-ready Mandarin Chinese & HSK learning Progressive Web App featuring 3-stage Hanzi stroke calligraphy, native zh-CN speech synthesis, tone sandhi drills, and adaptive spaced repetition.",
   "start_url": "/",
   "scope": "/",
-  "display": "standalone",
+  "display": "fullscreen",
+  "display_override": ["fullscreen", "standalone"],
   "orientation": "portrait",
   "background_color": "#0f172a",
-  "theme_color": "#dc2626",
+  "theme_color": "#0f172a",
   "categories": ["education", "books", "productivity"],
   "icons": [
     {

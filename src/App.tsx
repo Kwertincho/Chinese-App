@@ -796,8 +796,8 @@ export default function App() {
   const isDailyGoalMet = todayXpEarned >= dailyGoalXp;
 
   return (
-    <div className="min-h-screen bg-slate-950 text-slate-100 flex justify-center font-sans select-none">
-      <div className="w-full max-w-md min-h-screen bg-slate-900 border-x border-slate-800/80 flex flex-col justify-between pb-24 relative">
+    <div className="min-h-dvh bg-slate-900 text-slate-100 flex justify-center font-sans select-none">
+      <div className="w-full max-w-md min-h-dvh bg-slate-900 border-x border-slate-800/80 flex flex-col justify-between pb-24 relative">
         <OfflineIndicator />
 
         {/* STICKY GAMIFIED 16-BIT PIXEL RPG TOP BAR */}
