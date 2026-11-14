@@ -85,12 +85,42 @@ export function FlashcardStageModal({
     speakMandarin(currentWord.hanzi);
   }, [cardIndex, currentWord.hanzi, speakMandarin]);
 
-  const handleFlipCard = () => {
-    const nextFlipped = !isFlipped;
-    setIsFlipped(nextFlipped);
+  const handleNextCard = () => {
+    let updatedBonusXp = bonusXp;
+    if (!flippedCardsSet.has(cardIndex)) {
+      const nextSet = new Set(flippedCardsSet);
+      nextSet.add(cardIndex);
+      setFlippedCardsSet(nextSet);
+      soundFX.playCorrect(combo);
+      updatedBonusXp = bonusXp + 2;
+      setBonusXp(updatedBonusXp);
+      setXpPopupKey((prev) => prev + 1);
+    } else {
+      soundFX.playPop();
+    }
+
+    if (cardIndex < words.length - 1) {
+      setCardIndex((prev) => prev + 1);
+      setIsFlipped(false);
+      setShowPinyinHint(false);
+    } else {
+      flushSessionTime();
+      onComplete(updatedBonusXp, maxCombo);
+    }
+  };
+
+  const handleCardTap = () => {
+    // 2nd tap (Back -> Next Card): immediately advance to next card or finish stage
+    if (isFlipped) {
+      handleNextCard();
+      return;
+    }
+
+    // 1st tap (Front -> Back): flip card, award +2 XP once per card, and play example sentence
+    setIsFlipped(true);
     soundFX.playPop();
 
-    if (nextFlipped && !flippedCardsSet.has(cardIndex)) {
+    if (!flippedCardsSet.has(cardIndex)) {
       const nextSet = new Set(flippedCardsSet);
       nextSet.add(cardIndex);
       setFlippedCardsSet(nextSet);
@@ -106,30 +136,14 @@ export function FlashcardStageModal({
       setXpPopupKey((prev) => prev + 1);
     }
 
-    if (nextFlipped) {
-      speakMandarin(currentWord.exampleHanzi || currentWord.hanzi);
-    } else {
-      speakMandarin(currentWord.hanzi);
-    }
+    speakMandarin(currentWord.exampleHanzi || currentWord.hanzi);
   };
 
-  const handleNextCard = () => {
-    if (!flippedCardsSet.has(cardIndex)) {
-      soundFX.playCorrect(combo);
-      setBonusXp((prev) => prev + 2);
-      setXpPopupKey((prev) => prev + 1);
-    } else {
-      soundFX.playPop();
-    }
-
-    if (cardIndex < words.length - 1) {
-      setCardIndex((prev) => prev + 1);
-      setIsFlipped(false);
-      setShowPinyinHint(false);
-    } else {
-      flushSessionTime();
-      onComplete(bonusXp, maxCombo);
-    }
+  const handleFlipBackToFront = (e) => {
+    if (e) e.stopPropagation();
+    soundFX.playPop();
+    setIsFlipped(false);
+    speakMandarin(currentWord.hanzi);
   };
 
   const handlePrevCard = () => {
@@ -159,10 +173,10 @@ export function FlashcardStageModal({
           }}
         />
 
-        {/* Smooth 3D Perspective Card Flip Container */}
+        {/* Smooth 3D Perspective Card Flip Container (1st Tap Flips, 2nd Tap Advances) */}
         <div className="flex-1 flex flex-col justify-center my-2" style={{ perspective: '1200px' }}>
           <div
-            onClick={handleFlipCard}
+            onClick={handleCardTap}
             style={{
               transformStyle: 'preserve-3d',
               transform: isFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)'
@@ -244,9 +258,20 @@ export function FlashcardStageModal({
               className="absolute inset-0 rounded-3xl bg-gradient-to-b from-slate-800 via-slate-900 to-slate-950 border-2 border-emerald-500/50 p-6 shadow-2xl flex flex-col justify-between"
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
-                  Back • Meaning & Context
-                </span>
+                <div className="flex items-center gap-1.5">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
+                    Back • Meaning
+                  </span>
+                  <button
+                    type="button"
+                    onClick={handleFlipBackToFront}
+                    className="game-btn-3d px-2 py-1 rounded-[2px] bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 hover:text-white text-[10px] font-bold inline-flex items-center gap-1"
+                    title="Flip back to Front face"
+                  >
+                    <RefreshCw className="w-3 h-3 text-emerald-400" />
+                    <span>Flip Front</span>
+                  </button>
+                </div>
                 <MandarinAudioControls
                   text={currentWord.hanzi}
                   isSlowMode={isSlowMode}
@@ -298,9 +323,13 @@ export function FlashcardStageModal({
               </div>
 
               <div className="text-center pt-3 border-t border-slate-800/80">
-                <span className="text-xs font-bold text-slate-400 inline-flex items-center gap-1.5">
-                  <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
-                  <span>Tap card to flip back to Front</span>
+                <span className="text-xs font-bold text-emerald-300 inline-flex items-center gap-1.5">
+                  <span>
+                    {cardIndex === words.length - 1
+                      ? `Tap card again to Finish Stage (+${15 + bonusXp} XP)`
+                      : 'Tap card again for Next Flashcard'}
+                  </span>
+                  <ChevronRight className="w-4 h-4 text-emerald-400" />
                 </span>
               </div>
             </div>
@@ -737,7 +766,8 @@ export function WritingStageModal({
       radicalColor: '#dc2626',
       outlineColor: '#334155',
       drawingColor: '#f43f5e',
-      drawingWidth: 22,
+      drawingWidth: 24,
+      leniency: 1.55,
       highlightColor: '#38bdf8',
       showHintAfterMisses: currentStageConfig.showHintAfterMisses,
       highlightOnComplete: true,

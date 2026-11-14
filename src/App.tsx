@@ -15,6 +15,7 @@ import {
   PixelFlameSprite,
   PixelCoinSprite,
   PixelCrownSprite,
+  PixelGemSprite,
   PixelBlockGauge
 } from './components/SharedHudAndAudio.jsx';
 import {
@@ -42,6 +43,7 @@ import {
   computeUnlockedWordsPool,
   generateDeterministicDailyQuests,
   buildDynamicModalityQueue,
+  buildProportionalUnitNodes,
   getWordMasteryLevel
 } from './utils/mandarinHelpers.js';
 import {
@@ -289,13 +291,15 @@ export default function App() {
       return {
         date: todayCalendarDate,
         completedIds: Array.isArray(saved.completedIds) ? saved.completedIds : [],
-        claimedIds: Array.isArray(saved.claimedIds) ? saved.claimedIds : []
+        claimedIds: Array.isArray(saved.claimedIds) ? saved.claimedIds : [],
+        bonusChestClaimed: Boolean(saved.bonusChestClaimed)
       };
     }
     return {
       date: todayCalendarDate,
       completedIds: [],
-      claimedIds: []
+      claimedIds: [],
+      bonusChestClaimed: false
     };
   }, [progress.dailyQuests, todayCalendarDate]);
 
@@ -311,7 +315,8 @@ export default function App() {
             : {
                 date: todayCalendarDate,
                 completedIds: [],
-                claimedIds: []
+                claimedIds: [],
+                bonusChestClaimed: false
               },
         dailyStudySeconds:
           prev.dailyStudySeconds?.date === todayCalendarDate
@@ -355,12 +360,14 @@ export default function App() {
         const dq =
           prev.dailyQuests?.date === today
             ? prev.dailyQuests
-            : { date: today, completedIds: [], claimedIds: [] };
+            : { date: today, completedIds: [], claimedIds: [], bonusChestClaimed: false };
 
         if ((dq.claimedIds || []).includes(quest.id)) return prev;
 
         const nextClaimed = [...(dq.claimedIds || []), quest.id];
-        const xpGain = Number(quest.xpReward) || 25;
+        const allThreeDone = (dq.completedIds || []).length >= 3;
+        const autoAwardChest = allThreeDone && !dq.bonusChestClaimed && nextClaimed.length >= 3;
+        const xpGain = (Number(quest.xpReward) || 25) + (autoAwardChest ? 25 : 0);
         const nextTotalXp = (prev.xp || 0) + xpGain;
         const prevTodayXp =
           prev.dailyXpDate === today
@@ -377,7 +384,8 @@ export default function App() {
           dailyQuests: {
             date: today,
             completedIds: dq.completedIds || [],
-            claimedIds: nextClaimed
+            claimedIds: nextClaimed,
+            bonusChestClaimed: Boolean(dq.bonusChestClaimed || autoAwardChest)
           }
         };
       });
@@ -389,6 +397,41 @@ export default function App() {
     },
     [triggerToast]
   );
+
+  const handleClaimDailyChest = useCallback(() => {
+    soundFX.playVictory();
+    const today = new Date().toISOString().slice(0, 10);
+    setProgress((prev: any) => {
+      const dq =
+        prev.dailyQuests?.date === today
+          ? prev.dailyQuests
+          : { date: today, completedIds: [], claimedIds: [], bonusChestClaimed: false };
+      if ((dq.completedIds || []).length < 3 || dq.bonusChestClaimed) return prev;
+      const xpGain = 25;
+      const nextTotalXp = (prev.xp || 0) + xpGain;
+      const prevTodayXp =
+        prev.dailyXpDate === today
+          ? Number(prev.dailyXpEarned ?? prev.dailyXp ?? 0)
+          : 0;
+      return {
+        ...prev,
+        xp: nextTotalXp,
+        playerLevel: computePlayerLevelProgress(nextTotalXp).level,
+        dailyXpDate: today,
+        dailyXp: prevTodayXp + xpGain,
+        dailyXpEarned: prevTodayXp + xpGain,
+        dailyQuests: {
+          ...dq,
+          date: today,
+          bonusChestClaimed: true
+        }
+      };
+    });
+    triggerToast(
+      'Daily Completion Chest Opened! +25 XP',
+      'All 3 Daily Quests completed today!'
+    );
+  }, [triggerToast]);
 
   const handleJumpToQuest = useCallback(
     (quest: any) => {
@@ -585,6 +628,7 @@ export default function App() {
           completedStages: isDefaultUnit1 ? prev.completedStages : []
         };
 
+        const totalLessonNodes = buildProportionalUnitNodes(activeWords).length;
         let nextUnlocked = prevLessonProg.unlockedStage;
         const nextCompleted = [...(prevLessonProg.completedStages || [])];
 
@@ -592,7 +636,7 @@ export default function App() {
           if (!nextCompleted.includes(stageId)) {
             nextCompleted.push(stageId);
           }
-          if (stageId >= nextUnlocked && stageId < 4) {
+          if (stageId >= nextUnlocked && stageId < totalLessonNodes) {
             nextUnlocked = stageId + 1;
           }
         }
@@ -603,12 +647,11 @@ export default function App() {
           prev.dailyXpDate === today
             ? Number(prev.dailyXpEarned ?? prev.dailyXp ?? 0)
             : 0;
-        const nextTotalXp = (prev.xp || 0) + xpEarned;
 
         const prevDq =
           prev.dailyQuests?.date === today
             ? prev.dailyQuests
-            : { date: today, completedIds: [], claimedIds: [] };
+            : { date: today, completedIds: [], claimedIds: [], bonusChestClaimed: false };
         const nextCompletedQuestIds = [...(prevDq.completedIds || [])];
 
         dailyQuests.forEach((q: any) => {
@@ -620,19 +663,26 @@ export default function App() {
           }
         });
 
+        const justReachedAllThreeQuests =
+          nextCompletedQuestIds.length >= 3 && !prevDq.bonusChestClaimed;
+        const chestBonusXp = justReachedAllThreeQuests ? 25 : 0;
+        const totalGainWithChest = xpEarned + chestBonusXp;
+        const nextTotalXp = (prev.xp || 0) + totalGainWithChest;
+
         return {
           ...prev,
           xp: nextTotalXp,
           playerLevel: computePlayerLevelProgress(nextTotalXp).level,
           dailyXpDate: today,
-          dailyXp: prevTodayXp + xpEarned,
-          dailyXpEarned: prevTodayXp + xpEarned,
+          dailyXp: prevTodayXp + totalGainWithChest,
+          dailyXpEarned: prevTodayXp + totalGainWithChest,
           streak: nextStreak,
           lastStudyDate: today,
           dailyQuests: {
             date: today,
             completedIds: nextCompletedQuestIds,
-            claimedIds: prevDq.claimedIds || []
+            claimedIds: prevDq.claimedIds || [],
+            bonusChestClaimed: Boolean(prevDq.bonusChestClaimed || justReachedAllThreeQuests)
           },
           unlockedStage: isDefaultUnit1 ? nextUnlocked : prev.unlockedStage,
           completedStages: isDefaultUnit1 ? nextCompleted : prev.completedStages,
@@ -688,42 +738,45 @@ export default function App() {
 
   const handleSelectStageNode = (stage: any) => {
     soundFX.playPop();
+    const targetWords =
+      Array.isArray(stage.words) && stage.words.length > 0 ? stage.words : activeWords;
+
     if (stage.launchType === 'flashcards') {
       setActiveModal({
         type: 'flashcards',
         stageId: stage.id,
-        words: activeWords
+        words: targetWords
       });
     } else if (stage.launchType === 'writing') {
       setActiveModal({
         type: 'writing',
         stageId: stage.id,
-        words: activeWords
+        words: targetWords
       });
     } else if (stage.launchType === 'dictation_only') {
       setActiveModal({
         type: 'audio_speech',
         stageId: stage.id,
-        words: activeWords,
+        words: targetWords,
         focusMode: 'dictation'
       });
     } else if (stage.launchType === 'speaking_only') {
       setActiveModal({
         type: 'audio_speech',
         stageId: stage.id,
-        words: activeWords,
+        words: targetWords,
         focusMode: 'speaking'
       });
     } else if (stage.launchType === 'boss') {
       setActiveModal({
         type: 'boss',
         stageId: stage.id,
-        words: activeWords,
+        words: targetWords,
         isPractice: false
       });
     } else {
       const queue = buildDynamicModalityQueue(
-        activeWords,
+        targetWords,
         stage.allowedModalities,
         stage.badgeText,
         activeLessonIndex
@@ -803,8 +856,10 @@ export default function App() {
   const todayIso = new Date().toISOString().slice(0, 10);
   const dailyGoalXp = Number(progress.dailyGoalXp) > 0 ? Number(progress.dailyGoalXp) : 30;
   const todayXpEarned = progress.dailyXpDate === todayIso ? Number(progress.dailyXpEarned || 0) : 0;
-  const dailyGoalPercent = Math.min(100, Math.round((todayXpEarned / dailyGoalXp) * 100));
-  const isDailyGoalMet = todayXpEarned >= dailyGoalXp;
+  const completedDailyQuestsCount = dailyQuests.filter((q: any) =>
+    dailyQuestState.completedIds?.includes(q.id)
+  ).length;
+  const isAllDailyQuestsDone = completedDailyQuestsCount >= 3;
 
   if (showTitleScreen) {
     return (
@@ -1085,32 +1140,35 @@ export default function App() {
             </div>
           </div>
 
-          {/* Daily XP Goal 12-Block Pixel Gauge Bar */}
+          {/* Unified Daily Quests Progress Bar (0/3 -> 3/3 Gold + +25 XP Chest) */}
           <div
-            onClick={() => setActiveTab('profile')}
+            onClick={() => {
+              soundFX.playPop();
+              setActiveTab('map');
+            }}
             className={`cursor-pointer rounded-[2px] px-2.5 py-1.5 border-2 flex items-center justify-between gap-2.5 transition-all ${
-              isDailyGoalMet
-                ? 'bg-emerald-950/60 border-emerald-400'
+              isAllDailyQuestsDone
+                ? 'bg-amber-950/75 border-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.2)]'
                 : 'bg-slate-950 border-slate-700'
             }`}
           >
             <div className="flex items-center gap-1.5 shrink-0">
-              <PixelCoinSprite className="w-3.5 h-3.5" />
+              <PixelGemSprite className="w-3.5 h-3.5" />
               <span
                 className={`text-[10px] font-black uppercase tracking-wider ${
-                  isDailyGoalMet ? 'text-emerald-300' : 'text-amber-300'
+                  isAllDailyQuestsDone ? 'text-amber-300' : 'text-slate-200'
                 }`}
               >
-                {isDailyGoalMet ? 'Daily Goal Met ★' : 'Daily XP Goal'}
+                {isAllDailyQuestsDone ? 'Daily Quests: 3/3 ★ Chest +25 XP' : `Daily Quests: ${completedDailyQuestsCount}/3`}
               </span>
             </div>
 
-            <div className="flex-1 max-w-[160px]">
+            <div className="flex-1 max-w-[140px]">
               <PixelBlockGauge
-                value={todayXpEarned}
-                max={dailyGoalXp}
-                blocks={12}
-                filledClass={isDailyGoalMet ? 'bg-emerald-400' : 'bg-rose-500'}
+                value={completedDailyQuestsCount}
+                max={3}
+                blocks={3}
+                filledClass={isAllDailyQuestsDone ? 'bg-amber-400' : 'bg-emerald-400'}
                 emptyClass="bg-slate-900"
                 heightClass="h-2"
               />
@@ -1118,10 +1176,10 @@ export default function App() {
 
             <span
               className={`font-pixel-header text-[9px] shrink-0 ${
-                isDailyGoalMet ? 'text-emerald-300' : 'text-amber-300'
+                isAllDailyQuestsDone ? 'text-amber-300' : 'text-emerald-300'
               }`}
             >
-              {todayXpEarned}/{dailyGoalXp} XP
+              {completedDailyQuestsCount}/3
             </span>
           </div>
         </header>
@@ -1147,15 +1205,12 @@ export default function App() {
               courses={courses}
               activeCourse={activeCourse}
               activeLesson={activeLesson}
-              activeLessonIndex={activeLessonIndex}
-              activePattern={activePattern}
-              patternPreviewOverride={patternPreviewOverride}
-              onChangePatternOverride={setPatternPreviewOverride}
               activeWords={activeWords}
               dailyQuests={dailyQuests}
               dailyQuestState={dailyQuestState}
               onJumpToQuest={handleJumpToQuest}
               onClaimQuestReward={handleClaimQuestReward}
+              onClaimDailyChest={handleClaimDailyChest}
               onSelectCourseAndLesson={(courseId: string, lessonId: string | null) => {
                 setActiveCourseId(courseId);
                 const foundCourse = courses.find((c: any) => c.id === courseId);
@@ -1344,6 +1399,24 @@ export default function App() {
                 if (switchToMap) {
                   setActiveTab('map');
                 }
+              }}
+              onDeleteCourse={(courseIdToDelete: string, courseNameLabel = 'Course') => {
+                setCourses((prev: any[]) => {
+                  const remaining = prev.filter((c: any) => c.id !== courseIdToDelete);
+                  const nextCourses = remaining.length > 0 ? remaining : DEFAULT_COURSES;
+                  if (activeCourseId === courseIdToDelete) {
+                    const fallbackCourse = nextCourses[0];
+                    setActiveCourseId(fallbackCourse.id);
+                    if (fallbackCourse.lessons?.[0]?.id) {
+                      setActiveLessonId(fallbackCourse.lessons[0].id);
+                    }
+                  }
+                  return nextCourses;
+                });
+                triggerToast(
+                  'Course Deleted',
+                  `Removed "${courseNameLabel}" from your Library.`
+                );
               }}
               onSelectCourseOnMap={(courseId: string, lessonId: string) => {
                 setActiveCourseId(courseId);

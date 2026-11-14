@@ -538,7 +538,35 @@ export const KNOWN_CHARACTER_INFO = {
   田: { pinyin: 'tián', meaning: 'field / farmland', radical: '田 (Field, 5 strokes)' },
   小: { pinyin: 'xiǎo', meaning: 'small / little', radical: '小 (Small, 3 strokes)' },
   办: { pinyin: 'bàn', meaning: 'to handle / manage', radical: '力 (Strength, 2 strokes)' },
-  永: { pinyin: 'yǒng', meaning: 'forever /永恒 (Eight Principles of Yong)', radical: '水 (Water, 4 strokes)' }
+  永: { pinyin: 'yǒng', meaning: 'forever / eternity (Eight Principles of Yong)', radical: '水 (Water, 4 strokes)' },
+  主: { pinyin: 'zhǔ', meaning: 'main / host / master', radical: '丶 (Dot, 1 stroke)' },
+  门: { pinyin: 'mén', meaning: 'door / gate', radical: '门 (Gate, 3 strokes)' },
+  广: { pinyin: 'guǎng', meaning: 'wide / vast / broad', radical: '广 (Cliff/Shelter, 3 strokes)' },
+  方: { pinyin: 'fāng', meaning: 'square / direction / place', radical: '方 (Square, 4 strokes)' },
+  我: { pinyin: 'wǒ', meaning: 'I / me', radical: '戈 (Halberd, 4 strokes)' },
+  书: { pinyin: 'shū', meaning: 'book / letter / script', radical: '乛 (Hook, 1 stroke)' },
+  犬: { pinyin: 'quǎn', meaning: 'dog / canine', radical: '犬 (Dog, 4 strokes)' },
+  瓦: { pinyin: 'wǎ', meaning: 'roof tile / earthenware', radical: '瓦 (Tile, 4 strokes)' },
+  这: { pinyin: 'zhè', meaning: 'this / here', radical: '辶 (Walk, 3 strokes)' },
+  远: { pinyin: 'yuǎn', meaning: 'far / distant', radical: '辶 (Walk, 3 strokes)' },
+  送: { pinyin: 'sòng', meaning: 'to send / deliver / see off', radical: '辶 (Walk, 3 strokes)' },
+  进: { pinyin: 'jìn', meaning: 'to enter / advance', radical: '辶 (Walk, 3 strokes)' },
+  厅: { pinyin: 'tīng', meaning: 'hall / lounge', radical: '厂 (Cliff, 2 strokes)' },
+  床: { pinyin: 'chuáng', meaning: 'bed / couch', radical: '广 (Shelter, 3 strokes)' },
+  病: { pinyin: 'bìng', meaning: 'illness / sick', radical: '疒 (Sickness, 5 strokes)' },
+  尾: { pinyin: 'wěi', meaning: 'tail / end', radical: '尸 (Corpse/Body, 3 strokes)' },
+  山: { pinyin: 'shān', meaning: 'mountain / hill', radical: '山 (Mountain, 3 strokes)' },
+  医: { pinyin: 'yī', meaning: 'medicine / doctor', radical: '匚 (Box, 2 strokes)' },
+  画: { pinyin: 'huà', meaning: 'painting / picture / stroke', radical: '田 (Field, 5 strokes)' },
+  区: { pinyin: 'qū', meaning: 'area / district / region', radical: '匚 (Box, 2 strokes)' },
+  中: { pinyin: 'zhōng', meaning: 'middle / center / China', radical: '丨 (Line, 1 stroke)' },
+  车: { pinyin: 'chē', meaning: 'car / vehicle / wheel', radical: '车 (Cart, 4 strokes)' },
+  半: { pinyin: 'bàn', meaning: 'half / semi-', radical: '十 (Ten, 2 strokes)' },
+  平: { pinyin: 'píng', meaning: 'flat / level / peaceful', radical: '干 (Dry/Shield, 3 strokes)' },
+  女: { pinyin: 'nǚ', meaning: 'woman / female', radical: '女 (Woman, 3 strokes)' },
+  子: { pinyin: 'zǐ', meaning: 'child / son / seed', radical: '子 (Child, 3 strokes)' },
+  母: { pinyin: 'mǔ', meaning: 'mother / female elder', radical: '毋 (Do not, 4 strokes)' },
+  舟: { pinyin: 'zhōu', meaning: 'boat / vessel', radical: '舟 (Boat, 6 strokes)' }
 };
 
 export const SEMANTIC_RADICALS_25 = [
@@ -986,8 +1014,129 @@ export const STROKE_ORDER_RULES_7 = [
       { char: '办', pinyin: 'bàn', meaning: 'to handle / do' },
       { char: '永', pinyin: 'yǒng', meaning: 'forever / eternity' }
     ]
+  },
+  {
+    id: 'rule_8',
+    number: 8,
+    title: 'Top or Upper-Left Dot First',
+    chineseRule: '点在上边或左上先写',
+    pinyinRule: 'diǎn zài shàngbiān huò zuǒshàng xiān xiě',
+    explanation:
+      'When a dot stroke (丶) sits at the very top center or upper-left corner of a character, write the dot first before the rest of the frame.',
+    learnedChars: [
+      { char: '主', pinyin: 'zhǔ', meaning: 'main / host' },
+      { char: '门', pinyin: 'mén', meaning: 'door / gate' }
+    ],
+    unseenChars: [
+      { char: '广', pinyin: 'guǎng', meaning: 'wide / vast' },
+      { char: '方', pinyin: 'fāng', meaning: 'square / direction' }
+    ]
+  },
+  {
+    id: 'rule_9',
+    number: 9,
+    title: 'Upper-Right or Inner Dot Last',
+    chineseRule: '点在右上或里边后写',
+    pinyinRule: 'diǎn zài yòushàng huò lǐbiān hòu xiě',
+    explanation:
+      'When a dot stroke (丶) is located at the upper-right corner or inside an enclosure, write that dot as the final finishing stroke.',
+    learnedChars: [
+      { char: '我', pinyin: 'wǒ', meaning: 'I / me' },
+      { char: '书', pinyin: 'shū', meaning: 'book' }
+    ],
+    unseenChars: [
+      { char: '犬', pinyin: 'quǎn', meaning: 'dog / canine' },
+      { char: '瓦', pinyin: 'wǎ', meaning: 'roof tile' }
+    ]
+  },
+  {
+    id: 'rule_10',
+    number: 10,
+    title: 'Bottom-Left Enclosure (辶 / 廴) Written Last',
+    chineseRule: '走之旁、建之旁最后写',
+    pinyinRule: 'zǒuzhīpáng, jiànzhīpáng zuìhòu xiě',
+    explanation:
+      'For characters with the walking radical (辶) or stretching radical (廴), complete the inner upper-right component first, and write the sweeping bottom-left radical last.',
+    learnedChars: [
+      { char: '这', pinyin: 'zhè', meaning: 'this' },
+      { char: '远', pinyin: 'yuǎn', meaning: 'far / distant' }
+    ],
+    unseenChars: [
+      { char: '送', pinyin: 'sòng', meaning: 'to send / deliver' },
+      { char: '进', pinyin: 'jìn', meaning: 'to enter' }
+    ]
+  },
+  {
+    id: 'rule_11',
+    number: 11,
+    title: 'Top-Left Semi-Enclosure (厂, 广, 尸, 疒) Outside First',
+    chineseRule: '左上包右下，先外后里',
+    pinyinRule: 'zuǒshàng bāo yòuxià, xiān wài hòu lǐ',
+    explanation:
+      'When an enclosure wraps the top and left sides (like 厂, 广, 尸, or 疒), write the outer top-left radical first before filling the bottom-right interior.',
+    learnedChars: [
+      { char: '厅', pinyin: 'tīng', meaning: 'hall / lounge' },
+      { char: '床', pinyin: 'chuáng', meaning: 'bed' }
+    ],
+    unseenChars: [
+      { char: '病', pinyin: 'bìng', meaning: 'illness / sick' },
+      { char: '尾', pinyin: 'wěi', meaning: 'tail / end' }
+    ]
+  },
+  {
+    id: 'rule_12',
+    number: 12,
+    title: 'Bottom-Up / Left-Bottom Enclosure (山, 画, 医) Inside First',
+    chineseRule: '下包上、左下包右上',
+    pinyinRule: 'xià bāo shàng, zuǒxià bāo yòushàng',
+    explanation:
+      'For open-top bottom enclosures (凵) or three-sided left enclosures (匚), write the inner or upper strokes before closing the outer bottom/left-bottom frame.',
+    learnedChars: [
+      { char: '山', pinyin: 'shān', meaning: 'mountain' },
+      { char: '医', pinyin: 'yī', meaning: 'medicine / doctor' }
+    ],
+    unseenChars: [
+      { char: '画', pinyin: 'huà', meaning: 'painting / draw' },
+      { char: '区', pinyin: 'qū', meaning: 'district / area' }
+    ]
+  },
+  {
+    id: 'rule_13',
+    number: 13,
+    title: 'Piercing Vertical Spine Written Last',
+    chineseRule: '中竖贯通最后写',
+    pinyinRule: 'zhōng shù guàntōng zuìhòu xiě',
+    explanation:
+      'When a central vertical stroke pierces completely through horizontal strokes or an enclosure from top to bottom, write the piercing vertical spine last.',
+    learnedChars: [
+      { char: '中', pinyin: 'zhōng', meaning: 'middle / center' },
+      { char: '车', pinyin: 'chē', meaning: 'vehicle / car' }
+    ],
+    unseenChars: [
+      { char: '半', pinyin: 'bàn', meaning: 'half' },
+      { char: '平', pinyin: 'píng', meaning: 'flat / peaceful' }
+    ]
+  },
+  {
+    id: 'rule_14',
+    number: 14,
+    title: 'Crossing Base Horizontal Written Last',
+    chineseRule: '横画贯通最后写',
+    pinyinRule: 'héng huà guàntōng zuìhòu xiě',
+    explanation:
+      'When a long horizontal stroke crosses across the body or base of a character to anchor its balance, write that crossing horizontal stroke last.',
+    learnedChars: [
+      { char: '女', pinyin: 'nǚ', meaning: 'woman / female' },
+      { char: '子', pinyin: 'zǐ', meaning: 'child / son' }
+    ],
+    unseenChars: [
+      { char: '母', pinyin: 'mǔ', meaning: 'mother' },
+      { char: '舟', pinyin: 'zhōu', meaning: 'boat' }
+    ]
   }
 ];
+
+export const STROKE_ORDER_RULES_14 = STROKE_ORDER_RULES_7;
 
 export const WRITING_MASTERY_STAGES = [
   {

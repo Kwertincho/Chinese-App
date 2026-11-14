@@ -33,7 +33,8 @@ import {
   Award,
   Target,
   Swords,
-  Clock
+  Clock,
+  Trash2
 } from 'lucide-react';
 import {
   soundFX,
@@ -63,7 +64,9 @@ import {
   getPreferredModalitiesForMastery,
   formatTotalStudyTime,
   formatTodayStudyTime,
-  getWordSkillTelemetry
+  getWordSkillTelemetry,
+  partitionLessonWordsIntoChunks,
+  buildProportionalUnitNodes
 } from '../utils/mandarinHelpers.js';
 import {
   MandarinAudioControls,
@@ -80,24 +83,22 @@ import {
   RuleExampleMiniPlayer,
   StrokeRuleIntuitionModal
 } from './PracticeAndExamModals.jsx';
+import { PhoneticsStudioView } from './PhoneticsStudioView.jsx';
 
 // ============================================================================
-// TAB 1: GAMIFIED WINDING PROGRESSION MAP VIEW (HETEROGENEOUS PATTERNS A / B / C)
+// TAB 1: GAMIFIED WINDING PROGRESSION MAP VIEW (UNIFIED PROPORTIONAL PATH)
 // ============================================================================
 export function ProgressionMapView({
   progress,
   courses,
   activeCourse,
   activeLesson,
-  activeLessonIndex,
-  activePattern,
-  patternPreviewOverride,
-  onChangePatternOverride,
   activeWords,
   dailyQuests,
   dailyQuestState = {},
   onJumpToQuest,
   onClaimQuestReward,
+  onClaimDailyChest,
   onSelectCourseAndLesson,
   speakMandarin,
   onSelectStageNode,
@@ -137,15 +138,21 @@ export function ProgressionMapView({
     }
   };
 
-  const nodeHorizontalPositions = [50, 24, 76, 50];
+  const stagesList = useMemo(
+    () => buildProportionalUnitNodes(activeWords),
+    [activeWords]
+  );
+  const totalChunksCount = useMemo(
+    () => partitionLessonWordsIntoChunks(activeWords).length,
+    [activeWords]
+  );
 
-  const unitMasteryRatio = useMemo(() => {
-    const earned = activeWords.reduce((sum, w) => sum + getWordMasteryLevel(progress.mastery, w), 0);
-    const max = Math.max(1, activeWords.length * 10);
-    return Math.min(1, Math.max(0, earned / max));
-  }, [activeWords, progress.mastery]);
+  const getNodeHorizontalPercent = (idx, total) => {
+    if (idx === total - 1) return 50;
+    const cycle = [50, 24, 76, 50, 26, 74];
+    return cycle[idx % cycle.length];
+  };
 
-  const stagesList = activePattern.stages;
   const activeStageObj =
     stagesList.find((s) => s.id === (selectedStagePreview || currentLessonProg.unlockedStage)) ||
     stagesList[0];
@@ -153,16 +160,27 @@ export function ProgressionMapView({
   const completedQuestsCount = safeDailyQuests.filter(
     (q) => dailyQuestState.completedIds?.includes(q.id)
   ).length;
-  const unclaimedReadyCount = safeDailyQuests.filter(
-    (q) =>
-      dailyQuestState.completedIds?.includes(q.id) &&
-      !dailyQuestState.claimedIds?.includes(q.id)
-  ).length;
+  const allThreeQuestsDone = completedQuestsCount >= 3;
+  const chestClaimed = Boolean(dailyQuestState.bonusChestClaimed);
+  const unclaimedReadyCount =
+    safeDailyQuests.filter(
+      (q) =>
+        dailyQuestState.completedIds?.includes(q.id) &&
+        !dailyQuestState.claimedIds?.includes(q.id)
+    ).length + (allThreeQuestsDone && !chestClaimed ? 1 : 0);
+
+  const mapHeightPx = Math.max(630, (stagesList.length - 1) * 152 + 175);
 
   return (
     <div className="p-4 space-y-4">
-      {/* COMPACT COLLAPSIBLE DAILY QUESTS WIDGET */}
-      <div className="rounded-[2px] bg-slate-900 border-2 border-amber-500 p-3.5 space-y-2.5">
+      {/* COMPACT COLLAPSIBLE DAILY QUESTS WIDGET (WITH +25 XP COMPLETION CHEST) */}
+      <div
+        className={`rounded-[2px] bg-slate-900 border-2 p-3.5 space-y-2.5 transition-all ${
+          allThreeQuestsDone
+            ? 'border-amber-400 shadow-[0_0_20px_rgba(251,191,36,0.18)]'
+            : 'border-amber-500'
+        }`}
+      >
         <button
           type="button"
           onClick={() => {
@@ -172,14 +190,25 @@ export function ProgressionMapView({
           className="w-full flex items-center justify-between gap-2 text-left"
         >
           <div className="flex items-center gap-2 min-w-0">
-            <div className="w-8 h-8 rounded-[2px] bg-amber-500/20 border-2 border-amber-400 flex items-center justify-center text-amber-300 shrink-0">
+            <div
+              className={`w-8 h-8 rounded-[2px] border-2 flex items-center justify-center shrink-0 ${
+                allThreeQuestsDone
+                  ? 'bg-amber-400 text-slate-950 border-amber-200'
+                  : 'bg-amber-500/20 border-amber-400 text-amber-300'
+              }`}
+            >
               <PixelGemSprite className="w-4 h-4" />
             </div>
             <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
+              <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="font-pixel-header text-[10px] uppercase text-amber-300">
                   Daily Quests
                 </span>
+                {allThreeQuestsDone && (
+                  <span className="px-2 py-0.5 rounded-[2px] bg-amber-400 text-slate-950 font-black text-[9px] uppercase">
+                    ★ All 3 Complete!
+                  </span>
+                )}
                 {unclaimedReadyCount > 0 && (
                   <span className="px-2 py-0.5 rounded-[2px] bg-emerald-500 text-slate-950 font-black text-[9px] uppercase animate-bounce">
                     {unclaimedReadyCount} Claim Ready!
@@ -187,13 +216,19 @@ export function ProgressionMapView({
                 )}
               </div>
               <p className="text-[10px] text-slate-400 truncate">
-                {completedQuestsCount}/3 Completed • Refreshes Daily ({dailyQuestState.date})
+                {completedQuestsCount}/3 Completed • Complete all 3 for +25 XP Chest
               </p>
             </div>
           </div>
 
           <div className="flex items-center gap-1.5 shrink-0">
-            <span className="font-pixel-header text-[9px] px-2 py-1 rounded-[2px] bg-slate-950 border-2 border-slate-700 text-amber-300">
+            <span
+              className={`font-pixel-header text-[9px] px-2 py-1 rounded-[2px] border-2 ${
+                allThreeQuestsDone
+                  ? 'bg-amber-400 text-slate-950 border-amber-200'
+                  : 'bg-slate-950 border-slate-700 text-amber-300'
+              }`}
+            >
               {completedQuestsCount}/3
             </span>
             <ChevronDown
@@ -288,6 +323,59 @@ export function ProgressionMapView({
                 </div>
               );
             })}
+
+            {/* DAILY COMPLETION CHEST (+25 XP BONUS FOR 3/3 QUESTS) */}
+            <div
+              className={`rounded-[2px] p-2.5 border-2 flex items-center justify-between gap-2.5 ${
+                allThreeQuestsDone
+                  ? 'bg-gradient-to-r from-amber-950/80 via-yellow-900/40 to-amber-950/80 border-amber-400'
+                  : 'bg-slate-950/80 border-slate-800'
+              }`}
+            >
+              <div className="flex items-center gap-2.5 min-w-0">
+                <div
+                  className={`w-6 h-6 rounded-[2px] border flex items-center justify-center shrink-0 ${
+                    allThreeQuestsDone
+                      ? 'bg-amber-400 border-amber-200 text-slate-950'
+                      : 'bg-slate-900 border-slate-700 text-slate-500'
+                  }`}
+                >
+                  <Trophy className="w-3.5 h-3.5" />
+                </div>
+                <div className="min-w-0">
+                  <span
+                    className={`text-xs font-extrabold block truncate ${
+                      allThreeQuestsDone ? 'text-amber-200' : 'text-slate-400'
+                    }`}
+                  >
+                    Daily Completion Chest (3/3 Quests)
+                  </span>
+                  <span className="text-[10px] font-black text-amber-400 inline-flex items-center gap-1">
+                    <PixelCoinSprite className="w-3 h-3" />
+                    <span>+25 XP Bonus Reward</span>
+                  </span>
+                </div>
+              </div>
+
+              {chestClaimed ? (
+                <span className="px-2.5 py-1 rounded-[2px] bg-amber-500/20 border-2 border-amber-400 text-[10px] font-black text-amber-300 shrink-0">
+                  Chest Claimed ★
+                </span>
+              ) : allThreeQuestsDone ? (
+                <button
+                  type="button"
+                  onClick={() => onClaimDailyChest?.()}
+                  className="game-btn-3d px-3 py-1.5 rounded-[2px] bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-[10px] border-2 border-amber-100 animate-bounce shrink-0 flex items-center gap-1"
+                >
+                  <PixelCoinSprite className="w-3.5 h-3.5" />
+                  <span>Open +25 XP</span>
+                </button>
+              ) : (
+                <span className="px-2 py-1 rounded-[2px] bg-slate-900 border border-slate-800 text-[10px] font-bold text-slate-500 shrink-0">
+                  {completedQuestsCount}/3
+                </span>
+              )}
+            </div>
           </div>
         )}
       </div>
@@ -327,9 +415,9 @@ export function ProgressionMapView({
 
           {activeCourse.lessons && activeCourse.lessons.length > 1 && (
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-0.5">
-              {activeCourse.lessons.map((lesson, lIdx) => {
+              {activeCourse.lessons.map((lesson) => {
                 const isSelected = lesson.id === activeLesson.id;
-                const patCode = HETEROGENEOUS_PATTERNS[lIdx % HETEROGENEOUS_PATTERNS.length].code;
+                const wordCount = lesson.words?.length || 0;
                 return (
                   <button
                     key={lesson.id}
@@ -341,60 +429,35 @@ export function ProgressionMapView({
                         : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
                     }`}
                   >
-                    {lesson.title} • {patCode}
+                    {lesson.title} ({wordCount}w)
                   </button>
                 );
               })}
             </div>
           )}
         </div>
-
-        {/* Heterogeneous Blueprint Inspector / Switcher */}
-        <div className="pt-2 border-t border-slate-700/60 flex items-center justify-between gap-2">
-          <span className="text-[10px] font-bold text-slate-400">
-            Node Blueprint (Rotates by Unit #{activeLessonIndex + 1}):
-          </span>
-          <div className="flex items-center gap-1">
-            {[
-              { id: null, label: 'Auto' },
-              { id: 'pattern_a', label: 'Pat A' },
-              { id: 'pattern_b', label: 'Pat B' },
-              { id: 'pattern_c', label: 'Pat C' }
-            ].map((opt) => {
-              const isSelected = patternPreviewOverride === opt.id;
-              return (
-                <button
-                  key={opt.label}
-                  type="button"
-                  onClick={() => onChangePatternOverride(opt.id)}
-                  className={`px-2 py-0.5 rounded-lg text-[10px] font-black border transition-all ${
-                    isSelected
-                      ? 'bg-amber-500/25 border-amber-400 text-amber-200'
-                      : 'bg-slate-900 border-slate-800 text-slate-400 hover:text-slate-200'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              );
-            })}
-          </div>
-        </div>
       </div>
 
-      {/* Active Unit Adventure World Banner with Pattern Blueprint Tag */}
+      {/* Active Unit Adventure World Banner */}
       <div className="rounded-[2px] bg-gradient-to-br from-rose-700 via-red-800 to-amber-800 border-2 border-amber-400 p-4 relative overflow-hidden">
         <div className="flex items-center justify-between gap-2 relative z-10 flex-wrap">
           <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-[2px] bg-slate-950/80 text-amber-300 border-2 border-amber-400/50">
-            {activePattern.code} • {activePattern.name}
+            Proportional Path • {totalChunksCount} Chunk{totalChunksCount === 1 ? '' : 's'} ({activeWords.length} Words)
           </span>
           <span className="font-pixel-header text-[9px] text-amber-200 flex items-center gap-1.5 bg-slate-950/80 px-2.5 py-1 rounded-[2px] border-2 border-amber-400/50">
             <PixelCrownSprite className="w-3.5 h-3.5" />
-            <span>{currentLessonProg.completedStages.length}/4 Mastered</span>
+            <span>
+              {currentLessonProg.completedStages.filter((id) => id <= stagesList.length).length}/
+              {stagesList.length} Stages
+            </span>
           </span>
         </div>
-        <h1 className="font-hanzi text-lg font-black text-white mt-2 relative z-10">{activeLesson.title}</h1>
+        <h1 className="font-hanzi text-lg font-black text-white mt-2 relative z-10">
+          {activeLesson.title}
+        </h1>
         <p className="text-[11px] text-rose-100/95 mt-0.5 relative z-10 font-semibold">
-          {activePattern.tagline}
+          Discovery → Calligraphy → Audio & Oral Mix
+          {activeWords.length >= 6 ? ' → Context Gauntlet' : ''} → Unit Boss Battle
         </p>
       </div>
 
@@ -403,17 +466,17 @@ export function ProgressionMapView({
         <div className="w-40 h-40 rounded-full bg-rose-500/5 blur-3xl absolute top-6 left-4 pointer-events-none" />
         <div className="w-44 h-44 rounded-full bg-amber-500/5 blur-3xl absolute bottom-10 right-4 pointer-events-none" />
 
-        <div className="relative w-full h-[630px]">
+        <div className="relative w-full" style={{ height: `${mapHeightPx}px` }}>
           {/* SVG Winding Connecting Path */}
           <svg
-            viewBox="0 0 100 630"
+            viewBox={`0 0 100 ${mapHeightPx}`}
             preserveAspectRatio="none"
             className="absolute inset-0 w-full h-full pointer-events-none"
           >
             {stagesList.slice(0, -1).map((stage, idx) => {
-              const x1 = nodeHorizontalPositions[idx];
+              const x1 = getNodeHorizontalPercent(idx, stagesList.length);
               const y1 = 70 + idx * 152;
-              const x2 = nodeHorizontalPositions[idx + 1];
+              const x2 = getNodeHorizontalPercent(idx + 1, stagesList.length);
               const y2 = 70 + (idx + 1) * 152;
               const midY = (y1 + y2) / 2;
               const pathD = `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
@@ -442,19 +505,28 @@ export function ProgressionMapView({
             })}
           </svg>
 
-          {/* Render the 4 Square Pixel Game Nodes along the winding path */}
+          {/* Render the Proportional Square Pixel Game Nodes along the winding path */}
           {stagesList.map((stage, idx) => {
             const StageIcon = getStageIcon(stage.iconName);
             const isMastered = currentLessonProg.completedStages.includes(stage.id);
             const isUnlocked = stage.id <= currentLessonProg.unlockedStage || isMastered;
             const isCurrent = stage.id === currentLessonProg.unlockedStage && !isMastered;
 
-            const leftPercent = nodeHorizontalPositions[idx];
+            const leftPercent = getNodeHorizontalPercent(idx, stagesList.length);
             const topPx = 22 + idx * 152;
+
+            const nodeWords =
+              Array.isArray(stage.words) && stage.words.length > 0 ? stage.words : activeWords;
+            const nodeEarned = nodeWords.reduce(
+              (sum, w) => sum + getWordMasteryLevel(progress.mastery, w),
+              0
+            );
+            const nodeMax = Math.max(1, nodeWords.length * 10);
+            const nodeMasteryRatio = Math.min(1, Math.max(0, nodeEarned / nodeMax));
 
             const squareSide = 88;
             const squarePerimeter = squareSide * 4;
-            const ringProgress = isMastered ? 1 : isCurrent ? unitMasteryRatio : 0;
+            const ringProgress = isMastered ? 1 : isCurrent ? nodeMasteryRatio : 0;
             const dashOffset = squarePerimeter * (1 - ringProgress);
 
             const categoryBadgeStyle =
@@ -479,7 +551,7 @@ export function ProgressionMapView({
                 )}
 
                 <div className="relative flex items-center justify-center w-24 h-24">
-                  {/* Square Perimeter SVG Progress Border (<rect>) */}
+                  {/* Square Perimeter SVG Progress Border (<rect>) starting strictly at 0% */}
                   <svg className="w-24 h-24 pointer-events-none" viewBox="0 0 96 96">
                     <rect
                       x="4"
@@ -546,7 +618,7 @@ export function ProgressionMapView({
                   )}
                 </div>
 
-                {/* Node Title & Single-Skill / Multi-Skill Badge */}
+                {/* Node Title & Category Badge */}
                 <div className="mt-1 flex flex-col items-center gap-0.5">
                   <span
                     className={`text-[11px] font-black px-2.5 py-0.5 rounded-[2px] border whitespace-nowrap ${
@@ -1444,6 +1516,7 @@ export function LibraryView({
   speakingState,
   onAddWordsToDeck,
   onAddImportedCourse,
+  onDeleteCourse,
   onSelectCourseOnMap,
   onPracticeDeck,
   onExportAllData,
@@ -1453,6 +1526,7 @@ export function LibraryView({
   triggerToast
 }) {
   const [librarySection, setLibrarySection] = useState('decks');
+  const [confirmDeleteCourseId, setConfirmDeleteCourseId] = useState(null);
   const [studioToolMode, setStudioToolMode] = useState('none');
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedCharEntry, setSelectedCharEntry] = useState(null);
@@ -2032,12 +2106,13 @@ export function LibraryView({
           </span>
         </div>
 
-        <div className="grid grid-cols-4 gap-1 bg-slate-950 p-1 rounded-2xl border border-slate-800">
+        <div className="grid grid-cols-5 gap-1 bg-slate-950 p-1 rounded-2xl border border-slate-800">
           {[
             { id: 'decks', label: 'Decks', icon: BookMarked },
             { id: 'char_grid', label: 'Hanzi Grid', icon: Layers },
             { id: 'radicals', label: 'Radicals', icon: Sparkles },
-            { id: 'stroke_rules', label: 'Stroke Rules', icon: PenTool }
+            { id: 'stroke_rules', label: 'Stroke Rules', icon: PenTool },
+            { id: 'phonetics', label: 'Phonetics', icon: Volume2 }
           ].map((item) => {
             const Icon = item.icon;
             const active = librarySection === item.id;
@@ -2316,7 +2391,7 @@ export function LibraryView({
         </div>
       )}
 
-      {/* SUB-TAB 4: "STROKE RULES" (7 FUNDAMENTAL STROKE-ORDER RULES DOJO) */}
+      {/* SUB-TAB 4: "STROKE RULES" (14 FUNDAMENTAL STROKE-ORDER RULES DOJO) */}
       {librarySection === 'stroke_rules' && (
         <div className="space-y-3.5">
           <div className="rounded-3xl bg-gradient-to-br from-slate-800 via-slate-900 to-slate-950 border border-amber-500/30 p-4 space-y-2 shadow-xl">
@@ -2325,11 +2400,11 @@ export function LibraryView({
                 Stroke Order Rules Dojo
               </span>
               <span className="text-xs font-black text-emerald-400">
-                {(progress.completedStrokeRules || []).length} / 7 Rules Mastered
+                {(progress.completedStrokeRules || []).length} / {STROKE_ORDER_RULES_7.length} Rules Mastered
               </span>
             </div>
             <h2 className="text-base font-black text-white">
-              7 Fundamental Chinese Stroke-Order Rules
+              14 Fundamental Chinese Stroke-Order Rules
             </h2>
             <p className="text-xs text-slate-300">
               Study each rule with familiar characters, watch the animated stroke order, then click <strong>"Test Intuition (Unseen Characters)"</strong> to deduce the stroke order of new characters in a 2-step Trace → Memory challenge!
@@ -2462,6 +2537,16 @@ export function LibraryView({
         </div>
       )}
 
+      {/* SUB-TAB 5: "PHONETICS" (MANDARIN INITIALS, FINALS, ALLOPHONES, SANDBOX & 4-TONE EAR DRILL) */}
+      {librarySection === 'phonetics' && (
+        <PhoneticsStudioView
+          isSlowMode={isSlowMode}
+          onSetSlowMode={onSetSlowMode}
+          speakMandarin={speakMandarin}
+          speakingState={speakingState}
+        />
+      )}
+
       {/* SECTION 1: BROWSE CUSTOM DECKS, COURSES & WORDS */}
       {librarySection === 'decks' && studioToolMode === 'none' && (
         <div className="space-y-4">
@@ -2547,31 +2632,105 @@ export function LibraryView({
             <h2 className="text-xs font-extrabold uppercase tracking-wider text-sky-400">
               Available Courses ({courses.length})
             </h2>
-            {courses.map((course) => (
-              <div
-                key={course.id}
-                className="rounded-2xl bg-slate-800/75 border border-slate-700/80 p-3.5 flex items-center justify-between gap-2"
-              >
-                <div className="min-w-0">
-                  <h3 className="text-sm font-black text-white truncate">{course.courseName}</h3>
-                  <p className="text-[11px] text-slate-400">
-                    {course.lessons?.length || 1} Unit(s) •{' '}
-                    {(course.lessons || []).reduce(
-                      (acc, l) => acc + (l.words?.length || 0),
-                      0
-                    )}{' '}
-                    total words
-                  </p>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => onSelectCourseOnMap(course.id, course.lessons?.[0]?.id)}
-                  className="px-3 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-extrabold shrink-0"
+            {courses.map((course) => {
+              const isDefaultStarter =
+                course.id === 'course_default_unit1' && courses.length === 1;
+              const isConfirmingDelete = confirmDeleteCourseId === course.id;
+              const isCurrentActiveCourse = activeCourse?.id === course.id;
+
+              return (
+                <div
+                  key={course.id}
+                  className={`rounded-2xl bg-slate-800/75 border p-3.5 space-y-2.5 transition-all ${
+                    isCurrentActiveCourse
+                      ? 'border-sky-500/60'
+                      : 'border-slate-700/80'
+                  }`}
                 >
-                  Open on Map
-                </button>
-              </div>
-            ))}
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-1.5">
+                        <h3 className="text-sm font-black text-white truncate">
+                          {course.courseName}
+                        </h3>
+                        {isCurrentActiveCourse && (
+                          <span className="px-1.5 py-0.5 rounded-[2px] bg-sky-500/20 border border-sky-400/50 text-sky-300 text-[9px] font-black uppercase shrink-0">
+                            Active
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[11px] text-slate-400">
+                        {course.lessons?.length || 1} Unit(s) •{' '}
+                        {(course.lessons || []).reduce(
+                          (acc, l) => acc + (l.words?.length || 0),
+                          0
+                        )}{' '}
+                        total words
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-1.5 shrink-0">
+                      <button
+                        type="button"
+                        onClick={() => onSelectCourseOnMap(course.id, course.lessons?.[0]?.id)}
+                        className="game-btn-3d px-3 py-2 rounded-xl bg-sky-600 hover:bg-sky-500 text-white text-xs font-extrabold"
+                      >
+                        Open on Map
+                      </button>
+                      {!isDefaultStarter && (
+                        <button
+                          type="button"
+                          onClick={() => {
+                            soundFX.playPop();
+                            setConfirmDeleteCourseId(
+                              isConfirmingDelete ? null : course.id
+                            );
+                          }}
+                          title="Delete Course"
+                          className={`game-btn-3d p-2 rounded-xl border text-xs font-bold transition-colors ${
+                            isConfirmingDelete
+                              ? 'bg-rose-600 text-white border-rose-300'
+                              : 'bg-slate-900 hover:bg-rose-950/70 text-slate-400 hover:text-rose-300 border-slate-700 hover:border-rose-500/50'
+                          }`}
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {isConfirmingDelete && (
+                    <div className="rounded-xl bg-rose-950/60 border border-rose-500/60 p-2.5 flex items-center justify-between gap-2">
+                      <span className="font-clarity text-xs font-bold text-rose-200">
+                        Remove "{course.courseName}" from Library?
+                      </span>
+                      <div className="flex items-center gap-1.5 shrink-0">
+                        <button
+                          type="button"
+                          onClick={() => {
+                            soundFX.playPop();
+                            setConfirmDeleteCourseId(null);
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-300 text-[11px] font-bold"
+                        >
+                          Cancel
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            soundFX.playPop();
+                            setConfirmDeleteCourseId(null);
+                            onDeleteCourse?.(course.id, course.courseName);
+                          }}
+                          className="px-2.5 py-1 rounded-lg bg-rose-600 hover:bg-rose-500 text-white text-[11px] font-extrabold border border-rose-300"
+                        >
+                          Confirm Delete
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
 
           <div className="space-y-2.5">
@@ -3509,53 +3668,42 @@ export function ProfileView({
 
       <div className="rounded-2xl bg-slate-800/75 border border-slate-700/80 p-4 space-y-3">
         <h2 className="text-xs font-extrabold uppercase tracking-wider text-slate-300">
-          Daily XP Goal, Backup & Study Settings
+          Daily Quests, Backup & Study Settings
         </h2>
 
-        <div className="rounded-2xl bg-slate-900/90 border border-slate-800 p-3 space-y-2">
-          <div className="flex items-center justify-between">
-            <div>
-              <p className="text-xs font-extrabold text-white">Daily XP Target</p>
-              <p className="text-[11px] text-slate-400">
-                Today's Progress:{' '}
-                <strong className="text-emerald-400">
-                  {todayXpEarned} / {dailyGoalXp} XP
-                </strong>
-              </p>
-            </div>
-            <span
-              className={`px-2.5 py-0.5 rounded-full text-[10px] font-black border ${
-                todayXpEarned >= dailyGoalXp
-                  ? 'bg-emerald-500/20 border-emerald-400 text-emerald-300'
-                  : 'bg-amber-500/15 border-amber-400/40 text-amber-300'
-              }`}
-            >
-              {todayXpEarned >= dailyGoalXp ? '★ Goal Complete!' : 'In Progress'}
-            </span>
+        <div className="rounded-2xl bg-slate-900/90 border border-slate-800 p-3 flex items-center justify-between gap-2">
+          <div>
+            <p className="text-xs font-extrabold text-white">Daily Quests & Completion Chest</p>
+            <p className="text-[11px] text-slate-400">
+              Today's Quests:{' '}
+              <strong className="text-amber-300">
+                {(progress.dailyQuests?.date === todayIso
+                  ? progress.dailyQuests?.completedIds?.length
+                  : 0) || 0}{' '}
+                / 3 Completed
+              </strong>{' '}
+              • Complete all 3 for +25 XP Chest
+            </p>
           </div>
-
-          <div className="grid grid-cols-4 gap-1.5">
-            {[20, 30, 50, 100].map((targetVal) => {
-              const isSelected = dailyGoalXp === targetVal;
-              return (
-                <button
-                  key={targetVal}
-                  type="button"
-                  onClick={() => {
-                    soundFX.playPop();
-                    onSetDailyGoalXp?.(targetVal);
-                  }}
-                  className={`game-btn-3d py-1.5 rounded-xl text-xs font-black border transition-all ${
-                    isSelected
-                      ? 'bg-emerald-500 text-slate-950 border-emerald-300 shadow'
-                      : 'bg-slate-950 border-slate-800 text-slate-400 hover:text-white'
-                  }`}
-                >
-                  {targetVal} XP
-                </button>
-              );
-            })}
-          </div>
+          <span
+            className={`px-2.5 py-1 rounded-[2px] text-[10px] font-black border-2 shrink-0 ${
+              ((progress.dailyQuests?.date === todayIso
+                ? progress.dailyQuests?.completedIds?.length
+                : 0) || 0) >= 3
+                ? 'bg-amber-400 text-slate-950 border-amber-200'
+                : 'bg-slate-950 border-amber-500/50 text-amber-300'
+            }`}
+          >
+            {((progress.dailyQuests?.date === todayIso
+              ? progress.dailyQuests?.completedIds?.length
+              : 0) || 0) >= 3
+              ? '★ 3/3 Gold Chest!'
+              : `${
+                  (progress.dailyQuests?.date === todayIso
+                    ? progress.dailyQuests?.completedIds?.length
+                    : 0) || 0
+                }/3 Quests`}
+          </span>
         </div>
 
         <div className="grid grid-cols-2 gap-2">

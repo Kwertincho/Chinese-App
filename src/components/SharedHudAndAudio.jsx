@@ -437,7 +437,7 @@ export function ChaoToneVisualizer({ pinyin = '', hanzi = '', compact = false })
 }
 
 // ============================================================================
-// REUSABLE MANDARIN AUDIO CONTROLS (1.0x NORMAL & 0.5x SLOW NATIVE 'zh-CN')
+// REUSABLE MANDARIN AUDIO CONTROLS (PLAY SPEAKER + SINGLE 1.0x <-> 0.65x TOGGLE)
 // ============================================================================
 export function MandarinAudioControls({
   text,
@@ -447,27 +447,31 @@ export function MandarinAudioControls({
   speakingState,
   size = 'md'
 }) {
+  const [, setLocalTick] = useState(0);
   const effectiveSlow =
     typeof isSlowMode === 'boolean' ? isSlowMode : getGlobalIsSlowMode();
 
-  const isPlayingNormal =
-    speakingState?.active &&
-    speakingState?.text === text &&
-    speakingState?.rate === NORMAL_SPEECH_RATE;
-  const isPlayingSlow =
-    speakingState?.active &&
-    speakingState?.text === text &&
-    speakingState?.rate === SLOW_SPEECH_RATE;
+  const activeRate = effectiveSlow ? SLOW_SPEECH_RATE : NORMAL_SPEECH_RATE;
+  const isPlayingThis =
+    speakingState?.active && speakingState?.text === text;
 
-  const btnPadding = size === 'sm' ? 'px-2 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs';
-  const iconClass = size === 'sm' ? 'w-3 h-3' : 'w-3.5 h-3.5';
+  const playBtnPadding = size === 'sm' ? 'px-2 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs';
+  const toggleBtnPadding = size === 'sm' ? 'px-2 py-1 text-[10px]' : 'px-2 py-1.5 text-xs';
+  const iconClass = size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4';
 
-  const handlePlayRate = (targetSlow) => {
-    const rate = targetSlow ? SLOW_SPEECH_RATE : NORMAL_SPEECH_RATE;
-    if (onSetSlowMode && targetSlow !== effectiveSlow) {
-      onSetSlowMode(targetSlow, text);
+  const handlePlayCurrentSpeed = () => {
+    speakMandarin(text, activeRate);
+  };
+
+  const handleToggleSpeed = () => {
+    const nextSlow = !effectiveSlow;
+    const nextRate = nextSlow ? SLOW_SPEECH_RATE : NORMAL_SPEECH_RATE;
+    if (onSetSlowMode) {
+      onSetSlowMode(nextSlow, text);
     } else {
-      speakMandarin(text, rate);
+      setGlobalIsSlowMode(nextSlow);
+      setLocalTick((t) => t + 1);
+      speakMandarin(text, nextRate);
     }
   };
 
@@ -475,34 +479,30 @@ export function MandarinAudioControls({
     <div className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
       <button
         type="button"
-        onClick={() => handlePlayRate(false)}
-        title="Play 1.0x Normal Speed (zh-CN)"
-        className={`game-btn-3d rounded-[2px] font-black border-2 flex items-center gap-1 transition-all ${btnPadding} ${
-          isPlayingNormal
+        onClick={handlePlayCurrentSpeed}
+        title={`Play Audio (${effectiveSlow ? '0.65x Slow' : '1.0x Normal'})`}
+        className={`game-btn-3d rounded-[2px] font-black border-2 flex items-center gap-1 transition-all ${playBtnPadding} ${
+          isPlayingThis
             ? 'bg-rose-500 text-white border-rose-300 scale-105'
-            : !effectiveSlow
-            ? 'bg-rose-500/20 text-rose-200 border-rose-400/70'
-            : 'bg-slate-900 hover:bg-slate-800 text-slate-400 border-slate-700'
+            : 'bg-rose-500/20 hover:bg-rose-500/30 text-rose-200 border-rose-400/70'
         }`}
       >
         <Volume2 className={iconClass} />
-        <span>1.0x Normal</span>
+        <span>Play</span>
       </button>
 
       <button
         type="button"
-        onClick={() => handlePlayRate(true)}
-        title="Play 0.65x Slow Speed (zh-CN)"
-        className={`game-btn-3d rounded-[2px] font-black border-2 flex items-center gap-1 transition-all ${btnPadding} ${
-          isPlayingSlow
-            ? 'bg-sky-400 text-slate-950 border-sky-200 scale-105'
-            : effectiveSlow
-            ? 'bg-sky-500/25 text-sky-200 border-sky-400/80'
-            : 'bg-slate-900 hover:bg-slate-800 text-slate-400 border-slate-700'
+        onClick={handleToggleSpeed}
+        title="Toggle Audio Speed (1.0x Normal ↔ 0.65x Slow) & Replay"
+        className={`game-btn-3d rounded-[2px] font-black border-2 flex items-center gap-1 transition-all ${toggleBtnPadding} ${
+          effectiveSlow
+            ? 'bg-sky-500/25 hover:bg-sky-500/35 text-sky-200 border-sky-400/80'
+            : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-700'
         }`}
       >
-        <Turtle className={iconClass} />
-        <span>0.65x Slow</span>
+        {effectiveSlow && <Turtle className={size === 'sm' ? 'w-3 h-3' : 'w-3.5 h-3.5'} />}
+        <span>{effectiveSlow ? '0.65x' : '1.0x'}</span>
       </button>
     </div>
   );

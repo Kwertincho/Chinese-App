@@ -25,10 +25,10 @@ export function stripToneMarks(input = '') {
 }
 
 const MANDARIN_SYLLABLE_REGEX =
-  /^(zh|ch|sh|[bpmfdtnlgkhjqxrzcsyw])?(iang|iong|uang|ueng|ang|eng|ing|ong(?![aoeiuü])|üan|ian|uan|an|en|in|un|ün(?![aoeiuü])|er(?![aoeiuü])|iao|uai|uei|iou|ai|ei|ui|ao|ou|iu|ie|üe|ia|ua|uo|a|o|e|i|u|ü)([0-5])?/i;
+  /^(zh|ch|sh|[bpmfdtnlgkhjqxrzcsyw])?(?:(?:iang|iong|uang|ueng|ang|eng|ing|ong)(?![aoeiuü])|(?:üan|uan|ian|ün|un|an|en|in)(?![aoeiuü])|er(?![aoeiuü])|iao|uai|uei|iou|üe|ue|uo|ui|iu|ia|ie|ua|ai|ei|ao|ou|a|o|e|i|u|ü)([0-5])?/i;
 
 const MANDARIN_FINAL_REGEX =
-  /^(?:(?:iang|iong|uang|ueng|ang|eng|ing|ong)(?![aoeiuü])|(?:üan|ian|uan|an|en|in|un|ün)(?![aoeiuü])|er(?![aoeiuü])|iao|uai|uei|iou|ai|ei|ui|ao|ou|iu|ie|üe|ia|ua|uo|a|o|e|i|u|ü)/i;
+  /^(?:(?:iang|iong|uang|ueng|ang|eng|ing|ong)(?![aoeiuü])|(?:üan|uan|ian|ün|un|an|en|in)(?![aoeiuü])|er(?![aoeiuü])|iao|uai|uei|iou|üe|ue|uo|ui|iu|ia|ie|ua|ai|ei|ao|ou|a|o|e|i|u|ü)/i;
 
 const MANDARIN_INITIAL_REGEX = /^(zh|ch|sh|[bpmfdtnlgkhjqxrzcsyw])/i;
 
@@ -670,7 +670,7 @@ export function formatToneName(t) {
 export function deriveWordTonePattern(word = UNIT_1_WORDS[0]) {
   const norm = normalizeWordEntry(word);
   const numSource = String(norm.pinyinNum || convertPinyinToNumeric(norm.pinyin)).trim();
-  const tokens = numSource.split(/[\s']+/).filter(Boolean);
+  const tokens = segmentMandarinPinyin(numSource);
 
   let tones = tokens.map((tok) => {
     const m = tok.match(/[1-5]/);
@@ -1354,6 +1354,158 @@ export function generateDeterministicDailyQuests(dateStr = '', unlockedWordsCoun
   }
 
   return poolCopy.slice(0, 3);
+}
+
+export function partitionLessonWordsIntoChunks(lessonWords = UNIT_1_WORDS) {
+  const normalized = (Array.isArray(lessonWords) && lessonWords.length > 0
+    ? lessonWords
+    : UNIT_1_WORDS
+  ).map((w, idx) => normalizeWordEntry(w, idx));
+
+  if (normalized.length <= 4) {
+    return [normalized];
+  }
+
+  const chunks = [];
+  let i = 0;
+  while (i < normalized.length) {
+    const remaining = normalized.length - i;
+    if (remaining <= 4) {
+      chunks.push(normalized.slice(i));
+      break;
+    } else if (remaining === 5 || remaining === 6 || remaining === 9) {
+      chunks.push(normalized.slice(i, i + 3));
+      i += 3;
+    } else {
+      chunks.push(normalized.slice(i, i + 4));
+      i += 4;
+    }
+  }
+  return chunks;
+}
+
+export function buildProportionalUnitNodes(lessonWords = UNIT_1_WORDS) {
+  const allNormalized = (Array.isArray(lessonWords) && lessonWords.length > 0
+    ? lessonWords
+    : UNIT_1_WORDS
+  ).map((w, idx) => normalizeWordEntry(w, idx));
+
+  const chunks = partitionLessonWordsIntoChunks(allNormalized);
+  const totalChunks = chunks.length;
+  const hasMultipleChunks = totalChunks > 1;
+  const nodes = [];
+  let nextNodeId = 1;
+
+  chunks.forEach((chunkWords, chunkIdx) => {
+    const partLabel = hasMultipleChunks ? ` (Part ${chunkIdx + 1}/${totalChunks})` : '';
+    const shortPartBadge = hasMultipleChunks ? `Part ${chunkIdx + 1} • ` : 'Single-Skill • ';
+    const chunkHanziPreview = chunkWords.map((w) => w.hanzi).join(' · ');
+
+    // 1. Discovery (3D Flashcards for this chunk)
+    nodes.push({
+      id: nextNodeId,
+      title: `Stage ${nextNodeId} • Discovery${partLabel}`,
+      shortTitle: `${nextNodeId}. Discovery`,
+      subtitle: `3D Flashcards (${chunkHanziPreview})`,
+      description: `Explore Hanzi, Pinyin pitch contours, and context sentences for ${chunkHanziPreview}.`,
+      iconName: 'Layers',
+      accentColor: 'from-rose-500 to-red-600',
+      nodeCategory: 'single',
+      badgeText: `${shortPartBadge}Cards`,
+      xpReward: 15,
+      launchType: 'flashcards',
+      allowedModalities: ['recognition'],
+      words: chunkWords,
+      chunkIndex: chunkIdx
+    });
+    nextNodeId += 1;
+
+    // 2. Calligraphy (3-Stage Stroke Writing for this chunk)
+    nodes.push({
+      id: nextNodeId,
+      title: `Stage ${nextNodeId} • Calligraphy${partLabel}`,
+      shortTitle: `${nextNodeId}. Calligraphy`,
+      subtitle: `3-Stage Stroke Writing (${chunkHanziPreview})`,
+      description: `Master stroke order through Guided, Ghost Trace, and Memory stages for ${chunkHanziPreview}.`,
+      iconName: 'PenTool',
+      accentColor: 'from-amber-500 to-orange-600',
+      nodeCategory: 'single',
+      badgeText: `${shortPartBadge}3-Stage Write`,
+      xpReward: 25,
+      launchType: 'writing',
+      allowedModalities: ['writing'],
+      words: chunkWords,
+      chunkIndex: chunkIdx
+    });
+    nextNodeId += 1;
+
+    // 3. Audio & Oral Mix (Listening Dictation + Speaking for this chunk)
+    nodes.push({
+      id: nextNodeId,
+      title: `Stage ${nextNodeId} • Audio & Oral Mix${partLabel}`,
+      shortTitle: `${nextNodeId}. Audio & Oral Mix`,
+      subtitle: `Listening Dictation + Speaking (${chunkHanziPreview})`,
+      description: `Interleaves native listening dictation and pronunciation for ${chunkHanziPreview}.`,
+      iconName: 'Headphones',
+      accentColor: 'from-emerald-500 to-teal-600',
+      nodeCategory: 'mix',
+      badgeText: hasMultipleChunks ? `Part ${chunkIdx + 1} • Audio Mix` : 'Multi-Skill Mix',
+      xpReward: 25,
+      launchType: 'mixed',
+      allowedModalities: ['listening', 'speaking'],
+      words: chunkWords,
+      chunkIndex: chunkIdx
+    });
+    nextNodeId += 1;
+
+    // 4. If lesson has 6+ words, add a Context Gauntlet node after every second chunk
+    if (allNormalized.length >= 6 && (chunkIdx + 1) % 2 === 0) {
+      const prevChunkWords = chunks[chunkIdx - 1] || [];
+      const gauntletWords = [...prevChunkWords, ...chunkWords];
+      const gauntletPreview = gauntletWords
+        .slice(0, 5)
+        .map((w) => w.hanzi)
+        .join(' · ');
+
+      nodes.push({
+        id: nextNodeId,
+        title: `Stage ${nextNodeId} • Context Gauntlet`,
+        shortTitle: `${nextNodeId}. Context Gauntlet`,
+        subtitle: `Sentence Builder + Cloze (${gauntletPreview}${gauntletWords.length > 5 ? '...' : ''})`,
+        description: `Synthesize grammar and sentence context across ${gauntletWords.length} unit words.`,
+        iconName: 'Flame',
+        accentColor: 'from-fuchsia-600 to-rose-600',
+        nodeCategory: 'gauntlet',
+        badgeText: 'Context Gauntlet • Cloze & Order',
+        xpReward: 25,
+        launchType: 'mixed',
+        allowedModalities: ['sentence_builder', 'cloze'],
+        words: gauntletWords,
+        chunkIndex: chunkIdx
+      });
+      nextNodeId += 1;
+    }
+  });
+
+  // Final Node: Unit Boss Battle covering the entire lesson
+  nodes.push({
+    id: nextNodeId,
+    title: `Stage ${nextNodeId} • Unit Boss Battle`,
+    shortTitle: `${nextNodeId}. Unit Boss`,
+    subtitle: `Jade Dragon Guardian Battle (${allNormalized.length} Words • 15s Timer)`,
+    description: 'Deplete the Boss HP bar before your 3 hearts or 15-second turn clock run out!',
+    iconName: 'Trophy',
+    accentColor: 'from-purple-600 to-indigo-700',
+    nodeCategory: 'boss',
+    badgeText: 'Boss Battle',
+    xpReward: 45,
+    launchType: 'boss',
+    allowedModalities: ['recognition', 'listening'],
+    words: allNormalized,
+    chunkIndex: totalChunks
+  });
+
+  return nodes;
 }
 
 export function buildDynamicModalityQueue(
