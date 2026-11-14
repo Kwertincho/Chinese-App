@@ -418,9 +418,9 @@ export function ChaoToneVisualizer({ pinyin = '', hanzi = '', compact = false })
                   <rect x="21" y="12" width="6" height="6" fill={meta.color} />
                 )}
               </svg>
-              <div className="flex items-center gap-1 text-[10px] font-bold">
-                <span className="text-white font-hanzi">{item.syllable}</span>
-                {!compact && <span className="text-slate-400">({meta.label})</span>}
+              <div className="flex items-center gap-1 text-xs font-bold font-clarity">
+                <span className="text-white text-[15px] font-extrabold">{item.syllable}</span>
+                {!compact && <span className="text-slate-400 text-[11px]">({meta.label})</span>}
               </div>
             </div>
           );
@@ -428,7 +428,7 @@ export function ChaoToneVisualizer({ pinyin = '', hanzi = '', compact = false })
       </div>
 
       {sandhiNote && (
-        <span className="inline-flex items-center gap-1 px-2.5 py-0.5 rounded-[2px] bg-amber-500/15 border-2 border-amber-400/60 text-amber-300 text-[10px] font-extrabold font-hanzi">
+        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-[2px] bg-amber-500/15 border-2 border-amber-400/60 text-amber-300 text-xs font-bold font-clarity">
           <span>⚡ {sandhiNote}</span>
         </span>
       )}
@@ -492,7 +492,7 @@ export function MandarinAudioControls({
       <button
         type="button"
         onClick={() => handlePlayRate(true)}
-        title="Play 0.5x Slow Speed (zh-CN)"
+        title="Play 0.65x Slow Speed (zh-CN)"
         className={`game-btn-3d rounded-[2px] font-black border-2 flex items-center gap-1 transition-all ${btnPadding} ${
           isPlayingSlow
             ? 'bg-sky-400 text-slate-950 border-sky-200 scale-105'
@@ -502,7 +502,7 @@ export function MandarinAudioControls({
         }`}
       >
         <Turtle className={iconClass} />
-        <span>0.5x Slow</span>
+        <span>0.65x Slow</span>
       </button>
     </div>
   );
@@ -544,7 +544,7 @@ export function SessionGameTopHud({
           <span className="font-pixel-header text-[9px] uppercase text-amber-400 block truncate">
             {title}
           </span>
-          <span className="text-[10px] text-slate-300 block truncate">{subtitle}</span>
+          <span className="font-clarity text-xs font-semibold text-slate-300 block truncate mt-0.5">{subtitle}</span>
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">

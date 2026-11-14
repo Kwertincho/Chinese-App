@@ -143,7 +143,7 @@ export function FlashcardStageModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex justify-center">
-      <div className="w-full max-w-md bg-slate-900 min-h-screen flex flex-col justify-between p-4 pb-safe overflow-y-auto">
+      <div className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto">
         <SessionGameTopHud
           title="Stage 1 • Flashcards"
           subtitle={`Card ${cardIndex + 1} of ${words.length} • Mastery Lv.${masteryLevel}/10 (${tierMeta.tier})`}
@@ -160,21 +160,21 @@ export function FlashcardStageModal({
         />
 
         {/* Smooth 3D Perspective Card Flip Container */}
-        <div className="my-auto py-4" style={{ perspective: '1200px' }}>
+        <div className="flex-1 flex flex-col justify-center my-2" style={{ perspective: '1200px' }}>
           <div
             onClick={handleFlipCard}
             style={{
               transformStyle: 'preserve-3d',
               transform: isFlipped ? 'rotateY(180deg)' : 'rotateY(0deg)'
             }}
-            className={`cursor-pointer relative w-full min-h-[370px] transition-transform duration-500 select-none ${
+            className={`cursor-pointer relative w-full flex-1 min-h-[430px] transition-transform duration-500 select-none ${
               isFlipped ? 'animate-game-green-pulse' : ''
             }`}
           >
             {/* FRONT FACE */}
             <div
               style={{ backfaceVisibility: 'hidden' }}
-              className="absolute inset-0 rounded-3xl bg-gradient-to-b from-slate-800 to-slate-900 border-2 border-slate-700 hover:border-rose-500/60 p-5 shadow-2xl flex flex-col justify-between"
+              className="absolute inset-0 rounded-3xl bg-gradient-to-b from-slate-800 to-slate-900 border-2 border-slate-700 hover:border-rose-500/60 p-6 shadow-2xl flex flex-col justify-between"
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30">
@@ -190,13 +190,13 @@ export function FlashcardStageModal({
                 />
               </div>
 
-              <div className="my-auto text-center space-y-2.5 py-3">
-                <div className="text-6xl font-black text-white tracking-widest font-hanzi">
+              <div className="my-auto text-center space-y-4 py-4">
+                <div className="text-7xl font-black text-white tracking-widest font-hanzi">
                   {currentWord.hanzi}
                 </div>
                 {hideFrontPinyin ? (
-                  <div className="py-2 space-y-2">
-                    <p className="text-[11px] font-bold text-slate-400">
+                  <div className="py-3 space-y-2.5">
+                    <p className="font-clarity text-xs font-bold text-slate-400">
                       Lv.{masteryLevel} Active Recall • Pinyin scaffolding hidden
                     </p>
                     <button
@@ -206,7 +206,7 @@ export function FlashcardStageModal({
                         soundFX.playPop();
                         setShowPinyinHint(true);
                       }}
-                      className="px-3 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-amber-500/40 text-amber-300 text-xs font-bold inline-flex items-center gap-1.5 transition-all"
+                      className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-amber-500/40 text-amber-300 text-xs font-bold inline-flex items-center gap-1.5 transition-all"
                     >
                       <Eye className="w-3.5 h-3.5" />
                       <span>Show Pinyin Hint</span>
@@ -214,7 +214,7 @@ export function FlashcardStageModal({
                   </div>
                 ) : (
                   <>
-                    <div className="text-2xl font-extrabold text-rose-400">{currentWord.pinyin}</div>
+                    <div className="font-pinyin text-rose-400">{currentWord.pinyin}</div>
 
                     {/* Chao Tone Contour Visualizer & Tone Sandhi Detector */}
                     <ChaoToneVisualizer
@@ -222,12 +222,12 @@ export function FlashcardStageModal({
                       hanzi={currentWord.hanzi}
                     />
 
-                    <p className="text-[11px] text-slate-400">{currentWord.toneNote}</p>
+                    <p className="font-clarity text-[15px] text-slate-300 pt-1">{currentWord.toneNote}</p>
                   </>
                 )}
               </div>
 
-              <div className="text-center pt-2 border-t border-slate-800/80">
+              <div className="text-center pt-3 border-t border-slate-800/80">
                 <span className="text-xs font-bold text-amber-300 inline-flex items-center gap-1.5">
                   <RefreshCw className="w-3.5 h-3.5" />
                   <span>Tap card to 3D flip (+15 XP)</span>
@@ -241,7 +241,7 @@ export function FlashcardStageModal({
                 backfaceVisibility: 'hidden',
                 transform: 'rotateY(180deg)'
               }}
-              className="absolute inset-0 rounded-3xl bg-gradient-to-b from-slate-800 via-slate-900 to-slate-950 border-2 border-emerald-500/50 p-5 shadow-2xl flex flex-col justify-between"
+              className="absolute inset-0 rounded-3xl bg-gradient-to-b from-slate-800 via-slate-900 to-slate-950 border-2 border-emerald-500/50 p-6 shadow-2xl flex flex-col justify-between"
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-emerald-500/15 text-emerald-300 border border-emerald-500/30">
@@ -257,19 +257,19 @@ export function FlashcardStageModal({
                 />
               </div>
 
-              <div className="my-auto space-y-3 py-1">
-                <div className="text-center border-b border-slate-800 pb-2.5">
-                  <div className="flex items-center justify-center gap-2">
-                    <span className="text-3xl font-black text-white font-hanzi">{currentWord.hanzi}</span>
-                    <span className="text-lg font-bold text-rose-400">({currentWord.pinyin})</span>
+              <div className="my-auto space-y-5 py-3">
+                <div className="text-center border-b border-slate-800 pb-4 space-y-1.5">
+                  <div className="flex items-center justify-center gap-2.5">
+                    <span className="text-4xl font-black text-white font-hanzi">{currentWord.hanzi}</span>
+                    <span className="font-pinyin text-rose-400">({currentWord.pinyin})</span>
                   </div>
-                  <div className="text-base font-extrabold text-emerald-400 mt-0.5">
+                  <div className="font-clarity text-lg font-extrabold text-emerald-400 pt-0.5">
                     {currentWord.meaning || currentWord.english}
                   </div>
-                  <p className="text-[11px] text-slate-400 mt-0.5">{currentWord.literal}</p>
+                  <p className="font-clarity text-sm text-slate-300">{currentWord.literal}</p>
                 </div>
 
-                <div className="rounded-2xl bg-slate-950/80 border border-slate-800 p-3 space-y-1.5">
+                <div className="rounded-2xl bg-slate-950/80 border border-slate-800 p-4 space-y-2">
                   <div className="flex items-center justify-between gap-1">
                     <span className="text-[10px] font-bold uppercase text-amber-400">
                       Example Sentence
@@ -283,38 +283,21 @@ export function FlashcardStageModal({
                       size="sm"
                     />
                   </div>
-                  <p className="text-sm font-bold text-white font-hanzi">{currentWord.exampleHanzi}</p>
-                  <p className="text-xs font-semibold text-rose-300">
+                  <p className="text-lg font-bold text-white font-hanzi">{currentWord.exampleHanzi}</p>
+                  <p className="font-clarity text-[16px] font-bold text-rose-300">
                     {currentWord.examplePinyin}
                   </p>
-                  <p className="text-xs text-slate-300 italic">"{currentWord.exampleEnglish}"</p>
+                  <p className="font-clarity text-[15px] text-slate-200 italic">"{currentWord.exampleEnglish}"</p>
                 </div>
 
-                {/* Compact Editable Personal Note / Mnemonic saved in localStorage per word */}
-                <div
-                  onClick={(e) => e.stopPropagation()}
-                  className="rounded-2xl bg-slate-950/90 border border-amber-500/30 p-2.5 space-y-1"
-                >
-                  <div className="flex items-center justify-between">
-                    <label className="text-[10px] font-extrabold uppercase tracking-wider text-amber-400 flex items-center gap-1">
-                      <PenTool className="w-3 h-3" />
-                      <span>Personal Note / Mnemonic</span>
-                    </label>
-                    <span className="text-[9px] font-bold text-emerald-400">Auto-saved</span>
-                  </div>
-                  <input
-                    type="text"
-                    value={wordNotes[currentWord.hanzi] || wordNotes[currentWord.id] || ''}
-                    onChange={(e) => onSaveWordNote?.(currentWord, e.target.value)}
-                    placeholder={`Add a mnemonic or note for ${currentWord.hanzi}...`}
-                    className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-xl px-3 py-1.5 text-xs font-semibold text-white placeholder:text-slate-500 outline-none"
-                  />
-                </div>
-
-                <p className="text-[10px] text-slate-400 text-center">{currentWord.usageTip}</p>
+                {currentWord.usageTip && (
+                  <p className="font-clarity text-xs text-slate-300 text-center leading-relaxed px-2">
+                    {currentWord.usageTip}
+                  </p>
+                )}
               </div>
 
-              <div className="text-center pt-2 border-t border-slate-800/80">
+              <div className="text-center pt-3 border-t border-slate-800/80">
                 <span className="text-xs font-bold text-slate-400 inline-flex items-center gap-1.5">
                   <RefreshCw className="w-3.5 h-3.5 text-emerald-400" />
                   <span>Tap card to flip back to Front</span>
@@ -815,7 +798,7 @@ export function WritingStageModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex justify-center">
-      <div className="w-full max-w-md bg-slate-900 min-h-screen flex flex-col justify-between p-4 pb-safe overflow-y-auto">
+      <div className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto">
         <div>
           <SessionGameTopHud
             title="Stage 2 • Progressive Calligraphy"
@@ -845,7 +828,7 @@ export function WritingStageModal({
 
           <div className="mt-3 bg-slate-800/80 border border-slate-700/70 rounded-2xl p-3 flex items-center justify-between gap-2">
             <div className="min-w-0">
-              <span className="text-[10px] font-bold uppercase text-amber-400 block truncate">
+              <span className="font-clarity text-[15px] font-extrabold text-amber-400 block truncate">
                 {currentWord.meaning || currentWord.english}
               </span>
               <div className="flex items-center flex-wrap gap-2 mt-0.5">
@@ -859,13 +842,13 @@ export function WritingStageModal({
                       soundFX.playPop();
                       setShowPinyinHint(true);
                     }}
-                    className="px-2 py-0.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-amber-500/40 text-[10px] font-bold text-amber-300 flex items-center gap-1"
+                    className="px-2 py-0.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-amber-500/40 text-xs font-bold text-amber-300 flex items-center gap-1"
                   >
                     <Eye className="w-3 h-3" />
                     <span>Show Pinyin Hint</span>
                   </button>
                 ) : (
-                  <span className="text-xs font-bold text-rose-400">{currentWord.pinyin}</span>
+                  <span className="font-pinyin text-rose-400">{currentWord.pinyin}</span>
                 )}
               </div>
               <p className="text-[11px] text-slate-400 mt-0.5 truncate">
@@ -1470,7 +1453,7 @@ export function AudioSpeechStageModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex justify-center">
-      <div className="w-full max-w-md bg-slate-900 min-h-screen flex flex-col justify-between p-4 pb-safe overflow-y-auto">
+      <div className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto">
         <SessionGameTopHud
           title={
             initialFocusMode === 'dictation'
@@ -1511,7 +1494,7 @@ export function AudioSpeechStageModal({
                     {masteryLevel >= 7 ? 'Lv.7+ Strict Dictation' : 'Listening (Dictation)'}
                   </span>
                 </span>
-                <span className="text-xs font-semibold text-slate-400 truncate">
+                <span className="font-clarity text-[15px] font-semibold text-slate-300 truncate">
                   Meaning:{' '}
                   <strong className="text-white">
                     {(currentWord.meaning || currentWord.english).split(' / ')[0]}
@@ -1521,11 +1504,11 @@ export function AudioSpeechStageModal({
 
               <div className="rounded-2xl bg-slate-950/70 border border-slate-800 p-3.5 flex items-center justify-between gap-2">
                 <div>
-                  <p className="text-xs font-bold text-white">Listen to the Mandarin word</p>
-                  <p className="text-[11px] text-slate-400">
+                  <p className="font-clarity text-[15px] font-bold text-white">Listen to the Mandarin word</p>
+                  <p className="font-clarity text-sm text-slate-300 mt-0.5">
                     {dictationSubmitted
                       ? `${currentWord.hanzi} (${currentWord.pinyin})`
-                      : 'Tap 1.0x Normal or 0.5x Slow to hear pronunciation'}
+                      : 'Tap 1.0x Normal or 0.65x Slow to hear pronunciation'}
                   </p>
                 </div>
                 <MandarinAudioControls
@@ -1681,7 +1664,7 @@ export function AudioSpeechStageModal({
                 </div>
                 {!hideSpeakingPinyin && (
                   <>
-                    <div className="text-sm font-bold text-rose-400">{currentWord.pinyin}</div>
+                    <div className="font-pinyin text-rose-400">{currentWord.pinyin}</div>
                     <ChaoToneVisualizer
                       pinyin={currentWord.pinyin}
                       hanzi={currentWord.hanzi}
@@ -1689,7 +1672,7 @@ export function AudioSpeechStageModal({
                     />
                   </>
                 )}
-                <p className="text-[11px] text-slate-400">
+                <p className="font-clarity text-[15px] font-medium text-slate-300">
                   {currentWord.meaning || currentWord.english}
                 </p>
               </div>
@@ -1955,7 +1938,7 @@ export function BossChallengeModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex justify-center">
-      <div className="w-full max-w-md bg-slate-900 min-h-screen flex flex-col justify-between p-4 pb-safe overflow-y-auto">
+      <div className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto">
         <div>
           <SessionGameTopHud
             title={isPracticeMode ? 'Practice Arena Quiz' : 'Stage 4 • Boss Battle'}
@@ -2073,11 +2056,11 @@ export function BossChallengeModal({
                 />
               </div>
 
-              <p className="text-xs font-bold text-slate-300 pt-1">{currentQuestion.prompt}</p>
+              <p className="font-clarity text-[15px] font-bold text-slate-200 pt-1">{currentQuestion.prompt}</p>
               <div className="text-3xl font-black text-white py-1 font-hanzi">
                 {currentQuestion.focusHanzi}
               </div>
-              <div className="text-xs font-semibold text-rose-300">
+              <div className="font-pinyin text-rose-300">
                 {currentQuestion.focusPinyin}
               </div>
             </div>
@@ -2106,9 +2089,9 @@ export function BossChallengeModal({
                     type="button"
                     disabled={isAnswered}
                     onClick={() => handleSelectOption(opt)}
-                    className={`game-btn-3d w-full p-3.5 rounded-2xl border text-left text-xs font-bold flex items-center justify-between transition-all ${btnStyle}`}
+                    className={`game-btn-3d font-clarity w-full p-3.5 rounded-2xl border text-left text-[15px] font-bold flex items-center justify-between transition-all ${btnStyle}`}
                   >
-                    <span>{opt.text}</span>
+                    <span className="font-clarity">{opt.text}</span>
                     {isAnswered && opt.isCorrect && (
                       <Check className="w-4 h-4 text-emerald-400 shrink-0" />
                     )}

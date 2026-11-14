@@ -115,16 +115,16 @@ export function ClozeExerciseCard({
 
       {/* Sentence Prompt Card with [ ___ ] Blank */}
       <div className="rounded-2xl bg-slate-950/90 border border-slate-800 p-4 space-y-2 text-center">
-        <span className="text-[10px] font-bold uppercase text-amber-400 block">
+        <span className="font-clarity text-sm font-bold text-amber-400 block">
           Select the missing Mandarin word for [ ___ ]:
         </span>
         <div className="font-hanzi text-xl font-black text-white tracking-wide leading-relaxed">
           {isCompleted ? clozeData.mandarinSentence : clozeData.blankSentence}
         </div>
         {shouldShowPinyin && (
-          <div className="text-xs font-bold text-rose-300">{clozeData.pinyinSentence}</div>
+          <div className="font-pinyin text-rose-300">{clozeData.pinyinSentence}</div>
         )}
-        <div className="text-xs text-slate-300 italic pt-1 border-t border-slate-800/80">
+        <div className="font-clarity text-[15px] text-slate-200 italic pt-1 border-t border-slate-800/80">
           "{clozeData.englishSentence}"
         </div>
       </div>
@@ -149,16 +149,16 @@ export function ClozeExerciseCard({
               type="button"
               disabled={isCompleted}
               onClick={() => onSelectOption(opt, clozeData)}
-              className={`game-btn-3d p-3.5 rounded-2xl border-2 flex flex-col items-center justify-center text-center transition-all ${btnClass}`}
+              className={`game-btn-3d font-clarity p-3.5 rounded-2xl border-2 flex flex-col items-center justify-center text-center transition-all ${btnClass}`}
             >
               <span className="font-hanzi text-xl font-black">{opt.hanzi}</span>
               {shouldShowPinyin && (
-                <span className="text-[11px] font-bold text-rose-300 mt-0.5">
+                <span className="font-clarity text-[16px] font-extrabold text-rose-300 mt-0.5">
                   {opt.pinyin}
                 </span>
               )}
               {isCompleted && (
-                <span className="text-[10px] text-slate-300 mt-0.5 truncate max-w-full">
+                <span className="font-clarity text-xs text-slate-200 mt-0.5 truncate max-w-full">
                   {opt.meaning}
                 </span>
               )}
@@ -310,7 +310,7 @@ export function ToneSandhiDrillModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex justify-center">
-      <div className="w-full max-w-md bg-slate-900 min-h-screen flex flex-col justify-between p-4 pb-safe overflow-y-auto">
+      <div className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto">
         <SessionGameTopHud
           title="Tone & Sandhi Ear Drill • 声调辨析"
           subtitle={`Item ${stepIdx + 1} of ${drillQueue.length} • Listen & Identify Tones`}
@@ -351,15 +351,15 @@ export function ToneSandhiDrillModal({
               <div className="font-hanzi text-5xl font-black text-white tracking-wider">
                 {currentWord.hanzi}
               </div>
-              <div className="text-xs font-bold text-slate-400">
+              <div className="font-clarity text-[15px] font-bold text-slate-300">
                 Meaning: <span className="text-emerald-300">{currentWord.meaning || currentWord.english}</span>
               </div>
 
               {isAnswered ? (
                 <div className="pt-2 space-y-1.5">
-                  <div className="text-lg font-extrabold text-rose-400">
+                  <div className="font-pinyin text-rose-400">
                     {currentWord.pinyin}{' '}
-                    <span className="text-xs text-slate-400">({currentWord.pinyinNum})</span>
+                    <span className="text-sm text-slate-400">({currentWord.pinyinNum})</span>
                   </div>
                   <ChaoToneVisualizer
                     pinyin={currentWord.pinyin}
@@ -368,7 +368,7 @@ export function ToneSandhiDrillModal({
                   />
                 </div>
               ) : (
-                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-950 border border-slate-800 text-[11px] font-bold text-amber-300 mt-1">
+                <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-slate-950 border border-slate-800 font-clarity text-sm font-bold text-amber-300 mt-1">
                   <span>🔊 Listen carefully and choose the spoken tone pattern</span>
                 </div>
               )}
@@ -377,7 +377,7 @@ export function ToneSandhiDrillModal({
 
           {/* 4 Tone Pattern Choices derived from pinyinNum & Sandhi Rules */}
           <div className="space-y-2">
-            <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
+            <span className="font-clarity text-sm font-bold text-slate-300 block">
               Select the correct Tone & Sandhi pattern:
             </span>
             {drillData.choices.map((choice) => {
@@ -399,9 +399,9 @@ export function ToneSandhiDrillModal({
                   type="button"
                   disabled={isAnswered}
                   onClick={() => handleSelectToneChoice(choice)}
-                  className={`game-btn-3d w-full p-3.5 rounded-2xl border text-left text-xs font-bold flex items-center justify-between transition-all ${btnStyle}`}
+                  className={`game-btn-3d font-clarity w-full p-3.5 rounded-2xl border text-left text-[15px] font-bold flex items-center justify-between transition-all ${btnStyle}`}
                 >
-                  <span>{choice.label}</span>
+                  <span className="font-clarity">{choice.label}</span>
                   {isAnswered && choice.isCorrect && (
                     <Check className="w-4 h-4 text-emerald-400 shrink-0" />
                   )}
@@ -588,7 +588,7 @@ export function HskMockExamModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex justify-center">
-      <div className="w-full max-w-md bg-slate-900 min-h-screen flex flex-col justify-between p-4 pb-safe overflow-y-auto">
+      <div className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto">
         {/* Top Exam Header */}
         <div className="space-y-2.5 border-b border-slate-800 pb-3">
           <div className="flex items-center justify-between gap-2">
@@ -681,7 +681,7 @@ export function HskMockExamModal({
                 </span>
               </div>
 
-              <p className="text-xs font-bold text-slate-300">{currentQ.prompt}</p>
+              <p className="font-clarity text-[15px] font-bold text-slate-200">{currentQ.prompt}</p>
 
               {/* Question Prompt Box */}
               <div className="rounded-2xl bg-slate-950/90 border border-slate-800 p-4 text-center space-y-2.5">
@@ -690,7 +690,7 @@ export function HskMockExamModal({
                     <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-400/40 flex items-center justify-center text-emerald-300">
                       <Headphones className="w-6 h-6" />
                     </div>
-                    <p className="text-xs font-bold text-slate-300">
+                    <p className="font-clarity text-[15px] font-bold text-slate-200">
                       {currentQ.displayPromptSub}
                     </p>
                     <MandarinAudioControls
@@ -706,7 +706,7 @@ export function HskMockExamModal({
                     <div className="font-hanzi text-2xl font-black text-white tracking-wide">
                       {currentQ.displayPromptHanzi}
                     </div>
-                    <div className="text-xs text-slate-400 italic">
+                    <div className="font-clarity text-[16px] font-semibold text-rose-300">
                       {currentQ.displayPromptSub}
                     </div>
                   </div>
@@ -723,7 +723,7 @@ export function HskMockExamModal({
                       key={opt.id}
                       type="button"
                       onClick={() => handleSelectAnswer(opt.id)}
-                      className={`game-btn-3d w-full p-3.5 rounded-2xl border text-left text-xs font-bold flex items-center justify-between gap-2 transition-all ${
+                      className={`game-btn-3d font-clarity w-full p-3.5 rounded-2xl border text-left text-[15px] font-bold flex items-center justify-between gap-2 transition-all ${
                         isPicked
                           ? 'bg-amber-500/20 border-amber-400 text-amber-200 font-extrabold shadow-md'
                           : 'bg-slate-900/90 hover:bg-slate-850 border-slate-700 text-slate-200'
@@ -739,7 +739,7 @@ export function HskMockExamModal({
                         >
                           {letter}
                         </span>
-                        <span className="truncate font-hanzi">{opt.label}</span>
+                        <span className="truncate font-clarity font-hanzi">{opt.label}</span>
                       </div>
                       {isPicked && (
                         <span className="text-[10px] font-black uppercase px-2 py-0.5 rounded bg-amber-400/20 text-amber-300 shrink-0">
@@ -1649,7 +1649,7 @@ export function AdaptiveMixedSessionModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex justify-center">
-      <div className="w-full max-w-md bg-slate-900 min-h-screen flex flex-col justify-between p-4 pb-safe overflow-y-auto">
+      <div className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto">
         <div>
           <SessionGameTopHud
             title={sessionConfig.title}
@@ -1750,7 +1750,7 @@ export function AdaptiveMixedSessionModal({
                 </div>
               ) : (
                 <>
-                  <div className="text-lg font-extrabold text-rose-400">{currentWord.pinyin}</div>
+                  <div className="font-pinyin text-rose-400">{currentWord.pinyin}</div>
 
                   <ChaoToneVisualizer
                     pinyin={currentWord.pinyin}
@@ -1762,36 +1762,20 @@ export function AdaptiveMixedSessionModal({
 
               {isCardFlipped && (
                 <div
-                  className="rounded-2xl bg-slate-950/80 border border-slate-800 p-3 text-left space-y-2 mt-2"
+                  className="rounded-2xl bg-slate-950/80 border border-slate-800 p-3.5 text-left space-y-1.5 mt-2"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <div>
-                    <p className="font-hanzi text-xs font-bold text-white">{currentWord.exampleHanzi}</p>
-                    <p className="text-[11px] text-rose-300">{currentWord.examplePinyin}</p>
-                    <p className="text-[11px] text-slate-300 italic">
-                      "{currentWord.exampleEnglish}"
-                    </p>
-                  </div>
-                  {onSaveWordNote && (
-                    <div className="pt-1.5 border-t border-slate-800">
-                      <label className="text-[10px] font-extrabold uppercase text-amber-400 block mb-1">
-                        Personal Note / Mnemonic
-                      </label>
-                      <input
-                        type="text"
-                        value={wordNotes[currentWord.hanzi] || wordNotes[currentWord.id] || ''}
-                        onChange={(e) => onSaveWordNote(currentWord, e.target.value)}
-                        placeholder="Add a personal memory hook or note..."
-                        className="w-full bg-slate-900 border border-slate-700 focus:border-amber-400 rounded-xl px-2.5 py-1.5 text-xs text-white placeholder:text-slate-500 outline-none"
-                      />
-                    </div>
-                  )}
+                  <p className="font-hanzi text-base font-bold text-white">{currentWord.exampleHanzi}</p>
+                  <p className="font-clarity text-[15px] font-semibold text-rose-300">{currentWord.examplePinyin}</p>
+                  <p className="font-clarity text-sm text-slate-300 italic">
+                    "{currentWord.exampleEnglish}"
+                  </p>
                 </div>
               )}
             </div>
 
             <div className="space-y-2">
-              <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 block">
+              <span className="font-clarity text-sm font-bold text-slate-300 block">
                 Select the matching English meaning:
               </span>
               {recognitionOptions.map((opt) => {
@@ -1812,9 +1796,9 @@ export function AdaptiveMixedSessionModal({
                     type="button"
                     disabled={recogAnswered}
                     onClick={() => handleSelectRecognitionOption(opt)}
-                    className={`game-btn-3d w-full p-3.5 rounded-2xl border text-left text-xs font-bold flex items-center justify-between transition-all ${styleClass}`}
+                    className={`game-btn-3d font-clarity w-full p-3.5 rounded-2xl border text-left text-[15px] font-bold flex items-center justify-between transition-all ${styleClass}`}
                   >
-                    <span>{opt.text}</span>
+                    <span className="font-clarity">{opt.text}</span>
                     {recogAnswered && opt.isCorrect && (
                       <Check className="w-4 h-4 text-emerald-400 shrink-0" />
                     )}
@@ -1827,7 +1811,7 @@ export function AdaptiveMixedSessionModal({
 
               {recogAnswered && (
                 <div
-                  className={`rounded-xl p-3 text-xs font-bold border ${
+                  className={`font-clarity rounded-xl p-3 text-sm font-bold border ${
                     recognitionOptions.find((o) => o.id === recogSelectedOption)?.isCorrect
                       ? 'bg-emerald-500/15 border-emerald-400/50 text-emerald-200'
                       : 'bg-rose-500/15 border-rose-400/50 text-rose-200'
@@ -1849,7 +1833,7 @@ export function AdaptiveMixedSessionModal({
           <div className="my-auto flex flex-col items-center space-y-2.5 py-2">
             <div className="w-full rounded-2xl bg-slate-800/80 border border-slate-700 p-3 flex items-center justify-between gap-2">
               <div className="min-w-0">
-                <span className="text-[10px] font-bold uppercase text-amber-400 block truncate">
+                <span className="font-clarity text-[15px] font-bold text-amber-400 block truncate">
                   {currentWord.meaning || currentWord.english}
                 </span>
                 <div className="flex items-center flex-wrap gap-2 mt-0.5">
@@ -1863,13 +1847,13 @@ export function AdaptiveMixedSessionModal({
                         soundFX.playPop();
                         setShowPinyinHint(true);
                       }}
-                      className="px-2 py-0.5 rounded-lg bg-slate-900 border border-amber-500/40 text-[10px] font-bold text-amber-300 flex items-center gap-1"
+                      className="px-2 py-0.5 rounded-lg bg-slate-900 border border-amber-500/40 text-xs font-bold text-amber-300 flex items-center gap-1"
                     >
                       <Eye className="w-3 h-3" />
                       <span>Show Pinyin Hint</span>
                     </button>
                   ) : (
-                    <span className="text-xs font-bold text-rose-400">{currentWord.pinyin}</span>
+                    <span className="font-pinyin text-rose-400">{currentWord.pinyin}</span>
                   )}
                 </div>
               </div>
@@ -2115,11 +2099,11 @@ export function AdaptiveMixedSessionModal({
 
             <div className="rounded-2xl bg-slate-950/80 border border-slate-800 p-3.5 flex items-center justify-between gap-2">
               <div>
-                <p className="text-xs font-bold text-white">Listen & Transcribe</p>
-                <p className="text-[11px] text-slate-400">
+                <p className="font-clarity text-[15px] font-bold text-white">Listen & Transcribe</p>
+                <p className="font-clarity text-sm text-slate-300">
                   {stepCompleted
                     ? `${currentWord.hanzi} (${currentWord.pinyin})`
-                    : 'Play native 1.0x Normal or 0.5x Slow audio'}
+                    : 'Play native 1.0x Normal or 0.65x Slow audio'}
                 </p>
               </div>
               <MandarinAudioControls
@@ -2266,7 +2250,7 @@ export function AdaptiveMixedSessionModal({
               </div>
               {!hideSpeakingPinyin && (
                 <>
-                  <div className="text-sm font-bold text-rose-400">{currentWord.pinyin}</div>
+                  <div className="font-pinyin text-rose-400">{currentWord.pinyin}</div>
                   <ChaoToneVisualizer
                     pinyin={currentWord.pinyin}
                     hanzi={currentWord.hanzi}
@@ -2274,7 +2258,7 @@ export function AdaptiveMixedSessionModal({
                   />
                 </>
               )}
-              <p className="text-xs text-slate-400">{currentWord.meaning || currentWord.english}</p>
+              <p className="font-clarity text-[15px] text-slate-300">{currentWord.meaning || currentWord.english}</p>
             </div>
 
             <button
@@ -2391,16 +2375,16 @@ export function AdaptiveMixedSessionModal({
             </div>
 
             <div className="rounded-2xl bg-slate-950/85 border border-slate-800 p-3.5 space-y-1">
-              <span className="text-[10px] font-bold uppercase text-amber-400 block">
+              <span className="font-clarity text-xs font-bold uppercase text-amber-400 block">
                 Build this Mandarin sentence (Focus:{' '}
                 <span className="font-hanzi">{currentWord.hanzi}</span>
                 {showSentenceBuilderPinyin ? ` • ${currentWord.pinyin}` : ''}):
               </span>
-              <p className="text-sm font-black text-white">
+              <p className="font-clarity text-[16px] font-black text-white">
                 "{sentencePuzzle.englishTranslation}"
               </p>
               {showSentenceBuilderPinyin && (
-                <p className="text-xs font-semibold text-rose-300 pt-0.5">
+                <p className="font-pinyin text-rose-300 pt-0.5">
                   {sentencePuzzle.pinyinHint}
                 </p>
               )}
@@ -2428,7 +2412,7 @@ export function AdaptiveMixedSessionModal({
                   >
                     <span className="font-hanzi">{tile.text}</span>
                     {showSentenceBuilderPinyin && tile.pinyin && (
-                      <span className="text-[10px] font-bold text-purple-200 leading-tight">
+                      <span className="font-clarity text-xs font-bold text-purple-200 leading-tight">
                         {tile.pinyin}
                       </span>
                     )}
@@ -2477,7 +2461,7 @@ export function AdaptiveMixedSessionModal({
                     >
                       <span className="font-hanzi">{tile.text}</span>
                       {showSentenceBuilderPinyin && tile.pinyin && (
-                        <span className="text-[10px] font-bold text-rose-300 leading-tight mt-0.5">
+                        <span className="font-clarity text-xs font-bold text-rose-300 leading-tight mt-0.5">
                           {tile.pinyin}
                         </span>
                       )}
@@ -2734,7 +2718,7 @@ export function BlitzMatchModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex justify-center">
-      <div className="w-full max-w-md bg-slate-900 min-h-screen flex flex-col justify-between p-4 pb-safe overflow-y-auto">
+      <div className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto">
         <div className="space-y-3 border-b border-slate-800 pb-3">
           <div className="flex items-center justify-between gap-2">
             <button
@@ -2868,10 +2852,10 @@ export function BlitzMatchModal({
                         <Check className="w-6 h-6 text-emerald-400" />
                       ) : (
                         <>
-                          <span className="text-xs font-extrabold text-rose-300">
+                          <span className="font-clarity text-[16px] font-extrabold text-rose-300">
                             {card.pinyin}
                           </span>
-                          <span className="text-xs font-bold text-white line-clamp-2 mt-0.5">
+                          <span className="font-clarity text-sm font-bold text-white line-clamp-2 mt-0.5">
                             {card.meaningShort}
                           </span>
                         </>
@@ -3308,7 +3292,7 @@ export function StrokeRuleIntuitionModal({
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex justify-center">
-      <div className="w-full max-w-md bg-slate-900 min-h-screen flex flex-col justify-between p-4 pb-safe overflow-y-auto">
+      <div className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto">
         <div className="space-y-2.5 border-b border-slate-800 pb-3">
           <div className="flex items-center justify-between gap-2">
             <button
@@ -3352,8 +3336,8 @@ export function StrokeRuleIntuitionModal({
               </span>
               <div className="flex items-baseline gap-2 mt-0.5">
                 <span className="font-hanzi text-2xl font-black text-white">{currentChallenge.char}</span>
-                <span className="text-xs font-bold text-rose-300">{currentChallenge.pinyin}</span>
-                <span className="text-xs font-semibold text-emerald-300 truncate">
+                <span className="font-pinyin text-rose-300">{currentChallenge.pinyin}</span>
+                <span className="font-clarity text-sm font-semibold text-emerald-300 truncate">
                   — {currentChallenge.meaning}
                 </span>
               </div>

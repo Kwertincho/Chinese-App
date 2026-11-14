@@ -2,8 +2,9 @@
 
 @layer base {
   :root {
-    --font-sans: 'Silkscreen', 'Noto Sans SC', monospace, sans-serif;
+    --font-sans: 'Plus Jakarta Sans', 'Inter', 'Noto Sans SC', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
     --font-pixel-header: 'Press Start 2P', 'Silkscreen', monospace;
+    --font-pixel-ui: 'Silkscreen', 'Plus Jakarta Sans', monospace, sans-serif;
     --font-hanzi: 'Noto Sans SC', 'PingFang SC', 'Hiragino Sans GB', 'Microsoft YaHei', sans-serif;
   }
 
@@ -15,7 +16,7 @@
     color: #f1f5f9;
     overscroll-behavior-y: none;
     -webkit-tap-highlight-color: transparent;
-    letter-spacing: -0.01em;
+    letter-spacing: 0em;
     background-image:
       linear-gradient(rgba(30, 41, 59, 0.35) 1px, transparent 1px),
       linear-gradient(90deg, rgba(30, 41, 59, 0.35) 1px, transparent 1px);
@@ -29,7 +30,29 @@
   letter-spacing: normal !important;
 }
 
-/* 16-bit Pixel RPG Typography Helpers */
+/* High-Clarity Pinyin & Choice Typography (Plus Jakarta Sans so tone diacritics ā á ǎ à ǖ ǘ ǚ ǜ are crystal-clear) */
+.font-pinyin {
+  font-family: var(--font-sans) !important;
+  font-size: clamp(19px, 4.8vw, 22px) !important;
+  line-height: 1.35 !important;
+  font-weight: 800;
+  letter-spacing: 0.01em !important;
+}
+
+.font-pinyin-inline {
+  font-family: var(--font-sans) !important;
+  font-size: 16px !important;
+  line-height: 1.35 !important;
+  font-weight: 700;
+  letter-spacing: 0.01em !important;
+}
+
+.font-clarity {
+  font-family: var(--font-sans) !important;
+  letter-spacing: 0em !important;
+}
+
+/* 16-bit Pixel RPG Typography Helpers (ONLY for short uppercase RPG headers, numeric badges & arcade button labels) */
 .font-pixel-header {
   font-family: var(--font-pixel-header);
   letter-spacing: 0.02em;
@@ -37,7 +60,7 @@
 }
 
 .font-pixel-ui {
-  font-family: var(--font-sans);
+  font-family: var(--font-pixel-ui);
 }
 
 /* 16-Bit Pixel RPG Dialogue Boxes, Beveled Cards & Borders */
@@ -64,6 +87,7 @@
 
 /* Chunky 16-bit Arcade Tactile Buttons with 4px solid bottom pixel ledge */
 .game-btn-3d {
+  font-family: var(--font-pixel-ui);
   border-radius: 2px !important;
   border-width: 2px;
   border-style: solid;
@@ -77,13 +101,13 @@
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 0 #020617 !important;
 }
 
-/* Safe area padding for Android & iOS edge-to-edge fullscreen navigation bars */
+/* Generous top and bottom mobile safe-area margins so buttons never touch Android screen edges */
 .pb-safe {
-  padding-bottom: env(safe-area-inset-bottom, 0px);
+  padding-bottom: max(18px, env(safe-area-inset-bottom, 18px));
 }
 
 .pt-safe {
-  padding-top: max(0.625rem, env(safe-area-inset-top, 0.625rem));
+  padding-top: max(16px, env(safe-area-inset-top, 16px));
 }
 
 /* Gamified 16-bit RPG micro-animations */

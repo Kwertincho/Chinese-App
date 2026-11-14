@@ -1,13 +1,26 @@
 // ============================================================================
-// CENTRALIZED WEB SPEECH API MANDARIN TTS ENGINE ('zh-CN', 1.0x NORMAL & 0.5x SLOW)
+// CENTRALIZED WEB SPEECH API MANDARIN TTS ENGINE ('zh-CN', 1.0x NORMAL & 0.65x SLOW)
 // ============================================================================
 export const NORMAL_SPEECH_RATE = 1.0;
-export const SLOW_SPEECH_RATE = 0.5;
+export const SLOW_SPEECH_RATE = 0.65;
+export const STORAGE_KEY_PREFERRED_VOICE = 'macalaoshi_preferred_zh_voice';
 
-// Module-level ref tracks current slow-mode preference so event handlers never read stale closures
+// Module-level refs track current slow-mode and voice preferences so event handlers never read stale closures
 let globalIsSlowMode = false;
+let globalPreferredVoiceURI = '';
 let activeUtteranceRef = null;
 let cachedVoicesList = [];
+
+if (typeof window !== 'undefined') {
+  try {
+    const savedVoice = window.localStorage.getItem(STORAGE_KEY_PREFERRED_VOICE);
+    if (savedVoice) {
+      globalPreferredVoiceURI = savedVoice;
+    }
+  } catch (e) {
+    // Ignore storage read errors
+  }
+}
 
 export function getGlobalIsSlowMode() {
   return globalIsSlowMode;
@@ -17,23 +30,115 @@ export function setGlobalIsSlowMode(val) {
   globalIsSlowMode = Boolean(val);
 }
 
-export function resolveMandarinVoice() {
-  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return null;
-  const voices = window.speechSynthesis.getVoices?.() || cachedVoicesList || [];
-  if (voices.length > 0) {
-    cachedVoicesList = voices;
+export function getGlobalPreferredVoiceURI() {
+  return globalPreferredVoiceURI;
+}
+
+export function setGlobalPreferredVoiceURI(voiceURI) {
+  globalPreferredVoiceURI = String(voiceURI || '').trim();
+  if (typeof window !== 'undefined') {
+    try {
+      if (globalPreferredVoiceURI) {
+        window.localStorage.setItem(STORAGE_KEY_PREFERRED_VOICE, globalPreferredVoiceURI);
+      } else {
+        window.localStorage.removeItem(STORAGE_KEY_PREFERRED_VOICE);
+      }
+    } catch (e) {
+      // Ignore storage write errors
+    }
   }
-  return (
-    voices.find((v) => {
-      const lang = String(v.lang || '').toLowerCase().replace('_', '-');
-      return lang === 'zh-cn' || lang.startsWith('zh-cn');
-    }) ||
-    voices.find((v) => {
-      const lang = String(v.lang || '').toLowerCase().replace('_', '-');
-      return lang === 'zh' || lang.startsWith('zh');
-    }) ||
-    null
+}
+
+function scoreMandarinVoiceQuality(voice) {
+  const name = String(voice?.name || '');
+  const lowerName = name.toLowerCase();
+  const lang = String(voice?.lang || '').toLowerCase().replace('_', '-');
+
+  let score = 0;
+
+  // Prefer Mainland Standard Mandarin (zh-CN) first, then other zh locales
+  if (lang === 'zh-cn' || lang.startsWith('zh-cn') || lang.startsWith('cmn-hans')) {
+    score += 40;
+  } else if (lang === 'zh' || lang.startsWith('zh') || lang.startsWith('cmn')) {
+    score += 20;
+  }
+
+  // Prioritize natural / neural / cloud high-clarity voices before robotic local fallback voices
+  if (
+    name.includes('Google 普通话') ||
+    name.includes('普通话') ||
+    lowerName.includes('google')
+  ) {
+    score += 55;
+  }
+  if (
+    lowerName.includes('natural') ||
+    lowerName.includes('neural') ||
+    lowerName.includes('premium') ||
+    lowerName.includes('online') ||
+    lowerName.includes('enhanced')
+  ) {
+    score += 50;
+  }
+  if (
+    lowerName.includes('xiaoxiao') ||
+    lowerName.includes('yunxi') ||
+    lowerName.includes('tingting') ||
+    lowerName.includes('siri') ||
+    lowerName.includes('meijia')
+  ) {
+    score += 35;
+  }
+  if (voice?.localService === false) {
+    score += 15;
+  }
+
+  return score;
+}
+
+export function getAvailableMandarinVoices() {
+  if (typeof window === 'undefined' || !('speechSynthesis' in window)) return [];
+  const rawVoices = window.speechSynthesis.getVoices?.() || [];
+  if (rawVoices.length > 0) {
+    cachedVoicesList = rawVoices;
+  }
+  const source = rawVoices.length > 0 ? rawVoices : cachedVoicesList;
+  const zhVoices = source.filter((v) => {
+    const lang = String(v?.lang || '').toLowerCase().replace('_', '-');
+    const name = String(v?.name || '').toLowerCase();
+    return (
+      lang.startsWith('zh') ||
+      lang.startsWith('cmn') ||
+      name.includes('chinese') ||
+      name.includes('mandarin') ||
+      name.includes('普通话') ||
+      name.includes('中文')
+    );
+  });
+
+  return [...zhVoices].sort(
+    (a, b) => scoreMandarinVoiceQuality(b) - scoreMandarinVoiceQuality(a)
   );
+}
+
+export function resolveMandarinVoice(preferredOverrideURI = undefined) {
+  const zhVoices = getAvailableMandarinVoices();
+  if (zhVoices.length === 0) return null;
+
+  const targetURI =
+    preferredOverrideURI !== undefined
+      ? String(preferredOverrideURI || '').trim()
+      : globalPreferredVoiceURI;
+
+  if (targetURI) {
+    const matched = zhVoices.find(
+      (v) => v.voiceURI === targetURI || v.name === targetURI
+    );
+    if (matched) return matched;
+  }
+
+  // Default to the highest-scored Natural / Neural / Google 普通话 voice
+  return zhVoices[0] || null;
 }
 
 if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
@@ -46,9 +151,9 @@ if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
 }
 
 export function speakMandarinGlobal(text, overrideRate = undefined, callbacks = {}) {
-  const { onStart, onEnd, onError, onUnsupported } = callbacks;
+  const { onStart, onEnd, onError, onUnsupported, preferredVoiceURI } = callbacks;
 
-  // Resolve target rate: explicit numeric rate (1.0 or 0.5) -> boolean slow flag -> current global state
+  // Resolve target rate: explicit numeric rate (1.0 or 0.65) -> boolean slow flag -> current global state
   let resolvedRate = globalIsSlowMode ? SLOW_SPEECH_RATE : NORMAL_SPEECH_RATE;
   if (typeof overrideRate === 'number' && !Number.isNaN(overrideRate)) {
     resolvedRate = overrideRate <= 0.75 ? SLOW_SPEECH_RATE : NORMAL_SPEECH_RATE;
@@ -68,17 +173,20 @@ export function speakMandarinGlobal(text, overrideRate = undefined, callbacks = 
     // 1. Always cancel any queued or cached utterances immediately before creating a new utterance
     window.speechSynthesis.cancel();
 
-    // 2. Create a fresh SpeechSynthesisUtterance with explicit zh-CN language and 0.5 / 1.0 rate
+    // 2. Create a fresh SpeechSynthesisUtterance with explicit zh-CN language, 1.03 pitch, and 0.65 / 1.0 rate
     const utterance = new SpeechSynthesisUtterance(cleanText);
     activeUtteranceRef = utterance;
     utterance.lang = 'zh-CN';
     utterance.rate = resolvedRate;
-    utterance.pitch = 1.0;
+    utterance.pitch = 1.03;
 
-    // 3. Bind matching Chinese voice ('zh-CN' or 'zh') for Android Chrome compatibility at 1.0x & 0.5x
-    const zhVoice = resolveMandarinVoice();
+    // 3. Bind preferred or natural/neural Chinese voice ('zh-CN' or 'zh')
+    const zhVoice = resolveMandarinVoice(preferredVoiceURI);
     if (zhVoice) {
       utterance.voice = zhVoice;
+      if (zhVoice.lang) {
+        utterance.lang = zhVoice.lang;
+      }
     }
 
     onStart?.(cleanText, resolvedRate);

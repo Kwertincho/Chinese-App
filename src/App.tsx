@@ -7,7 +7,9 @@ import {
   BookOpen,
   User,
   Sparkles,
-  Turtle
+  Turtle,
+  Swords,
+  ChevronRight
 } from 'lucide-react';
 import {
   PixelFlameSprite,
@@ -64,6 +66,7 @@ import { PWAInstallButton, OfflineIndicator } from './components/PWAInstallPromp
 export { speakMandarinGlobal };
 
 export default function App() {
+  const [showTitleScreen, setShowTitleScreen] = useState(true);
   const [activeTab, setActiveTab] = useState('map'); // 'map' | 'practice' | 'library' | 'profile'
 
   // Persistent Progress State
@@ -72,7 +75,11 @@ export default function App() {
       const saved = localStorage.getItem(STORAGE_KEY_PROGRESS);
       if (saved) {
         const parsed = JSON.parse(saved);
-        const slow = Boolean(parsed.isSlowMode || parsed.preferredSpeed === SLOW_SPEECH_RATE);
+        const slow = Boolean(
+          parsed.isSlowMode ||
+            parsed.preferredSpeed === SLOW_SPEECH_RATE ||
+            parsed.preferredSpeed === 0.5
+        );
         setGlobalIsSlowMode(slow);
         soundFX.setMuted(Boolean(parsed.soundMuted));
         return {
@@ -215,9 +222,9 @@ export default function App() {
       const nextSlow = !getGlobalIsSlowMode();
       handleSetSlowMode(nextSlow, sampleText);
       triggerToast(
-        nextSlow ? '0.5x Slow Audio Enabled' : '1.0x Normal Audio Enabled',
+        nextSlow ? '0.65x Slow Audio Enabled' : '1.0x Normal Audio Enabled',
         nextSlow
-          ? 'Playing Mandarin speech at 0.5x slow speed'
+          ? 'Playing Mandarin speech at 0.65x natural slow speed'
           : 'Playing Mandarin speech at 1.0x normal speed'
       );
     },
@@ -795,23 +802,212 @@ export default function App() {
   const dailyGoalPercent = Math.min(100, Math.round((todayXpEarned / dailyGoalXp) * 100));
   const isDailyGoalMet = todayXpEarned >= dailyGoalXp;
 
+  if (showTitleScreen) {
+    return (
+      <div className="min-h-dvh bg-slate-900 text-slate-100 flex justify-center font-sans select-none">
+        <div className="w-full max-w-md min-h-dvh bg-slate-900 border-x border-slate-800/80 flex flex-col justify-between px-5 pt-[max(24px,env(safe-area-inset-top))] pb-[max(24px,env(safe-area-inset-bottom))] relative overflow-hidden">
+          <OfflineIndicator />
+
+          {/* Ambient Pixel Dojo Glow */}
+          <div className="w-56 h-56 rounded-full bg-red-600/10 blur-3xl absolute -top-10 left-1/2 -translate-x-1/2 pointer-events-none" />
+          <div className="w-56 h-56 rounded-full bg-amber-500/10 blur-3xl absolute bottom-8 left-1/2 -translate-x-1/2 pointer-events-none" />
+
+          {/* Top RPG Edition Banner */}
+          <div className="flex items-center justify-between gap-2 relative z-10">
+            <span className="px-2.5 py-1 rounded-[2px] bg-slate-950 border-2 border-slate-700 font-pixel-header text-[8px] text-amber-300 uppercase tracking-wider">
+              16-Bit Edition
+            </span>
+            <div className="flex items-center gap-1.5">
+              <PWAInstallButton />
+              <button
+                type="button"
+                onClick={handleToggleMuteSfx}
+                title={progress.soundMuted ? 'Unmute UI Sound FX' : 'Mute UI Sound FX'}
+                className="game-btn-3d p-1.5 rounded-[2px] bg-slate-800 hover:bg-slate-700 border-2 border-slate-600 text-slate-300"
+              >
+                {progress.soundMuted ? (
+                  <VolumeX className="w-3.5 h-3.5 text-rose-400" />
+                ) : (
+                  <Volume2 className="w-3.5 h-3.5 text-emerald-400" />
+                )}
+              </button>
+            </div>
+          </div>
+
+          {/* Center Hero: 汉 App Icon + HanziApp Title + HSK 1 Mandarin RPG Subtitle */}
+          <div className="my-auto py-4 flex flex-col items-center text-center space-y-5 relative z-10">
+            {/* Crimson-Red (#dc2626) Square 汉 App Icon with Gold Pixel Border */}
+            <div className="relative">
+              <div className="w-24 h-24 rounded-[2px] bg-[#dc2626] border-4 border-amber-400 shadow-[0_6px_0_#020617] flex items-center justify-center relative overflow-hidden">
+                <div className="absolute inset-1.5 border border-amber-200/40 pointer-events-none" />
+                <span className="font-hanzi text-6xl font-black text-white drop-shadow-[0_3px_0_#7f1d1d] select-none">
+                  汉
+                </span>
+              </div>
+              <div className=" -bottom-2.5 left-1/2 -translate-x-1/2 absolute px-2 py-0.5 rounded-[2px] bg-slate-950 border-2 border-amber-400 font-pixel-header text-[8px] text-amber-300 whitespace-nowrap shadow">
+                Lv.{currentLevel}
+              </div>
+            </div>
+
+            <div className="space-y-2 pt-1">
+              <h1 className="font-pixel-header text-2xl text-white tracking-wider drop-shadow-[0_3px_0_#020617]">
+                HanziApp
+              </h1>
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-[2px] bg-slate-950 border-2 border-amber-500/70">
+                <Sparkles className="w-3.5 h-3.5 text-amber-400" />
+                <span className="font-pixel-ui text-xs font-bold uppercase tracking-widest text-amber-300">
+                  HSK 1 Mandarin RPG
+                </span>
+              </div>
+              <p className="font-clarity text-sm text-slate-300 max-w-xs mx-auto pt-0.5">
+                Master Chinese characters, stroke calligraphy, tone sandhi, and active recall.
+              </p>
+            </div>
+
+            {/* Compact Pixel Stats Card: Daily Streak, Player Level & Total XP, Mastered Words */}
+            <div className="w-full rounded-[2px] bg-slate-950 border-2 border-slate-700 p-4 space-y-3.5 shadow-[0_4px_0_#020617] text-left">
+              {/* Row 1: Daily Streak + Status Badge */}
+              <div className="flex items-center justify-between gap-2 pb-3 border-b-2 border-slate-800">
+                <div className="flex items-center gap-2.5 min-w-0">
+                  <div className="w-10 h-10 rounded-[2px] bg-slate-900 border-2 border-amber-500/80 flex items-center justify-center shrink-0">
+                    <PixelFlameSprite active={progress.streak > 0} className="w-5 h-5" />
+                  </div>
+                  <div className="min-w-0">
+                    <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
+                      Daily Streak
+                    </span>
+                    <div className="font-pixel-header text-sm text-white mt-0.5">
+                      {progress.streak} {progress.streak === 1 ? 'Day' : 'Days'}
+                    </div>
+                  </div>
+                </div>
+
+                <span
+                  className={`px-2.5 py-1 rounded-[2px] border-2 text-[10px] font-black uppercase tracking-wide shrink-0 ${
+                    progress.streak > 0
+                      ? 'bg-emerald-950/80 border-emerald-400 text-emerald-300'
+                      : 'bg-amber-950/70 border-amber-400 text-amber-300'
+                  }`}
+                >
+                  {progress.streak > 0
+                    ? `${progress.streak} ${progress.streak === 1 ? 'Day' : 'Days'} Active`
+                    : '0 Days — Start Today'}
+                </span>
+              </div>
+
+              {/* Row 2: Player Level & Total XP + Mastered Words (Lv. 8-10) */}
+              <div className="grid grid-cols-2 gap-2.5">
+                <div className="rounded-[2px] bg-slate-900 border-2 border-slate-800 p-2.5 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] font-bold uppercase text-amber-300">
+                      Level & Total XP
+                    </span>
+                    <PixelCoinSprite className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="font-pixel-header text-xs text-white">
+                    Lv.{currentLevel} • {progress.xp} XP
+                  </div>
+                  <div className="font-clarity text-[11px] font-semibold text-slate-400 truncate">
+                    {getPlayerTitle(currentLevel)}
+                  </div>
+                </div>
+
+                <div className="rounded-[2px] bg-slate-900 border-2 border-slate-800 p-2.5 space-y-1">
+                  <div className="flex items-center justify-between">
+                    <span className="text-[9px] font-bold uppercase text-emerald-300">
+                      Mastered (Lv.8–10)
+                    </span>
+                    <PixelCrownSprite className="w-3.5 h-3.5" />
+                  </div>
+                  <div className="font-pixel-header text-xs text-white">
+                    {globalStats.masteredWordsCount} / {globalStats.totalTrackedWords}
+                  </div>
+                  <div className="font-clarity text-[11px] font-semibold text-slate-400 truncate">
+                    {globalStats.learningWordsCount} Consolidating
+                  </div>
+                </div>
+              </div>
+
+              {/* XP Progress Bar to Next Level */}
+              <div className="space-y-1 pt-0.5">
+                <div className="flex items-center justify-between text-[10px] font-bold">
+                  <span className="text-slate-400">Next Level Progress</span>
+                  <span className="font-pixel-header text-[9px] text-amber-300">
+                    {xpIntoLevel}/100 XP
+                  </span>
+                </div>
+                <PixelBlockGauge
+                  value={xpIntoLevel}
+                  max={100}
+                  blocks={12}
+                  filledClass="bg-amber-400"
+                  emptyClass="bg-slate-900"
+                  heightClass="h-2"
+                />
+              </div>
+            </div>
+          </div>
+
+          {/* Bottom Action CTA: Start Studying (Enter Dojo) */}
+          <div className="space-y-2.5 relative z-10">
+            <button
+              type="button"
+              onClick={() => {
+                soundFX.playPop();
+                setActiveTab('map');
+                setShowTitleScreen(false);
+              }}
+              className="game-btn-3d w-full py-4 px-5 rounded-[2px] bg-gradient-to-r from-red-600 via-rose-600 to-amber-500 hover:from-red-500 hover:to-amber-400 border-2 border-amber-200 text-white shadow-[0_5px_0_#020617] flex items-center justify-between"
+            >
+              <div className="flex items-center gap-2.5">
+                <Swords className="w-5 h-5 text-amber-200 shrink-0" />
+                <span className="font-pixel-header text-xs uppercase tracking-wider text-white">
+                  Start Studying
+                </span>
+              </div>
+              <div className="flex items-center gap-1 px-2 py-1 rounded-[2px] bg-slate-950/70 border border-amber-300/60 text-[10px] font-black text-amber-300">
+                <span>Enter Dojo</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </div>
+            </button>
+
+            <p className="font-clarity text-center text-xs text-slate-400">
+              100% Offline-Ready PWA • Progress auto-saved on device
+            </p>
+          </div>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-dvh bg-slate-900 text-slate-100 flex justify-center font-sans select-none">
-      <div className="w-full max-w-md min-h-dvh bg-slate-900 border-x border-slate-800/80 flex flex-col justify-between pb-24 relative">
+      <div className="w-full max-w-md min-h-dvh bg-slate-900 border-x border-slate-800/80 flex flex-col justify-between pb-28 relative">
         <OfflineIndicator />
 
         {/* STICKY GAMIFIED 16-BIT PIXEL RPG TOP BAR */}
-        <header className="sticky top-0 z-30 bg-slate-900 border-b-2 border-slate-700 px-3.5 py-2.5 space-y-2 shadow-[0_4px_0_#020617]">
+        <header className="sticky top-0 z-30 bg-slate-900 border-b-2 border-slate-700 px-3.5 pt-[max(16px,env(safe-area-inset-top))] pb-2.5 space-y-2 shadow-[0_4px_0_#020617]">
           <div className="flex items-center justify-between gap-2">
-            <div className="flex items-center gap-2 min-w-0">
-              <div className="w-8 h-8 rounded-[2px] bg-amber-400 border-2 border-amber-200 flex items-center justify-center font-pixel-header text-xs text-slate-950 shadow-[0_2px_0_#020617] shrink-0">
-                {currentLevel}
+            <button
+              type="button"
+              onClick={() => {
+                soundFX.playPop();
+                setShowTitleScreen(true);
+              }}
+              title="Open HanziApp Title Screen"
+              className="flex items-center gap-2 min-w-0 text-left group cursor-pointer"
+            >
+              <div className="w-8 h-8 rounded-[2px] bg-[#dc2626] border-2 border-amber-400 group-hover:border-amber-200 flex items-center justify-center font-hanzi font-black text-base text-white shadow-[0_2px_0_#020617] shrink-0 relative">
+                <span>汉</span>
+                <span className="absolute -bottom-1 -right-1 px-1 rounded-[1px] bg-amber-400 text-slate-950 font-pixel-header text-[7px] leading-tight border border-slate-950">
+                  {currentLevel}
+                </span>
               </div>
               <div className="min-w-0">
-                <div className="font-pixel-header text-[9px] text-white truncate">
-                  Lv.{currentLevel} {getPlayerTitle(currentLevel)}
+                <div className="font-pixel-header text-[9px] text-white group-hover:text-amber-300 truncate transition-colors">
+                  HanziApp • Lv.{currentLevel}
                 </div>
-                <div className="w-28 mt-1">
+                <div className="w-24 mt-1">
                   <PixelBlockGauge
                     value={xpIntoLevel}
                     max={100}
@@ -822,16 +1018,16 @@ export default function App() {
                   />
                 </div>
               </div>
-            </div>
+            </button>
 
             <div className="flex items-center gap-1.5 shrink-0">
               <PWAInstallButton />
 
-              {/* Speed Toggle Button (1.0x vs 0.5x) */}
+              {/* Speed Toggle Button (1.0x vs 0.65x) */}
               <button
                 type="button"
                 onClick={() => handleToggleSpeed(activeWords[0]?.hanzi || '你好')}
-                title="Toggle Mandarin Speech Speed (1.0x Normal / 0.5x Slow)"
+                title="Toggle Mandarin Speech Speed (1.0x Normal / 0.65x Slow)"
                 className={`game-btn-3d px-2 py-1 rounded-[2px] border-2 text-[10px] font-black flex items-center gap-1 transition-all ${
                   progress.isSlowMode
                     ? 'bg-sky-500/25 border-sky-400 text-sky-300'
@@ -839,7 +1035,7 @@ export default function App() {
                 }`}
               >
                 <Turtle className="w-3 h-3" />
-                <span>{progress.isSlowMode ? '0.5x' : '1.0x'}</span>
+                <span>{progress.isSlowMode ? '0.65x' : '1.0x'}</span>
               </button>
 
               {/* Daily Streak Counter with Pixel Flame Sprite */}
@@ -1267,6 +1463,7 @@ export default function App() {
               todayXpEarned={todayXpEarned}
               onSetDailyGoalXp={handleSetDailyGoalXp}
               onToggleSpeed={handleToggleSpeed}
+              speakMandarin={speakMandarin}
               onExportAllData={() => {
                 const payload = {
                   exportedAt: new Date().toISOString(),
@@ -1385,7 +1582,7 @@ export default function App() {
         </main>
 
         {/* BOTTOM NAVIGATION BAR (4 TABS: MAP, SMART REVIEW, LIBRARY, PROFILE) WITH ANDROID SAFE-AREA PADDING */}
-        <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md z-30 bg-slate-900 border-t-2 border-slate-700 px-3 pt-2 pb-safe">
+        <nav className="fixed bottom-0 left-1/2 -translate-x-1/2 w-full max-w-md z-30 bg-slate-900 border-t-2 border-slate-700 px-3 pt-2.5 pb-[max(18px,env(safe-area-inset-bottom))]">
           <div className="grid grid-cols-4 gap-1.5 pb-1.5">
             {[
               { id: 'map', label: 'Map', icon: Map },

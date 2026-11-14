@@ -1,4 +1,4 @@
-import React, { useState, useRef, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   BookOpen,
   User,
@@ -19,6 +19,7 @@ import {
   PenTool,
   Headphones,
   Mic,
+  Volume2,
   Upload,
   Download,
   Plus,
@@ -34,7 +35,14 @@ import {
   Swords,
   Clock
 } from 'lucide-react';
-import { soundFX } from '../audio/soundEngine.js';
+import {
+  soundFX,
+  SLOW_SPEECH_RATE,
+  getAvailableMandarinVoices,
+  getGlobalPreferredVoiceURI,
+  setGlobalPreferredVoiceURI,
+  resolveMandarinVoice
+} from '../audio/soundEngine.js';
 import {
   DEFAULT_COURSES,
   KNOWN_CHARACTER_INFO,
@@ -134,7 +142,7 @@ export function ProgressionMapView({
   const unitMasteryRatio = useMemo(() => {
     const earned = activeWords.reduce((sum, w) => sum + getWordMasteryLevel(progress.mastery, w), 0);
     const max = Math.max(1, activeWords.length * 10);
-    return Math.min(1, Math.max(0.15, earned / max));
+    return Math.min(1, Math.max(0, earned / max));
   }, [activeWords, progress.mastery]);
 
   const stagesList = activePattern.stages;
@@ -390,23 +398,23 @@ export function ProgressionMapView({
         </p>
       </div>
 
-      {/* WINDING VERTICAL ADVENTURE PATH OF HETEROGENEOUS CIRCULAR GAME NODES */}
+      {/* WINDING VERTICAL ADVENTURE PATH OF SQUARE PIXEL GAME NODES */}
       <div className="rounded-3xl bg-gradient-to-b from-slate-900 via-slate-900/95 to-slate-950 border border-slate-800 p-5 relative overflow-hidden shadow-2xl">
         <div className="w-40 h-40 rounded-full bg-rose-500/5 blur-3xl absolute top-6 left-4 pointer-events-none" />
         <div className="w-44 h-44 rounded-full bg-amber-500/5 blur-3xl absolute bottom-10 right-4 pointer-events-none" />
 
-        <div className="relative w-full h-[490px]">
+        <div className="relative w-full h-[630px]">
           {/* SVG Winding Connecting Path */}
           <svg
-            viewBox="0 0 100 460"
+            viewBox="0 0 100 630"
             preserveAspectRatio="none"
             className="absolute inset-0 w-full h-full pointer-events-none"
           >
             {stagesList.slice(0, -1).map((stage, idx) => {
               const x1 = nodeHorizontalPositions[idx];
-              const y1 = 55 + idx * 116;
+              const y1 = 70 + idx * 152;
               const x2 = nodeHorizontalPositions[idx + 1];
-              const y2 = 55 + (idx + 1) * 116;
+              const y2 = 70 + (idx + 1) * 152;
               const midY = (y1 + y2) / 2;
               const pathD = `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
 
@@ -419,7 +427,7 @@ export function ProgressionMapView({
                     fill="none"
                     stroke="#0f172a"
                     strokeWidth="4.5"
-                    strokeLinecap="round"
+                    strokeLinecap="square"
                   />
                   <path
                     d={pathD}
@@ -427,14 +435,14 @@ export function ProgressionMapView({
                     stroke={isSegmentMastered ? '#fbbf24' : '#334155'}
                     strokeWidth="2.8"
                     strokeDasharray={isSegmentMastered ? 'none' : '4 4'}
-                    strokeLinecap="round"
+                    strokeLinecap="square"
                   />
                 </g>
               );
             })}
           </svg>
 
-          {/* Render the 4 Heterogeneous Game Nodes along the winding path */}
+          {/* Render the 4 Square Pixel Game Nodes along the winding path */}
           {stagesList.map((stage, idx) => {
             const StageIcon = getStageIcon(stage.iconName);
             const isMastered = currentLessonProg.completedStages.includes(stage.id);
@@ -442,12 +450,12 @@ export function ProgressionMapView({
             const isCurrent = stage.id === currentLessonProg.unlockedStage && !isMastered;
 
             const leftPercent = nodeHorizontalPositions[idx];
-            const topPx = 14 + idx * 116;
+            const topPx = 22 + idx * 152;
 
-            const radius = 38;
-            const circumference = 2 * Math.PI * radius;
-            const ringProgress = isMastered ? 1 : isCurrent ? Math.max(0.35, unitMasteryRatio) : 0;
-            const dashOffset = circumference * (1 - ringProgress);
+            const squareSide = 88;
+            const squarePerimeter = squareSide * 4;
+            const ringProgress = isMastered ? 1 : isCurrent ? unitMasteryRatio : 0;
+            const dashOffset = squarePerimeter * (1 - ringProgress);
 
             const categoryBadgeStyle =
               stage.nodeCategory === 'gauntlet'
@@ -465,41 +473,41 @@ export function ProgressionMapView({
                 className="absolute -translate-x-1/2 flex flex-col items-center z-10"
               >
                 {isCurrent && (
-                  <div className="animate-float-bob -top-6 absolute whitespace-nowrap px-2.5 py-0.5 rounded-full bg-gradient-to-r from-rose-500 to-amber-500 text-slate-950 font-black text-[10px] uppercase tracking-wider shadow-lg border border-amber-200">
+                  <div className="animate-float-bob -top-7 absolute whitespace-nowrap px-2.5 py-0.5 rounded-[2px] bg-gradient-to-r from-rose-500 to-amber-500 text-slate-950 font-black text-[10px] uppercase tracking-wider shadow-lg border-2 border-amber-200 z-20">
                     ★ Start Here
                   </div>
                 )}
 
                 <div className="relative flex items-center justify-center w-24 h-24">
-                  {isCurrent && (
-                    <div className="absolute inset-1 rounded-full border-2 border-rose-400/70 animate-node-ring pointer-events-none" />
-                  )}
-
-                  <svg className="w-24 h-24 -rotate-90 pointer-events-none" viewBox="0 0 88 88">
-                    <circle
-                      cx="44"
-                      cy="44"
-                      r={radius}
+                  {/* Square Perimeter SVG Progress Border (<rect>) */}
+                  <svg className="w-24 h-24 pointer-events-none" viewBox="0 0 96 96">
+                    <rect
+                      x="4"
+                      y="4"
+                      width={squareSide}
+                      height={squareSide}
                       fill="none"
                       stroke={isMastered ? '#78350f' : isCurrent ? '#334155' : '#1e293b'}
-                      strokeWidth="5"
+                      strokeWidth="4"
                     />
                     {ringProgress > 0 && (
-                      <circle
-                        cx="44"
-                        cy="44"
-                        r={radius}
+                      <rect
+                        x="4"
+                        y="4"
+                        width={squareSide}
+                        height={squareSide}
                         fill="none"
                         stroke={isMastered ? '#fbbf24' : '#f43f5e'}
-                        strokeWidth="5.5"
-                        strokeLinecap="round"
-                        strokeDasharray={circumference}
+                        strokeWidth="4.5"
+                        strokeLinecap="square"
+                        strokeDasharray={squarePerimeter}
                         strokeDashoffset={dashOffset}
                         className="transition-all duration-700"
                       />
                     )}
                   </svg>
 
+                  {/* 80px x 80px Square Pixel Tile Node */}
                   <button
                     type="button"
                     onClick={() => {
@@ -510,38 +518,38 @@ export function ProgressionMapView({
                         soundFX.playMistake();
                       }
                     }}
-                    className={`game-btn-3d absolute w-16 h-16 rounded-[2px] flex items-center justify-center border-2 transition-all ${
+                    className={`game-btn-3d absolute w-20 h-20 rounded-[2px] flex items-center justify-center border-2 transition-all ${
                       isMastered
                         ? 'bg-gradient-to-b from-amber-400 via-amber-500 to-yellow-600 border-amber-200 text-slate-950'
                         : isCurrent
-                        ? `bg-gradient-to-b ${stage.accentColor} border-amber-300 text-white scale-105`
+                        ? `bg-gradient-to-b ${stage.accentColor} border-amber-300 text-white`
                         : 'bg-slate-900 border-slate-700 text-slate-500 opacity-75'
                     }`}
                   >
                     {!isUnlocked ? (
-                      <PixelPadlockSprite className="w-6 h-6" />
+                      <PixelPadlockSprite className="w-7 h-7" />
                     ) : (
-                      <StageIcon className="w-7 h-7 stroke-[2.4px]" />
+                      <StageIcon className="w-8 h-8 stroke-[2.4px]" />
                     )}
                   </button>
 
                   {isMastered && (
-                    <div className="absolute -top-1 -right-1 w-7 h-7 rounded-[2px] bg-slate-950 border-2 border-amber-400 flex items-center justify-center shadow-md">
+                    <div className="absolute -top-1 -right-1 w-7 h-7 rounded-[2px] bg-slate-950 border-2 border-amber-400 flex items-center justify-center shadow-md z-10">
                       <PixelCrownSprite className="w-4 h-4" />
                     </div>
                   )}
 
                   {!isUnlocked && (
-                    <div className="absolute -bottom-0.5 -right-0.5 w-6 h-6 rounded-[2px] bg-slate-950 border-2 border-slate-600 flex items-center justify-center">
+                    <div className="absolute -bottom-0.5 -right-0.5 w-6 h-6 rounded-[2px] bg-slate-950 border-2 border-slate-600 flex items-center justify-center z-10">
                       <PixelPadlockSprite className="w-3.5 h-3.5" />
                     </div>
                   )}
                 </div>
 
                 {/* Node Title & Single-Skill / Multi-Skill Badge */}
-                <div className="mt-0.5 flex flex-col items-center gap-0.5">
+                <div className="mt-1 flex flex-col items-center gap-0.5">
                   <span
-                    className={`text-[11px] font-black px-2.5 py-0.5 rounded-full border whitespace-nowrap ${
+                    className={`text-[11px] font-black px-2.5 py-0.5 rounded-[2px] border whitespace-nowrap ${
                       isMastered
                         ? 'bg-amber-500/15 border-amber-400/40 text-amber-300'
                         : isCurrent
@@ -552,7 +560,7 @@ export function ProgressionMapView({
                     {stage.shortTitle}
                   </span>
                   <span
-                    className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.2 rounded-full border whitespace-nowrap ${categoryBadgeStyle}`}
+                    className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.2 rounded-[2px] border whitespace-nowrap ${categoryBadgeStyle}`}
                   >
                     {stage.badgeText}
                   </span>
@@ -622,10 +630,10 @@ export function ProgressionMapView({
                 }}
                 className="game-btn-3d cursor-pointer rounded-2xl bg-slate-900/90 hover:bg-slate-900 border border-slate-800 p-2.5 text-center transition-all flex flex-col justify-between"
               >
-                <div>
+                <div className="font-clarity">
                   <div className="font-hanzi text-lg font-black text-white truncate">{word.hanzi}</div>
-                  <div className="text-[11px] font-bold text-rose-400 truncate">{word.pinyin}</div>
-                  <div className="text-[10px] text-slate-400 truncate mt-0.5">
+                  <div className="font-clarity text-sm font-extrabold text-rose-400 truncate">{word.pinyin}</div>
+                  <div className="font-clarity text-xs text-slate-300 truncate mt-0.5">
                     {(word.meaning || word.english).split(/[/;]/)[0]}
                   </div>
                 </div>
@@ -3132,6 +3140,7 @@ export function ProfileView({
   todayXpEarned = 0,
   onSetDailyGoalXp,
   onToggleSpeed,
+  speakMandarin,
   onExportAllData,
   onImportBackupData,
   confirmResetOpen,
@@ -3140,6 +3149,32 @@ export function ProfileView({
   onLaunchWeakWordsReview
 }) {
   const profileBackupInputRef = useRef(null);
+  const [availableVoices, setAvailableVoices] = useState(() => getAvailableMandarinVoices());
+  const [preferredVoiceURI, setPreferredVoiceURIState] = useState(() =>
+    getGlobalPreferredVoiceURI()
+  );
+
+  useEffect(() => {
+    if (typeof window === 'undefined' || !('speechSynthesis' in window)) return;
+    const refreshVoices = () => {
+      setAvailableVoices(getAvailableMandarinVoices());
+    };
+    refreshVoices();
+    const synth = window.speechSynthesis;
+    if (synth) {
+      synth.onvoiceschanged = refreshVoices;
+    }
+    return () => {
+      if (synth && synth.onvoiceschanged === refreshVoices) {
+        synth.onvoiceschanged = null;
+      }
+    };
+  }, []);
+
+  const activeResolvedVoice = useMemo(
+    () => resolveMandarinVoice(preferredVoiceURI),
+    [availableVoices, preferredVoiceURI]
+  );
 
   const handleProfileBackupFile = (e) => {
     const file = e.target.files?.[0];
@@ -3457,8 +3492,9 @@ export function ProfileView({
             return (
               <div key={word.id} className="space-y-1 bg-slate-950/60 border border-slate-800/80 rounded-xl p-2.5">
                 <div className="flex items-center justify-between text-xs">
-                  <span className="font-bold text-white truncate max-w-[200px]">
-                    <span className="font-hanzi">{word.hanzi}</span> ({word.pinyin}) — {(word.meaning || word.english).split(/[/;]/)[0]}
+                  <span className="font-clarity font-bold text-white truncate max-w-[215px] text-[14px]">
+                    <span className="font-hanzi text-base">{word.hanzi}</span>{' '}
+                    <span className="text-rose-300 font-extrabold">({word.pinyin})</span> — {(word.meaning || word.english).split(/[/;]/)[0]}
                   </span>
                   <span className={`text-[10px] font-extrabold ${tierMeta.textClass}`}>
                     {tierMeta.tier} {lv >= 9 ? '★' : ''}
@@ -3552,19 +3588,75 @@ export function ProfileView({
         <div className="flex items-center justify-between pt-2 border-t border-slate-700/70">
           <div>
             <p className="text-xs font-bold text-white">Default Speech Synthesis Speed</p>
-            <p className="text-[11px] text-slate-400">Forced to native Mandarin (zh-CN • 1.0x vs 0.5x)</p>
+            <p className="text-[11px] text-slate-400">
+              Native Mandarin (zh-CN • 1.0x Normal vs 0.65x Slow)
+            </p>
           </div>
           <button
             type="button"
             onClick={() => onToggleSpeed('你好')}
             className={`game-btn-3d px-3 py-1.5 rounded-xl border text-xs font-black ${
-              progress.isSlowMode || progress.preferredSpeed === 0.5
+              progress.isSlowMode ||
+              progress.preferredSpeed === SLOW_SPEECH_RATE ||
+              progress.preferredSpeed === 0.5
                 ? 'bg-sky-500/20 border-sky-400 text-sky-300'
                 : 'bg-slate-900 border-slate-700 text-amber-300'
             }`}
           >
-            {progress.isSlowMode || progress.preferredSpeed === 0.5 ? '0.5x Slow' : '1.0x Normal'}
+            {progress.isSlowMode ||
+            progress.preferredSpeed === SLOW_SPEECH_RATE ||
+            progress.preferredSpeed === 0.5
+              ? '0.65x Slow'
+              : '1.0x Normal'}
           </button>
+        </div>
+
+        {/* MANDARIN VOICE SELECTOR DROPDOWN & TEST VOICE BUTTON */}
+        <div className="pt-2.5 border-t border-slate-700/70 space-y-2">
+          <div className="flex items-center justify-between gap-2">
+            <div>
+              <p className="text-xs font-bold text-white">Mandarin Voice Selector</p>
+              <p className="text-[11px] text-slate-400">
+                Prioritizes Neural / Natural zh-CN voices (Pitch 1.03)
+              </p>
+            </div>
+            <button
+              type="button"
+              onClick={() => {
+                soundFX.playPop();
+                speakMandarin?.('你好，欢迎学习中文！');
+              }}
+              className="game-btn-3d px-3 py-1.5 rounded-xl bg-emerald-600/25 hover:bg-emerald-600/35 border border-emerald-400/50 text-emerald-300 text-xs font-black flex items-center gap-1.5 shrink-0"
+            >
+              <Volume2 className="w-3.5 h-3.5" />
+              <span>Test Voice</span>
+            </button>
+          </div>
+
+          <select
+            value={preferredVoiceURI}
+            onChange={(e) => {
+              const nextURI = e.target.value;
+              setPreferredVoiceURIState(nextURI);
+              setGlobalPreferredVoiceURI(nextURI);
+              soundFX.playPop();
+              speakMandarin?.('你好，欢迎学习中文！');
+            }}
+            className="font-clarity w-full rounded-xl bg-slate-950 border border-slate-700 focus:border-amber-400 px-3 py-2.5 text-sm font-semibold text-white outline-none"
+          >
+            <option value="">
+              Auto Best Natural Voice (
+              {activeResolvedVoice
+                ? `${activeResolvedVoice.name} • ${activeResolvedVoice.lang}`
+                : 'System Default zh-CN'}
+              )
+            </option>
+            {availableVoices.map((v) => (
+              <option key={v.voiceURI || v.name} value={v.voiceURI || v.name}>
+                {v.name} ({v.lang}) {v.localService ? '• Local' : '• Neural/Online'}
+              </option>
+            ))}
+          </select>
         </div>
 
         <div className="pt-2 border-t border-slate-700/70">
