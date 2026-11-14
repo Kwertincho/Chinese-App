@@ -1,15 +1,74 @@
 // ============================================================================
-// PLAYER LEVEL & TITLE RANKS
+// PLAYER LEVEL & TITLE RANKS (20-LEVEL PROGRESSIVE RPG CURVE)
 // ============================================================================
-export function getPlayerTitle(level) {
-  if (level <= 1) return 'Apprentice';
-  if (level === 2) return 'Scribe';
-  if (level === 3) return 'Ink Scholar';
-  if (level === 4) return 'Calligrapher';
-  if (level === 5) return 'Jade Adept';
-  if (level === 6) return 'Tone Master';
-  if (level === 7) return 'Imperial Sage';
-  return 'Grandmaster';
+export function xpNeededForNextLevel(level = 1) {
+  const lv = Math.max(1, Math.floor(Number(level) || 1));
+  return 100 + (lv - 1) * 50;
+}
+
+export function computePlayerLevelProgress(totalXp = 0) {
+  let remaining = Math.max(0, Math.floor(Number(totalXp) || 0));
+  let level = 1;
+  let needed = xpNeededForNextLevel(level);
+
+  while (remaining >= needed) {
+    remaining -= needed;
+    level += 1;
+    needed = xpNeededForNextLevel(level);
+  }
+
+  return {
+    level,
+    xpIntoLevel: remaining,
+    xpForNextLevel: needed,
+    progressPercent: Math.min(100, Math.round((remaining / needed) * 100))
+  };
+}
+
+export function getPlayerTitle(level = 1) {
+  const lv = Math.max(1, Math.floor(Number(level) || 1));
+  switch (lv) {
+    case 1:
+      return 'Novice Initiate';
+    case 2:
+      return 'Brush Apprentice';
+    case 3:
+      return 'Ink Scribe';
+    case 4:
+      return 'Stroke Student';
+    case 5:
+      return 'Tone Disciple';
+    case 6:
+      return 'Paper Scholar';
+    case 7:
+      return 'Radical Seeker';
+    case 8:
+      return 'Junior Calligrapher';
+    case 9:
+      return 'Bamboo Chronicler';
+    case 10:
+      return 'Jade Adept';
+    case 11:
+      return 'Bronze Bell Keeper';
+    case 12:
+      return 'Pavilion Linguist';
+    case 13:
+      return 'Sandhi Tactician';
+    case 14:
+      return 'Imperial Archivist';
+    case 15:
+      return 'Senior Calligrapher';
+    case 16:
+      return 'Golden Brush Master';
+    case 17:
+      return 'Dragon Scholar';
+    case 18:
+      return "Jade Emperor's Scribe";
+    case 19:
+      return 'Celestial Sage';
+    default:
+      return 'Grandmaster of Hanzi';
+  }
 }
 
 // ============================================================================
@@ -255,7 +314,7 @@ export const HETEROGENEOUS_PATTERNS = [
         accentColor: 'from-rose-500 to-red-600',
         nodeCategory: 'single',
         badgeText: 'Single-Skill • Cards',
-        xpReward: 45,
+        xpReward: 15,
         launchType: 'flashcards',
         allowedModalities: ['recognition']
       },
@@ -269,7 +328,7 @@ export const HETEROGENEOUS_PATTERNS = [
         accentColor: 'from-amber-500 to-orange-600',
         nodeCategory: 'single',
         badgeText: 'Single-Skill • 3-Stage Write',
-        xpReward: 60,
+        xpReward: 25,
         launchType: 'writing',
         allowedModalities: ['writing']
       },
@@ -283,7 +342,7 @@ export const HETEROGENEOUS_PATTERNS = [
         accentColor: 'from-emerald-500 to-teal-600',
         nodeCategory: 'mix',
         badgeText: 'Multi-Skill Mix',
-        xpReward: 75,
+        xpReward: 25,
         launchType: 'mixed',
         allowedModalities: ['listening', 'speaking', 'sentence_builder']
       },
@@ -297,7 +356,7 @@ export const HETEROGENEOUS_PATTERNS = [
         accentColor: 'from-purple-600 to-indigo-700',
         nodeCategory: 'boss',
         badgeText: 'Boss Battle',
-        xpReward: 100,
+        xpReward: 45,
         launchType: 'boss',
         allowedModalities: ['recognition']
       }
@@ -319,7 +378,7 @@ export const HETEROGENEOUS_PATTERNS = [
         accentColor: 'from-emerald-500 to-teal-600',
         nodeCategory: 'single',
         badgeText: 'Single-Skill • Audio',
-        xpReward: 50,
+        xpReward: 15,
         launchType: 'dictation_only',
         allowedModalities: ['listening']
       },
@@ -333,7 +392,7 @@ export const HETEROGENEOUS_PATTERNS = [
         accentColor: 'from-amber-500 to-rose-600',
         nodeCategory: 'mix',
         badgeText: '3-Skill Mix',
-        xpReward: 70,
+        xpReward: 25,
         launchType: 'mixed',
         allowedModalities: ['recognition', 'writing', 'sentence_builder']
       },
@@ -347,7 +406,7 @@ export const HETEROGENEOUS_PATTERNS = [
         accentColor: 'from-sky-500 to-blue-600',
         nodeCategory: 'single',
         badgeText: 'Single-Skill • Voice',
-        xpReward: 65,
+        xpReward: 25,
         launchType: 'speaking_only',
         allowedModalities: ['speaking']
       },
@@ -361,7 +420,7 @@ export const HETEROGENEOUS_PATTERNS = [
         accentColor: 'from-purple-600 to-indigo-700',
         nodeCategory: 'boss',
         badgeText: 'Boss Battle',
-        xpReward: 100,
+        xpReward: 45,
         launchType: 'boss',
         allowedModalities: ['recognition']
       }
@@ -383,7 +442,7 @@ export const HETEROGENEOUS_PATTERNS = [
         accentColor: 'from-rose-500 to-sky-600',
         nodeCategory: 'mix',
         badgeText: '2-Skill Mix',
-        xpReward: 55,
+        xpReward: 15,
         launchType: 'mixed',
         allowedModalities: ['recognition', 'speaking']
       },
@@ -397,7 +456,7 @@ export const HETEROGENEOUS_PATTERNS = [
         accentColor: 'from-amber-500 to-emerald-600',
         nodeCategory: 'mix',
         badgeText: '2-Skill Mix',
-        xpReward: 70,
+        xpReward: 25,
         launchType: 'mixed',
         allowedModalities: ['writing', 'listening']
       },
@@ -411,7 +470,7 @@ export const HETEROGENEOUS_PATTERNS = [
         accentColor: 'from-fuchsia-600 to-rose-600',
         nodeCategory: 'gauntlet',
         badgeText: '5-Skill Gauntlet',
-        xpReward: 85,
+        xpReward: 25,
         launchType: 'mixed',
         allowedModalities: [
           'recognition',
@@ -431,7 +490,7 @@ export const HETEROGENEOUS_PATTERNS = [
         accentColor: 'from-purple-600 to-indigo-700',
         nodeCategory: 'boss',
         badgeText: 'Boss Battle',
-        xpReward: 100,
+        xpReward: 45,
         launchType: 'boss',
         allowedModalities: ['recognition']
       }

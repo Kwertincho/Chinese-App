@@ -34,7 +34,8 @@ import {
   STORAGE_KEY_COURSES,
   STORAGE_KEY_DECKS,
   INITIAL_PROGRESS_STATE,
-  getPlayerTitle
+  getPlayerTitle,
+  computePlayerLevelProgress
 } from './data/curriculumData.js';
 import {
   normalizeWordEntry,
@@ -359,7 +360,7 @@ export default function App() {
         if ((dq.claimedIds || []).includes(quest.id)) return prev;
 
         const nextClaimed = [...(dq.claimedIds || []), quest.id];
-        const xpGain = Number(quest.xpReward) || 30;
+        const xpGain = Number(quest.xpReward) || 25;
         const nextTotalXp = (prev.xp || 0) + xpGain;
         const prevTodayXp =
           prev.dailyXpDate === today
@@ -369,7 +370,7 @@ export default function App() {
         return {
           ...prev,
           xp: nextTotalXp,
-          playerLevel: Math.floor(nextTotalXp / 100) + 1,
+          playerLevel: computePlayerLevelProgress(nextTotalXp).level,
           dailyXpDate: today,
           dailyXp: prevTodayXp + xpGain,
           dailyXpEarned: prevTodayXp + xpGain,
@@ -410,7 +411,7 @@ export default function App() {
             sessionConfig: {
               title: 'Daily Quest • Smart Review',
               badgeText: 'Daily Quest',
-              xpReward: 75,
+              xpReward: 25,
               queue
             }
           });
@@ -455,7 +456,7 @@ export default function App() {
             sessionConfig: {
               title: 'Sentence Builder Puzzle',
               badgeText: 'Daily Quest',
-              xpReward: 65,
+              xpReward: 25,
               queue
             }
           });
@@ -482,7 +483,7 @@ export default function App() {
             sessionConfig: {
               title: 'Fill-in-the-Blank (选词填空)',
               badgeText: 'Daily Quest',
-              xpReward: 70,
+              xpReward: 25,
               queue
             }
           });
@@ -622,7 +623,7 @@ export default function App() {
         return {
           ...prev,
           xp: nextTotalXp,
-          playerLevel: Math.floor(nextTotalXp / 100) + 1,
+          playerLevel: computePlayerLevelProgress(nextTotalXp).level,
           dailyXpDate: today,
           dailyXp: prevTodayXp + xpEarned,
           dailyXpEarned: prevTodayXp + xpEarned,
@@ -733,7 +734,7 @@ export default function App() {
         sessionConfig: {
           title: stage.title,
           badgeText: stage.badgeText,
-          xpReward: stage.xpReward || 70,
+          xpReward: stage.xpReward || 25,
           queue
         }
       });
@@ -794,8 +795,11 @@ export default function App() {
     };
   }, [allUniqueWordsMap, progress.mastery]);
 
-  const currentLevel = Math.floor(progress.xp / 100) + 1;
-  const xpIntoLevel = progress.xp % 100;
+  const {
+    level: currentLevel,
+    xpIntoLevel,
+    xpForNextLevel
+  } = computePlayerLevelProgress(progress.xp);
   const todayIso = new Date().toISOString().slice(0, 10);
   const dailyGoalXp = Number(progress.dailyGoalXp) > 0 ? Number(progress.dailyGoalXp) : 30;
   const todayXpEarned = progress.dailyXpDate === todayIso ? Number(progress.dailyXpEarned || 0) : 0;
@@ -933,12 +937,12 @@ export default function App() {
                 <div className="flex items-center justify-between text-[10px] font-bold">
                   <span className="text-slate-400">Next Level Progress</span>
                   <span className="font-pixel-header text-[9px] text-amber-300">
-                    {xpIntoLevel}/100 XP
+                    {xpIntoLevel}/{xpForNextLevel} XP
                   </span>
                 </div>
                 <PixelBlockGauge
                   value={xpIntoLevel}
-                  max={100}
+                  max={xpForNextLevel}
                   blocks={12}
                   filledClass="bg-amber-400"
                   emptyClass="bg-slate-900"
@@ -1010,7 +1014,7 @@ export default function App() {
                 <div className="w-24 mt-1">
                   <PixelBlockGauge
                     value={xpIntoLevel}
-                    max={100}
+                    max={xpForNextLevel}
                     blocks={10}
                     filledClass="bg-amber-400"
                     emptyClass="bg-slate-900"
@@ -1185,7 +1189,7 @@ export default function App() {
                   sessionConfig: {
                     title: 'Smart Review Arena',
                     badgeText: filterLabel,
-                    xpReward: 75,
+                    xpReward: 25,
                     queue
                   }
                 });
@@ -1205,7 +1209,7 @@ export default function App() {
                   sessionConfig: {
                     title: 'Sentence Builder Puzzle',
                     badgeText: 'Word Order',
-                    xpReward: 65,
+                    xpReward: 25,
                     queue
                   }
                 });
@@ -1227,7 +1231,7 @@ export default function App() {
                   sessionConfig: {
                     title: 'Fill-in-the-Blank (选词填空)',
                     badgeText: 'Cloze Context Drill',
-                    xpReward: 70,
+                    xpReward: 25,
                     queue
                   }
                 });
@@ -1431,7 +1435,7 @@ export default function App() {
                   return {
                     ...prev,
                     xp: nextXp,
-                    playerLevel: Math.floor(nextXp / 100) + 1,
+                    playerLevel: computePlayerLevelProgress(nextXp).level,
                     dailyXpDate: today,
                     dailyXp: prevTodayXp + 25,
                     dailyXpEarned: prevTodayXp + 25,
@@ -1572,7 +1576,7 @@ export default function App() {
                   sessionConfig: {
                     title: 'Weakest Words Booster',
                     badgeText: 'Mastery Lv 0–4 Review',
-                    xpReward: 70,
+                    xpReward: 25,
                     queue
                   }
                 });
@@ -1632,7 +1636,7 @@ export default function App() {
               handleCompleteStageSession({
                 stageId: activeModal.stageId,
                 wordsPracticed: activeModal.words || activeWords,
-                xpEarned: 45 + bonusXp,
+                xpEarned: 15 + bonusXp,
                 maxCombo,
                 completedModeKeys: ['flashcards', activeModal.questModeKey].filter(Boolean)
               })
@@ -1655,7 +1659,7 @@ export default function App() {
               handleCompleteStageSession({
                 stageId: activeModal.stageId,
                 wordsPracticed: activeModal.words || activeWords,
-                xpEarned: 60 + bonusXp,
+                xpEarned: 25 + bonusXp,
                 maxCombo,
                 completedModeKeys: ['writing', activeModal.questModeKey].filter(Boolean)
               })
@@ -1679,7 +1683,7 @@ export default function App() {
               handleCompleteStageSession({
                 stageId: activeModal.stageId,
                 wordsPracticed: activeModal.words || activeWords,
-                xpEarned: 75 + bonusXp,
+                xpEarned: 25 + bonusXp,
                 maxCombo,
                 completedModeKeys: [
                   'dictation',
@@ -1706,7 +1710,7 @@ export default function App() {
               handleCompleteStageSession({
                 stageId: activeModal.stageId || 4,
                 wordsPracticed: activeModal.words || activeWords,
-                xpEarned: 100 + bonusXp,
+                xpEarned: 45 + bonusXp,
                 maxCombo,
                 isBossWin: true,
                 heartsRemaining,
@@ -1736,7 +1740,7 @@ export default function App() {
               handleCompleteStageSession({
                 stageId: activeModal.stageId,
                 wordsPracticed: wordsPracticed || activeWords,
-                xpEarned: (activeModal.sessionConfig?.xpReward || 65) + bonusXp,
+                xpEarned: (activeModal.sessionConfig?.xpReward || 25) + bonusXp,
                 maxCombo,
                 completedModeKeys: [
                   activeModal.questModeKey,
@@ -1753,7 +1757,7 @@ export default function App() {
             speakMandarin={speakMandarin}
             onRecordStudySeconds={handleRecordStudySeconds}
             onClose={() => setActiveModal(null)}
-            onComplete={(matchedWords: any[], scoreXp = 45, maxCombo = 1) =>
+            onComplete={(matchedWords: any[], scoreXp = 25, maxCombo = 1) =>
               handleCompleteStageSession({
                 stageId: null,
                 wordsPracticed:
@@ -1776,7 +1780,7 @@ export default function App() {
             onRecordSkillEvent={handleRecordSkillEvent}
             onRecordStudySeconds={handleRecordStudySeconds}
             onClose={() => setActiveModal(null)}
-            onComplete={(practicedWords: any[], totalXp = 60, maxCombo = 1) =>
+            onComplete={(practicedWords: any[], totalXp = 25, maxCombo = 1) =>
               handleCompleteStageSession({
                 stageId: null,
                 wordsPracticed:
@@ -1799,7 +1803,7 @@ export default function App() {
             onRecordSkillEvent={handleRecordSkillEvent}
             onRecordStudySeconds={handleRecordStudySeconds}
             onClose={() => setActiveModal(null)}
-            onComplete={(practicedWords: any[], totalXp = 80, totalCorrect = 12) =>
+            onComplete={(practicedWords: any[], totalXp = 40, totalCorrect = 12) =>
               handleCompleteStageSession({
                 stageId: null,
                 wordsPracticed:

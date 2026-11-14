@@ -102,7 +102,7 @@ export function FlashcardStageModal({
         soundFX.playCorrect(nextCombo);
         return nextCombo;
       });
-      setBonusXp((prev) => prev + 15);
+      setBonusXp((prev) => prev + 2);
       setXpPopupKey((prev) => prev + 1);
     }
 
@@ -116,7 +116,7 @@ export function FlashcardStageModal({
   const handleNextCard = () => {
     if (!flippedCardsSet.has(cardIndex)) {
       soundFX.playCorrect(combo);
-      setBonusXp((prev) => prev + 15);
+      setBonusXp((prev) => prev + 2);
       setXpPopupKey((prev) => prev + 1);
     } else {
       soundFX.playPop();
@@ -152,7 +152,7 @@ export function FlashcardStageModal({
           combo={combo}
           sessionSeconds={elapsedSeconds}
           xpPopupKey={xpPopupKey}
-          xpPopupAmount={15}
+          xpPopupAmount={2}
           onClose={() => {
             flushSessionTime();
             onClose();
@@ -230,7 +230,7 @@ export function FlashcardStageModal({
               <div className="text-center pt-3 border-t border-slate-800/80">
                 <span className="text-xs font-bold text-amber-300 inline-flex items-center gap-1.5">
                   <RefreshCw className="w-3.5 h-3.5" />
-                  <span>Tap card to 3D flip (+15 XP)</span>
+                  <span>Tap card to 3D flip (+2 XP)</span>
                 </span>
               </div>
             </div>
@@ -324,7 +324,7 @@ export function FlashcardStageModal({
           >
             <span>
               {cardIndex === words.length - 1
-                ? `Finish Flashcards (+${45 + bonusXp} XP)`
+                ? `Finish Flashcards (+${15 + bonusXp} XP)`
                 : 'Next Flashcard'}
             </span>
             <ChevronRight className="w-4 h-4" />
@@ -374,7 +374,7 @@ export function WritingStageModal({
   const [maxCombo, setMaxCombo] = useState(0);
   const [bonusXp, setBonusXp] = useState(0);
   const [xpPopupKey, setXpPopupKey] = useState(0);
-  const [xpPopupAmount, setXpPopupAmount] = useState(15);
+  const [xpPopupAmount, setXpPopupAmount] = useState(5);
   const [boardFeedback, setBoardFeedback] = useState('idle'); // 'idle' | 'correct' | 'wrong'
   const [charStrokeMeta, setCharStrokeMeta] = useState({
     strokeCount: null,
@@ -498,8 +498,39 @@ export function WritingStageModal({
     setTimeout(() => setBoardFeedback('idle'), 500);
   }, []);
 
+  const liveStateRef = useRef({
+    combo,
+    maxCombo,
+    bonusXp,
+    wordXpAwarded,
+    currentWord,
+    wordIndex,
+    charIndex,
+    words,
+    progress,
+    writingConfig,
+    onComplete,
+    onRecordSkillEvent,
+    flushSessionTime
+  });
+  liveStateRef.current = {
+    combo,
+    maxCombo,
+    bonusXp,
+    wordXpAwarded,
+    currentWord,
+    wordIndex,
+    charIndex,
+    words,
+    progress,
+    writingConfig,
+    onComplete,
+    onRecordSkillEvent,
+    flushSessionTime
+  };
+
   const startInteractiveQuiz = useCallback(
-    (writer, targetStage = charStage) => {
+    (writer, targetStage) => {
       const activeWriter = writer || writerInstanceRef.current;
       if (!activeWriter) return;
 
@@ -529,7 +560,8 @@ export function WritingStageModal({
           soundFX.playMistake();
           setCombo(0);
           triggerBoardFeedback('wrong');
-          onRecordSkillEvent?.(currentWord, 'writing', { mistakesDelta: 1, completionsDelta: 0 });
+          const { currentWord: liveWord, onRecordSkillEvent: recordEvt } = liveStateRef.current;
+          recordEvt?.(liveWord, 'writing', { mistakesDelta: 1, completionsDelta: 0 });
           setStrokeStats((prev) => ({
             ...prev,
             mistakesOnCurrent: strokeData.mistakesOnStroke,
@@ -540,12 +572,14 @@ export function WritingStageModal({
         onCorrectStroke: (strokeData) => {
           const doneCount = strokeData.strokeNum + 1;
           const total = doneCount + strokeData.strokesRemaining;
-          setCombo((prev) => {
-            const next = prev + 1;
-            setMaxCombo((m) => Math.max(m, next));
-            soundFX.playCorrect(next);
-            return next;
-          });
+          const nextCombo = (liveStateRef.current.combo || 0) + 1;
+          const nextMaxCombo = Math.max(liveStateRef.current.maxCombo || 0, nextCombo);
+          liveStateRef.current.combo = nextCombo;
+          liveStateRef.current.maxCombo = nextMaxCombo;
+          setCombo(nextCombo);
+          setMaxCombo(nextMaxCombo);
+          soundFX.playCorrect(nextCombo);
+
           setStrokeStats({
             completedStrokes: doneCount,
             totalStrokes: total,
@@ -554,13 +588,18 @@ export function WritingStageModal({
             hintTriggered: false
           });
 
-          // Stage 1 (Guided): Automatically highlight/flash the upcoming stroke before user draws it
+          // Stage 1 (Guided): Schedule upcoming stroke highlight after 180ms so it doesn't collide with stroke completion animation
           if (activeStageMeta.autoHighlightNextStroke && strokeData.strokesRemaining > 0) {
-            try {
-              activeWriter.highlightStroke(strokeData.strokeNum + 1);
-            } catch (e) {
-              // Ignore if writer was unmounted
-            }
+            const nextStrokeIdx = strokeData.strokeNum + 1;
+            setTimeout(() => {
+              if (writerInstanceRef.current === activeWriter) {
+                try {
+                  activeWriter.highlightStroke(nextStrokeIdx);
+                } catch (e) {
+                  // Ignore if writer was unmounted
+                }
+              }
+            }, 180);
           }
         },
         onComplete: (summaryData) => {
@@ -573,9 +612,25 @@ export function WritingStageModal({
             hintTriggered: false
           }));
 
+          const {
+            combo: liveCombo,
+            maxCombo: liveMaxCombo,
+            bonusXp: liveBonusXp,
+            wordXpAwarded: liveWordXpAwarded,
+            currentWord: liveWord,
+            wordIndex: liveWordIdx,
+            charIndex: liveCharIdx,
+            words: liveWords,
+            progress: liveProgress,
+            writingConfig: liveWritingCfg,
+            onComplete: completeCb,
+            onRecordSkillEvent: recordEvt,
+            flushSessionTime: flushTime
+          } = liveStateRef.current;
+
           // Sequential Adaptive Stage Progression per Character
           if (targetStage < 3) {
-            soundFX.playCorrect(combo + 1);
+            soundFX.playCorrect(liveCombo + 1);
             setModeStatus('stage_transition');
             stageTransitionTimerRef.current = setTimeout(() => {
               setCharStage(targetStage + 1);
@@ -583,19 +638,21 @@ export function WritingStageModal({
           } else {
             // Completed Stage 3 (Memory Freehand) for this character!
             setModeStatus('completed');
-            soundFX.playCorrect(combo + 2);
+            soundFX.playCorrect(liveCombo + 2);
 
-            const earned = summaryData.totalMistakes === 0 ? 30 : 20;
-            const isFinalCharInWord = charIndex >= (currentWord.chars?.length || 1) - 1;
+            const comboBonus = liveCombo >= 1 ? Math.min(3, liveCombo) : 0;
+            const earned = 5 + comboBonus;
+            const isFinalCharInWord = liveCharIdx >= (liveWord.chars?.length || 1) - 1;
 
             setCompletedCharsInWord((prev) => {
-              const nextCompleted = prev.includes(charIndex) ? prev : [...prev, charIndex];
-              const allCharsDone = nextCompleted.length >= (currentWord.chars?.length || 1);
+              const nextCompleted = prev.includes(liveCharIdx) ? prev : [...prev, liveCharIdx];
+              const allCharsDone = nextCompleted.length >= (liveWord.chars?.length || 1);
 
               // Award Mastery XP only after completing Stage 3 for all characters in the word
-              if (allCharsDone && !wordXpAwarded) {
+              if (allCharsDone && !liveStateRef.current.wordXpAwarded) {
+                liveStateRef.current.wordXpAwarded = true;
                 setWordXpAwarded(true);
-                onRecordSkillEvent?.(currentWord, 'writing', {
+                recordEvt?.(liveWord, 'writing', {
                   mistakesDelta: 0,
                   completionsDelta: 1
                 });
@@ -609,16 +666,16 @@ export function WritingStageModal({
             // Auto-transition after Stage 3 completion (850ms to next char in word, 1200ms to next word)
             if (!isFinalCharInWord) {
               feedbackTimerRef.current = setTimeout(() => {
-                setCharStage(writingConfig.initialStage);
+                setCharStage(liveWritingCfg.initialStage);
                 setCharIndex((prev) => prev + 1);
               }, 850);
             } else {
-              const nextTotalXp = bonusXp + (wordXpAwarded ? 0 : earned);
+              const nextTotalXp = liveBonusXp + (liveWordXpAwarded ? 0 : earned);
               feedbackTimerRef.current = setTimeout(() => {
-                if (wordIndex < words.length - 1) {
-                  const nextWord = words[wordIndex + 1];
+                if (liveWordIdx < liveWords.length - 1) {
+                  const nextWord = liveWords[liveWordIdx + 1];
                   const nextWordConfig = getAdaptiveWritingConfig(
-                    getWordMasteryLevel(progress?.mastery, nextWord)
+                    getWordMasteryLevel(liveProgress?.mastery, nextWord)
                   );
                   setCompletedCharsInWord([]);
                   setWordXpAwarded(false);
@@ -626,8 +683,8 @@ export function WritingStageModal({
                   setCharIndex(0);
                   setWordIndex((prev) => prev + 1);
                 } else {
-                  flushSessionTime();
-                  onComplete(nextTotalXp, maxCombo);
+                  flushTime();
+                  completeCb(nextTotalXp, liveMaxCombo);
                 }
               }, 1200);
             }
@@ -648,24 +705,7 @@ export function WritingStageModal({
         }, 60);
       }
     },
-    [
-      bonusXp,
-      charIndex,
-      charStage,
-      clearAllWritingTimers,
-      combo,
-      currentWord,
-      flushSessionTime,
-      maxCombo,
-      onComplete,
-      onRecordSkillEvent,
-      progress?.mastery,
-      triggerBoardFeedback,
-      wordIndex,
-      wordXpAwarded,
-      words,
-      writingConfig.initialStage
-    ]
+    [clearAllWritingTimers, triggerBoardFeedback]
   );
 
   useEffect(() => {
@@ -1243,7 +1283,7 @@ export function AudioSpeechStageModal({
   const [maxCombo, setMaxCombo] = useState(0);
   const [bonusXp, setBonusXp] = useState(0);
   const [xpPopupKey, setXpPopupKey] = useState(0);
-  const [xpPopupAmount, setXpPopupAmount] = useState(15);
+  const [xpPopupAmount, setXpPopupAmount] = useState(5);
 
   const recognitionRef = useRef(null);
   const feedbackTimerRef = useRef(null);
@@ -1330,7 +1370,8 @@ export function AudioSpeechStageModal({
       setCombo(nextCombo);
       setMaxCombo(nextMax);
       soundFX.playCorrect(nextCombo);
-      const gain = 15 + (nextCombo >= 2 ? nextCombo * 3 : 0);
+      const comboBonus = nextCombo >= 2 ? Math.min(3, nextCombo - 1) : 0;
+      const gain = 5 + comboBonus;
       nextBonus = bonusXp + gain;
       setBonusXp(nextBonus);
       setXpPopupAmount(gain);
@@ -1391,7 +1432,8 @@ export function AudioSpeechStageModal({
           setCombo(nextCombo);
           setMaxCombo(nextMax);
           soundFX.playCorrect(nextCombo);
-          const gain = (computed.score >= 85 ? 20 : 15) + (nextCombo >= 2 ? nextCombo * 3 : 0);
+          const comboBonus = nextCombo >= 2 ? Math.min(3, nextCombo - 1) : 0;
+          const gain = 5 + comboBonus;
           nextBonus = bonusXp + gain;
           setBonusXp(nextBonus);
           setXpPopupAmount(gain);
@@ -1566,9 +1608,7 @@ export function AudioSpeechStageModal({
                     onChange={(e) => setDictationInput(e.target.value)}
                     placeholder={
                       dictationSubMode === 'pinyin'
-                        ? masteryLevel >= 7
-                          ? 'Lv.7+: nǐ hǎo, ni3 hao3, or 你好'
-                          : 'e.g. nǐ hǎo, ni3 hao3, or nihao'
+                        ? 'e.g. nǐ hǎo or ni3 hao3 (tones required)'
                         : 'Type Chinese characters (e.g. 你好)'
                     }
                     className={`flex-1 bg-slate-950 border rounded-xl px-3.5 py-2.5 text-xs font-bold text-white placeholder:text-slate-500 outline-none ${
@@ -1589,10 +1629,8 @@ export function AudioSpeechStageModal({
                 </div>
 
                 <p className="text-[11px] text-slate-400">
-                  {masteryLevel >= 7
-                    ? 'Lv.7+ Tone Check: requires tone marks (nǐ hǎo), tone numbers (ni3 hao3), or Hanzi.'
-                    : dictationSubMode === 'pinyin'
-                    ? 'Accepts tone marks, tone numbers, or toneless Pinyin (v → ü).'
+                  {dictationSubMode === 'pinyin'
+                    ? 'Tones required: use tone marks (nǐ hǎo) or tone numbers (ni3 hao3). Sandhi & neutral tones accepted.'
                     : `Hint: ${currentWord.literal}`}
                 </p>
               </form>
@@ -1797,7 +1835,7 @@ export function BossChallengeModal({
   const [maxCombo, setMaxCombo] = useState(0);
   const [bonusXp, setBonusXp] = useState(0);
   const [xpPopupKey, setXpPopupKey] = useState(0);
-  const [xpPopupAmount, setXpPopupAmount] = useState(15);
+  const [xpPopupAmount, setXpPopupAmount] = useState(5);
   const [bossDamageAnim, setBossDamageAnim] = useState(false);
   const [playerDamageAnim, setPlayerDamageAnim] = useState(false);
 
@@ -1888,7 +1926,8 @@ export function BossChallengeModal({
         const nextCombo = prev + 1;
         setMaxCombo((m) => Math.max(m, nextCombo));
         soundFX.playCorrect(nextCombo);
-        const earned = 15 + (nextCombo >= 2 ? nextCombo * 5 : 0);
+        const comboBonus = nextCombo >= 2 ? Math.min(3, nextCombo - 1) : 0;
+        const earned = 5 + comboBonus;
         setBonusXp((b) => b + earned);
         setXpPopupAmount(earned);
         setXpPopupKey((k) => k + 1);

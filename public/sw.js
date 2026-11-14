@@ -1,4 +1,4 @@
-const CACHE_NAME = 'mandarin-hsk-studio-v5';
+const CACHE_NAME = 'hanzi-app-cache-v3';
 
 const CORE_ASSETS = [
   '/',

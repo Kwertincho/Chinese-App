@@ -3280,7 +3280,7 @@ export function ProfileView({
       {
         id: 'jade_scholar',
         title: 'Jade Scholar',
-        desc: 'Reach Player Level 3 (200+ XP) or 3x Combo streak',
+        desc: 'Reach Player Level 3 (250+ XP) or 3x Combo streak',
         icon: Crown,
         unlocked: currentLevel >= 3 || (progress.stats?.highestCombo || 0) >= 3,
         progressText: `Lv.${currentLevel}/3`

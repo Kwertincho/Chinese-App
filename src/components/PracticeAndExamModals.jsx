@@ -230,7 +230,7 @@ export function ToneSandhiDrillModal({
   const [maxCombo, setMaxCombo] = useState(0);
   const [bonusXp, setBonusXp] = useState(0);
   const [xpPopupKey, setXpPopupKey] = useState(0);
-  const [xpPopupAmount, setXpPopupAmount] = useState(15);
+  const [xpPopupAmount, setXpPopupAmount] = useState(5);
 
   const feedbackTimerRef = useRef(null);
   const currentWord = drillQueue[stepIdx] || drillQueue[0];
@@ -282,7 +282,8 @@ export function ToneSandhiDrillModal({
       setCombo(nextCombo);
       setMaxCombo(nextMaxCombo);
       soundFX.playCorrect(nextCombo);
-      const earned = 15 + (nextCombo >= 2 ? nextCombo * 3 : 0);
+      const comboBonus = nextCombo >= 2 ? Math.min(3, nextCombo - 1) : 0;
+      const earned = 5 + comboBonus;
       nextBonusXp = bonusXp + earned;
       setBonusXp(nextBonusXp);
       setXpPopupAmount(earned);
@@ -303,7 +304,7 @@ export function ToneSandhiDrillModal({
         setStepIdx((prev) => prev + 1);
       } else {
         flushSessionTime();
-        onComplete(drillQueue, 60 + nextBonusXp, nextMaxCombo);
+        onComplete(drillQueue, 25 + nextBonusXp, nextMaxCombo);
       }
     }, delayMs);
   };
@@ -573,7 +574,7 @@ export function HskMockExamModal({
     const totalCorrect = listeningCorrect + readingCorrect;
     const percentage = Math.round((totalCorrect / questions.length) * 100);
     const passed = totalCorrect >= 12;
-    const xpReward = Math.max(40, totalCorrect * 6 + (passed ? 30 : 0));
+    const xpReward = 40 + (passed ? 25 : 0);
 
     return {
       listeningCorrect,
@@ -952,7 +953,7 @@ export function AdaptiveMixedSessionModal({
   const [maxCombo, setMaxCombo] = useState(0);
   const [bonusXp, setBonusXp] = useState(0);
   const [xpPopupKey, setXpPopupKey] = useState(0);
-  const [xpPopupAmount, setXpPopupAmount] = useState(15);
+  const [xpPopupAmount, setXpPopupAmount] = useState(5);
   const [stepCompleted, setStepCompleted] = useState(false);
   const [cardAnim, setCardAnim] = useState('idle');
 
@@ -1013,6 +1014,15 @@ export function AdaptiveMixedSessionModal({
   const masteryTierMeta = getMasteryTierMeta(masteryLv);
   const writingConfig = getAdaptiveWritingConfig(masteryLv);
 
+  const autoAdvanceDelayRef = useRef(1400);
+
+  const clearWriterTransitionTimer = useCallback(() => {
+    if (writerStageTransitionTimerRef.current) {
+      clearTimeout(writerStageTransitionTimerRef.current);
+      writerStageTransitionTimerRef.current = null;
+    }
+  }, []);
+
   const clearAllSessionTimers = useCallback(() => {
     if (writerStageTransitionTimerRef.current) {
       clearTimeout(writerStageTransitionTimerRef.current);
@@ -1040,55 +1050,117 @@ export function AdaptiveMixedSessionModal({
     return Array.from(map.values());
   }, [queue]);
 
+  const liveSessionRef = useRef({
+    queue,
+    onComplete,
+    onRecordSkillEvent,
+    flushSessionTime,
+    speakMandarin,
+    bonusXp,
+    maxCombo,
+    combo,
+    wordWritingXpAwarded,
+    currentWord,
+    currentModality,
+    charIndex,
+    writingConfig,
+    sentencePuzzle
+  });
+  liveSessionRef.current = {
+    queue,
+    onComplete,
+    onRecordSkillEvent,
+    flushSessionTime,
+    speakMandarin,
+    bonusXp,
+    maxCombo,
+    combo,
+    wordWritingXpAwarded,
+    currentWord,
+    currentModality,
+    charIndex,
+    writingConfig,
+    sentencePuzzle
+  };
+
   const finishMixedSession = useCallback(
-    (finalBonusXp = bonusXp, finalMaxCombo = maxCombo) => {
+    (finalBonusXp = liveSessionRef.current.bonusXp, finalMaxCombo = liveSessionRef.current.maxCombo) => {
+      const {
+        queue: liveQueue,
+        flushSessionTime: flushTime,
+        onComplete: completeCb
+      } = liveSessionRef.current;
       const uniqueWords = [];
-      queue.forEach((item) => {
-        if (!uniqueWords.some((w) => w.hanzi === item.word.hanzi)) {
+      liveQueue.forEach((item) => {
+        if (item?.word && !uniqueWords.some((w) => w.hanzi === item.word.hanzi)) {
           uniqueWords.push(item.word);
         }
       });
-      flushSessionTime();
-      onComplete(uniqueWords, finalBonusXp, finalMaxCombo);
+      flushTime();
+      completeCb(uniqueWords, finalBonusXp, finalMaxCombo);
     },
-    [bonusXp, flushSessionTime, maxCombo, onComplete, queue]
+    []
   );
 
   const scheduleNextQueueItem = useCallback(
-    (delayMs = 1400, nextBonusXp = bonusXp, nextMaxCombo = maxCombo) => {
-      if (feedbackTimerRef.current) {
-        clearTimeout(feedbackTimerRef.current);
-      }
-      feedbackTimerRef.current = setTimeout(() => {
-        if (stepIdx < queue.length - 1) {
-          setStepIdx((s) => s + 1);
-        } else {
-          finishMixedSession(nextBonusXp, nextMaxCombo);
-        }
-      }, delayMs);
+    (delayMs = 1400, nextBonusXp = liveSessionRef.current.bonusXp, nextMaxCombo = liveSessionRef.current.maxCombo) => {
+      autoAdvanceDelayRef.current = delayMs;
+      liveSessionRef.current.bonusXp = nextBonusXp;
+      liveSessionRef.current.maxCombo = nextMaxCombo;
+      setStepCompleted(true);
     },
-    [bonusXp, finishMixedSession, maxCombo, queue.length, stepIdx]
+    []
   );
 
-  const awardComboXp = useCallback(
-    (base = 15) => {
-      const next = combo + 1;
-      const nextMax = Math.max(maxCombo, next);
-      setCombo(next);
-      setMaxCombo(nextMax);
-      soundFX.playCorrect(next);
-      const gain = base + (next >= 2 ? next * 3 : 0);
-      const nextBonus = bonusXp + gain;
-      setBonusXp(nextBonus);
-      setXpPopupAmount(gain);
-      setXpPopupKey((k) => k + 1);
-      return { nextBonus, nextMax };
-    },
-    [bonusXp, combo, maxCombo]
-  );
+  // Dedicated auto-advance effect strictly tied to [stepCompleted, stepIdx] so parent re-renders never cancel it
+  useEffect(() => {
+    if (!stepCompleted) return;
+    if (feedbackTimerRef.current) {
+      clearTimeout(feedbackTimerRef.current);
+    }
+    const delayMs = autoAdvanceDelayRef.current || 1400;
+    feedbackTimerRef.current = setTimeout(() => {
+      const {
+        queue: liveQueue,
+        bonusXp: liveBonus,
+        maxCombo: liveMax
+      } = liveSessionRef.current;
+      if (stepIdx < liveQueue.length - 1) {
+        setStepIdx((s) => s + 1);
+      } else {
+        finishMixedSession(liveBonus, liveMax);
+      }
+    }, delayMs);
+
+    return () => {
+      if (feedbackTimerRef.current) {
+        clearTimeout(feedbackTimerRef.current);
+        feedbackTimerRef.current = null;
+      }
+    };
+  }, [stepCompleted, stepIdx, finishMixedSession]);
+
+  const awardComboXp = useCallback((base = 5) => {
+    const next = (liveSessionRef.current.combo || 0) + 1;
+    const nextMax = Math.max(liveSessionRef.current.maxCombo || 0, next);
+    const comboBonus = next >= 2 ? Math.min(3, next - 1) : 0;
+    const gain = base + comboBonus;
+    const nextBonus = (liveSessionRef.current.bonusXp || 0) + gain;
+    liveSessionRef.current.combo = next;
+    liveSessionRef.current.maxCombo = nextMax;
+    liveSessionRef.current.bonusXp = nextBonus;
+    setCombo(next);
+    setMaxCombo(nextMax);
+    soundFX.playCorrect(next);
+    setBonusXp(nextBonus);
+    setXpPopupAmount(gain);
+    setXpPopupKey((k) => k + 1);
+    return { nextBonus, nextMax };
+  }, []);
 
   const registerMistakeFeedback = useCallback(() => {
     soundFX.playMistake();
+    liveSessionRef.current.combo = 0;
     setCombo(0);
     setCardAnim('wrong');
     setTimeout(() => setCardAnim('idle'), 460);
@@ -1125,8 +1197,17 @@ export function AdaptiveMixedSessionModal({
     return rawOpts.map((_, idx) => rawOpts[(idx + shift) % rawOpts.length]);
   }, [currentWord, queue, stepIdx]);
 
+  // Reset step state ONLY when advancing to a new stepIdx
   useEffect(() => {
     clearAllSessionTimers();
+    const {
+      writingConfig: liveWritingCfg,
+      currentModality: liveModality,
+      sentencePuzzle: livePuzzle,
+      currentWord: liveWord,
+      speakMandarin: speakFn
+    } = liveSessionRef.current;
+
     setStepCompleted(false);
     setCardAnim('idle');
     setIsCardFlipped(false);
@@ -1135,9 +1216,10 @@ export function AdaptiveMixedSessionModal({
     setShowPinyinHint(false);
 
     setCharIndex(0);
-    setCharStage(writingConfig.initialStage);
+    setCharStage(liveWritingCfg.initialStage);
     setCompletedCharsInWord([]);
     setWordWritingXpAwarded(false);
+    liveSessionRef.current.wordWritingXpAwarded = false;
     setStrokeStats({
       completedStrokes: 0,
       totalStrokes: 0,
@@ -1159,14 +1241,13 @@ export function AdaptiveMixedSessionModal({
     setSentenceCheckStatus(null);
     setClozeSelectedId(null);
 
-    speakMandarin(
-      currentModality === 'sentence_builder'
-        ? sentencePuzzle.cleanSentence
-        : currentWord.hanzi
+    speakFn(
+      liveModality === 'sentence_builder'
+        ? livePuzzle.cleanSentence
+        : liveWord.hanzi
     );
 
     return () => {
-      clearAllSessionTimers();
       if (recognitionRef.current) {
         try {
           recognitionRef.current.abort();
@@ -1175,18 +1256,9 @@ export function AdaptiveMixedSessionModal({
         }
       }
     };
-  }, [
-    stepIdx,
-    currentWord.hanzi,
-    currentModality,
-    sentencePuzzle.cleanSentence,
-    speakMandarin,
-    clearAllSessionTimers,
-    writingConfig.initialStage
-  ]);
+  }, [stepIdx, clearAllSessionTimers]);
 
   useEffect(() => {
-    if (!queue.some((q) => q.modality === 'writing')) return;
     let mounted = true;
     loadHanziWriterScript()
       .then(() => {
@@ -1199,7 +1271,7 @@ export function AdaptiveMixedSessionModal({
       mounted = false;
       clearAllSessionTimers();
     };
-  }, [queue, clearAllSessionTimers]);
+  }, [clearAllSessionTimers]);
 
   useEffect(() => {
     if (
@@ -1232,11 +1304,11 @@ export function AdaptiveMixedSessionModal({
   }, [currentModality, scriptStatus, currentChar, charStage]);
 
   const startWriterQuiz = useCallback(
-    (writer, targetStage = charStage) => {
+    (writer, targetStage) => {
       const activeWriter = writer || writerInstanceRef.current;
       if (!activeWriter) return;
 
-      clearAllSessionTimers();
+      clearWriterTransitionTimer();
 
       const activeStageMeta = getWritingStageMeta(targetStage);
       setWriterModeStatus('quiz');
@@ -1260,7 +1332,8 @@ export function AdaptiveMixedSessionModal({
         highlightOnComplete: true,
         onMistake: (strokeData) => {
           registerMistakeFeedback();
-          onRecordSkillEvent?.(currentWord, 'writing', { mistakesDelta: 1, completionsDelta: 0 });
+          const { currentWord: liveWord, onRecordSkillEvent: recordEvt } = liveSessionRef.current;
+          recordEvt?.(liveWord, 'writing', { mistakesDelta: 1, completionsDelta: 0 });
           setStrokeStats((prev) => ({
             ...prev,
             mistakesOnCurrent: strokeData.mistakesOnStroke,
@@ -1271,7 +1344,14 @@ export function AdaptiveMixedSessionModal({
         onCorrectStroke: (strokeData) => {
           const doneCount = strokeData.strokeNum + 1;
           const total = doneCount + strokeData.strokesRemaining;
-          soundFX.playCorrect(combo + 1);
+          const nextCombo = (liveSessionRef.current.combo || 0) + 1;
+          const nextMaxCombo = Math.max(liveSessionRef.current.maxCombo || 0, nextCombo);
+          liveSessionRef.current.combo = nextCombo;
+          liveSessionRef.current.maxCombo = nextMaxCombo;
+          setCombo(nextCombo);
+          setMaxCombo(nextMaxCombo);
+          soundFX.playCorrect(nextCombo);
+
           setStrokeStats({
             completedStrokes: doneCount,
             totalStrokes: total,
@@ -1281,11 +1361,16 @@ export function AdaptiveMixedSessionModal({
           });
 
           if (activeStageMeta.autoHighlightNextStroke && strokeData.strokesRemaining > 0) {
-            try {
-              activeWriter.highlightStroke(strokeData.strokeNum + 1);
-            } catch (e) {
-              // Ignore
-            }
+            const nextStrokeIdx = strokeData.strokeNum + 1;
+            setTimeout(() => {
+              if (writerInstanceRef.current === activeWriter) {
+                try {
+                  activeWriter.highlightStroke(nextStrokeIdx);
+                } catch (e) {
+                  // Ignore
+                }
+              }
+            }, 180);
           }
         },
         onComplete: (summaryData) => {
@@ -1299,38 +1384,48 @@ export function AdaptiveMixedSessionModal({
             hintTriggered: false
           }));
 
+          const {
+            combo: liveCombo,
+            bonusXp: liveBonus,
+            maxCombo: liveMax,
+            charIndex: liveCharIdx,
+            currentWord: liveWord,
+            writingConfig: liveWritingCfg,
+            onRecordSkillEvent: recordEvt
+          } = liveSessionRef.current;
+
           if (targetStage < 3) {
-            soundFX.playCorrect(combo + 1);
+            soundFX.playCorrect(liveCombo + 1);
             setWriterModeStatus('stage_transition');
             writerStageTransitionTimerRef.current = setTimeout(() => {
               setCharStage(targetStage + 1);
             }, 600);
           } else {
             setWriterModeStatus('completed');
-            const isFinalChar = charIndex >= (currentWord.chars?.length || 1) - 1;
+            const isFinalChar = liveCharIdx >= (liveWord.chars?.length || 1) - 1;
 
             setCompletedCharsInWord((prev) => {
-              const next = prev.includes(charIndex) ? prev : [...prev, charIndex];
+              const next = prev.includes(liveCharIdx) ? prev : [...prev, liveCharIdx];
               return next;
             });
 
             if (!isFinalChar) {
-              soundFX.playCorrect(combo + 1);
-              feedbackTimerRef.current = setTimeout(() => {
-                setCharStage(writingConfig.initialStage);
+              soundFX.playCorrect(liveCombo + 1);
+              writerStageTransitionTimerRef.current = setTimeout(() => {
+                setCharStage(liveWritingCfg.initialStage);
                 setCharIndex((c) => c + 1);
               }, 850);
             } else {
-              setStepCompleted(true);
-              let updatedBonus = bonusXp;
-              let updatedMax = maxCombo;
-              if (!wordWritingXpAwarded) {
+              let updatedBonus = liveBonus;
+              let updatedMax = liveMax;
+              if (!liveSessionRef.current.wordWritingXpAwarded) {
+                liveSessionRef.current.wordWritingXpAwarded = true;
                 setWordWritingXpAwarded(true);
-                onRecordSkillEvent?.(currentWord, 'writing', {
+                recordEvt?.(liveWord, 'writing', {
                   mistakesDelta: 0,
                   completionsDelta: 1
                 });
-                const res = awardComboXp(summaryData.totalMistakes === 0 ? 25 : 20);
+                const res = awardComboXp(5);
                 updatedBonus = res.nextBonus;
                 updatedMax = res.nextMax;
               }
@@ -1352,21 +1447,7 @@ export function AdaptiveMixedSessionModal({
         }, 60);
       }
     },
-    [
-      awardComboXp,
-      bonusXp,
-      charIndex,
-      charStage,
-      clearAllSessionTimers,
-      combo,
-      currentWord,
-      maxCombo,
-      onRecordSkillEvent,
-      registerMistakeFeedback,
-      scheduleNextQueueItem,
-      wordWritingXpAwarded,
-      writingConfig.initialStage
-    ]
+    [awardComboXp, clearWriterTransitionTimer, registerMistakeFeedback, scheduleNextQueueItem]
   );
 
   useEffect(() => {
@@ -1485,7 +1566,7 @@ export function AdaptiveMixedSessionModal({
       setCardAnim('correct');
       setTimeout(() => setCardAnim('idle'), 500);
       onRecordSkillEvent?.(currentWord, 'recognition', { mistakesDelta: 0, completionsDelta: 1 });
-      const { nextBonus, nextMax } = awardComboXp(15);
+      const { nextBonus, nextMax } = awardComboXp(5);
       speakMandarin(currentWord.hanzi);
       scheduleNextQueueItem(1400, nextBonus, nextMax);
     } else {
@@ -1506,7 +1587,7 @@ export function AdaptiveMixedSessionModal({
       setCardAnim('correct');
       setTimeout(() => setCardAnim('idle'), 500);
       onRecordSkillEvent?.(currentWord, 'listening', { mistakesDelta: 0, completionsDelta: 1 });
-      const { nextBonus, nextMax } = awardComboXp(15);
+      const { nextBonus, nextMax } = awardComboXp(5);
       speakMandarin(currentWord.hanzi);
       scheduleNextQueueItem(1400, nextBonus, nextMax);
     } else {
@@ -1530,7 +1611,7 @@ export function AdaptiveMixedSessionModal({
           mistakesDelta: 0,
           completionsDelta: 1
         });
-        const { nextBonus, nextMax } = awardComboXp(20);
+        const { nextBonus, nextMax } = awardComboXp(5);
         speakMandarin(sentencePuzzle.cleanSentence);
         scheduleNextQueueItem(1400, nextBonus, nextMax);
       } else {
@@ -1613,7 +1694,7 @@ export function AdaptiveMixedSessionModal({
           setCardAnim('correct');
           setTimeout(() => setCardAnim('idle'), 500);
           onRecordSkillEvent?.(currentWord, 'speaking', { mistakesDelta: 0, completionsDelta: 1 });
-          const { nextBonus, nextMax } = awardComboXp(computed.score >= 85 ? 20 : 15);
+          const { nextBonus, nextMax } = awardComboXp(5);
           scheduleNextQueueItem(1400, nextBonus, nextMax);
         } else {
           registerMistakeFeedback();
@@ -2157,9 +2238,7 @@ export function AdaptiveMixedSessionModal({
                   onChange={(e) => setDictationInput(e.target.value)}
                   placeholder={
                     dictationSubMode === 'pinyin'
-                      ? masteryLv >= 7
-                        ? 'Lv.7+: nǐ hǎo, ni3 hao3, or 你好'
-                        : 'e.g. nǐ hǎo, ni3 hao3, nihao'
+                      ? 'e.g. nǐ hǎo or ni3 hao3 (tones required)'
                       : 'Type Hanzi (e.g. 你好)'
                   }
                   className={`flex-1 bg-slate-950 border rounded-xl px-3.5 py-2.5 text-xs font-bold text-white outline-none ${
@@ -2178,9 +2257,9 @@ export function AdaptiveMixedSessionModal({
                   Submit
                 </button>
               </div>
-              {masteryLv >= 7 && (
-                <p className="text-[11px] text-amber-300/90 font-semibold">
-                  Lv.7+ Tone Check: include tone marks (nǐ hǎo), tone numbers (ni3 hao3), or Hanzi.
+              {dictationSubMode === 'pinyin' && (
+                <p className="text-[11px] text-slate-400 font-semibold">
+                  Tones required: include tone marks (nǐ hǎo) or tone numbers (ni3 hao3). Sandhi & neutral tones accepted.
                 </p>
               )}
             </form>
@@ -2524,7 +2603,7 @@ export function AdaptiveMixedSessionModal({
                   mistakesDelta: 0,
                   completionsDelta: 1
                 });
-                const { nextBonus, nextMax } = awardComboXp(20);
+                const { nextBonus, nextMax } = awardComboXp(5);
                 speakMandarin(clozeData.mandarinSentence);
                 scheduleNextQueueItem(1400, nextBonus, nextMax);
               } else {
@@ -2663,7 +2742,8 @@ export function BlitzMatchModal({
           );
         }
 
-        const earnedXp = 15 + (nextCombo >= 3 ? 5 : 0);
+        const comboBonus = nextCombo >= 2 ? Math.min(3, nextCombo - 1) : 0;
+        const earnedXp = 5 + comboBonus;
         setScoreXp((x) => x + earnedXp);
         setTotalPairsMatched((c) => c + 1);
         setTimeLeft((t) => t + 2);
@@ -2893,11 +2973,11 @@ export function BlitzMatchModal({
                 type="button"
                 onClick={() => {
                   flushSessionTime();
-                  onComplete(matchedWordsHistory, Math.max(40, scoreXp), maxCombo);
+                  onComplete(matchedWordsHistory, Math.max(25, scoreXp), maxCombo);
                 }}
                 className="game-btn-3d flex-1 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-rose-600 text-white font-black text-xs border-b-4 border-rose-800"
               >
-                Claim +{Math.max(40, scoreXp)} XP
+                Claim +{Math.max(25, scoreXp)} XP
               </button>
             </div>
           </div>

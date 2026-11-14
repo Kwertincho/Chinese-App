@@ -24,18 +24,106 @@ export function stripToneMarks(input = '') {
     .replace(/['’\s\p{P}]/gu, '');
 }
 
-export function convertPinyinToNumeric(pinyin = '') {
-  const tokens = String(pinyin || '')
+const MANDARIN_SYLLABLE_REGEX =
+  /^(zh|ch|sh|[bpmfdtnlgkhjqxrzcsyw])?(iang|iong|uang|ueng|ang|eng|ing|ong(?![aoeiuü])|üan|ian|uan|an|en|in|un|ün(?![aoeiuü])|er(?![aoeiuü])|iao|uai|uei|iou|ai|ei|ui|ao|ou|iu|ie|üe|ia|ua|uo|a|o|e|i|u|ü)([0-5])?/i;
+
+const MANDARIN_FINAL_REGEX =
+  /^(?:(?:iang|iong|uang|ueng|ang|eng|ing|ong)(?![aoeiuü])|(?:üan|ian|uan|an|en|in|un|ün)(?![aoeiuü])|er(?![aoeiuü])|iao|uai|uei|iou|ai|ei|ui|ao|ou|iu|ie|üe|ia|ua|uo|a|o|e|i|u|ü)/i;
+
+const MANDARIN_INITIAL_REGEX = /^(zh|ch|sh|[bpmfdtnlgkhjqxrzcsyw])/i;
+
+export function segmentMandarinPinyin(pinyin = '') {
+  const rawChunks = String(pinyin || '')
     .trim()
-    .toLowerCase()
-    .replace(/u:/g, 'ü')
-    .replace(/v/g, 'ü')
-    .split(/[\s']+/)
+    .replace(/u:/gi, 'ü')
+    .split(/[\s'’]+/)
     .filter(Boolean);
 
+  const syllables = [];
+
+  for (const chunk of rawChunks) {
+    // Build a 1-to-1 base character string (same length as chunk) so regex matches map cleanly back to original characters
+    const baseChunk = Array.from(chunk)
+      .map((ch) => {
+        const lower = ch.toLowerCase();
+        if (TONE_VOWEL_MAP[lower]) return TONE_VOWEL_MAP[lower].base;
+        if (lower === 'v') return 'ü';
+        return lower;
+      })
+      .join('');
+
+    let pos = 0;
+    while (pos < chunk.length) {
+      const remainingBase = baseChunk.slice(pos);
+      const remainingOrig = chunk.slice(pos);
+
+      let initialLen = 0;
+      const initMatch = remainingBase.match(MANDARIN_INITIAL_REGEX);
+      if (initMatch) {
+        const afterInit = remainingBase.slice(initMatch[0].length);
+        if (MANDARIN_FINAL_REGEX.test(afterInit)) {
+          initialLen = initMatch[0].length;
+        }
+      }
+
+      const afterInitialBase = remainingBase.slice(initialLen);
+      const finalMatch = afterInitialBase.match(MANDARIN_FINAL_REGEX);
+
+      if (finalMatch) {
+        let sylLen = initialLen + finalMatch[0].length;
+        // Ensure a single syllable never spans across two distinct tone-marked vowels
+        let toneMarkCount = 0;
+        for (let i = 0; i < sylLen; i++) {
+          const origCh = remainingOrig[i]?.toLowerCase();
+          if (TONE_VOWEL_MAP[origCh] && TONE_VOWEL_MAP[origCh].tone !== 5) {
+            toneMarkCount++;
+            if (toneMarkCount > 1) {
+              sylLen = i;
+              break;
+            }
+          }
+        }
+
+        // Consume optional trailing tone number [0-5]
+        if (sylLen < remainingBase.length && /[0-5]/.test(remainingBase[sylLen])) {
+          sylLen += 1;
+        }
+
+        syllables.push(remainingOrig.slice(0, sylLen));
+        pos += sylLen;
+      } else {
+        // Fallback if non-standard character sequence is encountered
+        const fallbackMatch = remainingBase.match(MANDARIN_SYLLABLE_REGEX);
+        if (fallbackMatch && fallbackMatch[0].length > 0) {
+          syllables.push(remainingOrig.slice(0, fallbackMatch[0].length));
+          pos += fallbackMatch[0].length;
+        } else {
+          syllables.push(remainingOrig);
+          break;
+        }
+      }
+    }
+  }
+
+  return syllables.filter(Boolean);
+}
+
+export function convertPinyinToNumeric(pinyin = '') {
+  const tokens = segmentMandarinPinyin(pinyin);
+
   return tokens
-    .map((tok) => {
-      if (/[1-5]$/.test(tok)) return tok;
+    .map((rawTok) => {
+      const tok = rawTok.toLowerCase().replace(/u:/g, 'ü').replace(/v/g, 'ü');
+      const trailingDigit = tok.match(/([0-5])$/);
+      if (trailingDigit) {
+        const toneNum = trailingDigit[1] === '0' ? '5' : trailingDigit[1];
+        const basePart = tok
+          .slice(0, -1)
+          .split('')
+          .map((ch) => (TONE_VOWEL_MAP[ch] ? TONE_VOWEL_MAP[ch].base : ch))
+          .join('');
+        return `${basePart}${toneNum}`;
+      }
       let detectedTone = 5;
       const baseChars = tok.split('').map((ch) => {
         if (TONE_VOWEL_MAP[ch]) {
@@ -52,29 +140,22 @@ export function convertPinyinToNumeric(pinyin = '') {
 }
 
 export function parsePinyinSyllablesWithTones(pinyin = '', hanzi = '') {
-  const rawTokens = String(pinyin || '')
-    .trim()
-    .split(/[\s']+/)
-    .filter(Boolean);
-
-  const tokens =
-    rawTokens.length === 1 && hanzi.length === 2 && rawTokens[0].length >= 4
-      ? [
-          rawTokens[0].slice(0, Math.ceil(rawTokens[0].length / 2)),
-          rawTokens[0].slice(Math.ceil(rawTokens[0].length / 2))
-        ]
-      : rawTokens;
+  const tokens = segmentMandarinPinyin(pinyin);
 
   return tokens.map((syl, idx) => {
     let tone = 5;
     for (const ch of syl) {
-      if (TONE_VOWEL_MAP[ch] && TONE_VOWEL_MAP[ch].tone !== 5) {
-        tone = TONE_VOWEL_MAP[ch].tone;
+      const lower = ch.toLowerCase();
+      if (TONE_VOWEL_MAP[lower] && TONE_VOWEL_MAP[lower].tone !== 5) {
+        tone = TONE_VOWEL_MAP[lower].tone;
         break;
       }
     }
-    const numMatch = syl.match(/([1-5])/);
-    if (numMatch) tone = Number(numMatch[1]);
+    const numMatch = syl.match(/([0-5])/);
+    if (numMatch) {
+      const parsedNum = Number(numMatch[1]);
+      tone = parsedNum === 0 ? 5 : parsedNum;
+    }
     return {
       syllable: syl,
       tone,
@@ -144,11 +225,123 @@ export function normalizeWordEntry(raw = {}, idx = 0) {
   };
 }
 
+const CITATION_TONE_BY_CHAR = {
+  谢: 4,
+  妈: 1,
+  爸: 4,
+  哥: 1,
+  姐: 3,
+  弟: 4,
+  妹: 4,
+  友: 3,
+  欢: 1,
+  道: 4,
+  生: 1,
+  上: 4,
+  子: 3,
+  们: 2,
+  候: 4,
+  服: 2,
+  亮: 4,
+  气: 4,
+  思: 1,
+  西: 1,
+  系: 4,
+  识: 2,
+  字: 4,
+  什: 2,
+  么: 5
+};
+
+function parsePinyinToBaseAndToneList(input = '') {
+  const segs = segmentMandarinPinyin(input);
+  return segs
+    .map((rawSyl) => {
+      const lower = rawSyl.toLowerCase().replace(/u:/g, 'ü').replace(/v/g, 'ü');
+      let tone = 5;
+      for (const ch of lower) {
+        if (TONE_VOWEL_MAP[ch] && TONE_VOWEL_MAP[ch].tone !== 5) {
+          tone = TONE_VOWEL_MAP[ch].tone;
+          break;
+        }
+      }
+      const digitMatch = lower.match(/([0-5])/);
+      if (digitMatch) {
+        const d = Number(digitMatch[1]);
+        tone = d === 0 ? 5 : d;
+      }
+      const base = lower
+        .split('')
+        .map((ch) => (TONE_VOWEL_MAP[ch] ? TONE_VOWEL_MAP[ch].base : ch))
+        .join('')
+        .replace(/[0-5'’\s\p{P}]/gu, '');
+      return { base, tone };
+    })
+    .filter((item) => item.base.length > 0);
+}
+
+function isPhonologicallyEquivalentPinyin(userSyls, targetSyls, hanziChars = []) {
+  if (!userSyls.length || userSyls.length !== targetSyls.length) return false;
+  for (let i = 0; i < userSyls.length; i++) {
+    if (userSyls[i].base !== targetSyls[i].base) return false;
+  }
+
+  const n = targetSyls.length;
+  // Build allowed tones per syllable position first, plus sandhi sequence combinations
+  const allowedTonesAtPos = targetSyls.map((s, idx) => {
+    const set = new Set([s.tone]);
+    const ch = hanziChars[idx];
+
+    // Neutral-tone / final-syllable / reduplication flexibility
+    if (idx === n - 1 && n >= 2) {
+      set.add(5); // Always allow neutral tone (5 / 0 / unmarked) on the final syllable of multi-syllable words
+      if (targetSyls[idx].base === targetSyls[idx - 1].base) {
+        // Reduplicated word (e.g. 谢谢 xie4xie4 / xie4xie5, 妈妈 ma1ma1 / ma1ma5)
+        set.add(targetSyls[idx - 1].tone);
+      }
+      if (ch && CITATION_TONE_BY_CHAR[ch]) {
+        set.add(CITATION_TONE_BY_CHAR[ch]);
+      }
+    }
+
+    // 不 (bù) sandhi flexibility: accept citation tone 4 and sandhi tone 2
+    if (s.base === 'bu' || ch === '不') {
+      set.add(4);
+      set.add(2);
+    }
+
+    // 一 (yī) sandhi flexibility: accept citation tone 1 and sandhi tones 2 and 4
+    if (s.base === 'yi' || ch === '一') {
+      set.add(1);
+      set.add(2);
+      set.add(4);
+    }
+
+    return set;
+  });
+
+  // Also allow 3rd-tone sandhi (3 + 3 -> 2 + 3) on any adjacent 3rd-tone syllables
+  for (let i = 0; i < n - 1; i++) {
+    const nextAllows3 = allowedTonesAtPos[i + 1].has(3);
+    if (allowedTonesAtPos[i].has(3) && nextAllows3) {
+      allowedTonesAtPos[i].add(2);
+    }
+  }
+
+  for (let i = 0; i < n; i++) {
+    if (!allowedTonesAtPos[i].has(userSyls[i].tone)) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
 export function validateDictationInput(
   userInput = '',
   targetWord = UNIT_1_WORDS[0],
   subMode = 'pinyin',
-  masteryLevel = 0
+  _masteryLevel = 0
 ) {
   const raw = String(userInput || '').trim();
   if (!raw) {
@@ -177,6 +370,22 @@ export function validateDictationInput(
     };
   }
 
+  // Mandatory Tones Check in Pinyin mode: require either diacritic tone marks or numeric tone digits
+  const hasToneMark = Array.from(raw).some((ch) => {
+    const entry = TONE_VOWEL_MAP[ch.toLowerCase()];
+    return Boolean(entry && entry.tone !== 5);
+  });
+  const hasToneNumber = /[0-5]/.test(raw);
+
+  if (!hasToneMark && !hasToneNumber) {
+    return {
+      isValid: false,
+      matchType: 'Tones Required',
+      feedback:
+        'Tones are required! Include tone marks (e.g. nǐ hǎo) or tone numbers (e.g. ni3 hao3).'
+    };
+  }
+
   const normalizeKeepTones = (s) =>
     String(s || '')
       .toLowerCase()
@@ -195,39 +404,33 @@ export function validateDictationInput(
     };
   }
 
-  const userNumeric = convertPinyinToNumeric(raw).replace(/[\s'’\p{P}]/gu, '');
-  const numericCandidates = [
+  const userSyls = parsePinyinToBaseAndToneList(raw);
+  const hanziChars = Array.from(cleanTargetHanzi);
+  const candidateStrings = [
+    targetWord.pinyin,
     targetWord.pinyinNum,
-    ...(targetWord.pinyinNumeric || []),
-    convertPinyinToNumeric(targetWord.pinyin)
-  ]
-    .filter(Boolean)
-    .map((c) => String(c).toLowerCase().replace(/u:/g, 'ü').replace(/v/g, 'ü').replace(/[\s'’\p{P}]/gu, ''));
+    ...(targetWord.pinyinNumeric || [])
+  ].filter(Boolean);
 
-  if (numericCandidates.includes(userNumeric)) {
-    return {
-      isValid: true,
-      matchType: 'Numbered Pinyin',
-      feedback: `Correct tones! ${targetWord.hanzi} (${targetWord.pinyin}) — ${targetWord.meaning}`
-    };
+  for (const cand of candidateStrings) {
+    const targetSyls = parsePinyinToBaseAndToneList(cand);
+    if (isPhonologicallyEquivalentPinyin(userSyls, targetSyls, hanziChars)) {
+      return {
+        isValid: true,
+        matchType: hasToneMark ? 'Tone-Marked Pinyin' : 'Numbered Pinyin',
+        feedback: `Correct tones! ${targetWord.hanzi} (${targetWord.pinyin}) — ${targetWord.meaning}`
+      };
+    }
   }
 
   const userToneless = stripToneMarks(raw);
   const targetToneless = stripToneMarks(targetWord.pinyin);
 
   if (userToneless && userToneless === targetToneless) {
-    if (Number(masteryLevel) >= 7) {
-      return {
-        isValid: false,
-        matchType: 'Lv.7+ Tone Check',
-        feedback:
-          'Lv.7+ Tone Check: include tone marks (nǐ hǎo), tone numbers (ni3 hao3), or Hanzi!'
-      };
-    }
     return {
-      isValid: true,
-      matchType: 'Toneless Pinyin (v → ü normalized)',
-      feedback: `Accepted! Full tone-marked Pinyin is "${targetWord.pinyin}" (${targetWord.hanzi}).`
+      isValid: false,
+      matchType: 'Tone Mismatch',
+      feedback: `Check your tones! Expected "${targetWord.pinyin}" (${targetWord.pinyinNum}) for ${targetWord.hanzi}.`
     };
   }
 
@@ -1069,7 +1272,7 @@ export function generateDeterministicDailyQuests(dateStr = '', unlockedWordsCoun
       id: 'quest_smart_review',
       modeKey: 'smart_review',
       title: 'Finish a Smart Review session',
-      xpReward: 30,
+      xpReward: 25,
       badge: 'Smart Review',
       minWords: 0
     },
@@ -1077,7 +1280,7 @@ export function generateDeterministicDailyQuests(dateStr = '', unlockedWordsCoun
       id: 'quest_flashcards',
       modeKey: 'flashcards',
       title: 'Complete 1 Flashcards Discovery run',
-      xpReward: 25,
+      xpReward: 20,
       badge: 'Discovery',
       minWords: 0
     },
@@ -1085,7 +1288,7 @@ export function generateDeterministicDailyQuests(dateStr = '', unlockedWordsCoun
       id: 'quest_writing',
       modeKey: 'writing',
       title: 'Complete 1 Stroke Writing session',
-      xpReward: 35,
+      xpReward: 25,
       badge: 'Calligraphy',
       minWords: 0
     },
@@ -1093,7 +1296,7 @@ export function generateDeterministicDailyQuests(dateStr = '', unlockedWordsCoun
       id: 'quest_dictation',
       modeKey: 'dictation',
       title: 'Finish 1 Listening Dictation drill',
-      xpReward: 30,
+      xpReward: 25,
       badge: 'Ear Training',
       minWords: 0
     },
@@ -1101,7 +1304,7 @@ export function generateDeterministicDailyQuests(dateStr = '', unlockedWordsCoun
       id: 'quest_sentence_builder',
       modeKey: 'sentence_builder',
       title: 'Complete 1 Sentence Builder puzzle',
-      xpReward: 35,
+      xpReward: 30,
       badge: '12+ Words Mode',
       minWords: ADVANCED_MODE_UNLOCK_THRESHOLDS.sentence_builder
     },
@@ -1109,7 +1312,7 @@ export function generateDeterministicDailyQuests(dateStr = '', unlockedWordsCoun
       id: 'quest_tone_drill',
       modeKey: 'tone_sandhi_drill',
       title: 'Complete 1 Tone & Sandhi Drill',
-      xpReward: 35,
+      xpReward: 30,
       badge: '12+ Words Mode',
       minWords: ADVANCED_MODE_UNLOCK_THRESHOLDS.tone_sandhi_drill
     },
@@ -1117,7 +1320,7 @@ export function generateDeterministicDailyQuests(dateStr = '', unlockedWordsCoun
       id: 'quest_cloze',
       modeKey: 'cloze',
       title: 'Finish 1 Fill-in-the-Blank (Cloze) drill',
-      xpReward: 40,
+      xpReward: 30,
       badge: '25+ Words Mode',
       minWords: ADVANCED_MODE_UNLOCK_THRESHOLDS.cloze
     },
@@ -1125,7 +1328,7 @@ export function generateDeterministicDailyQuests(dateStr = '', unlockedWordsCoun
       id: 'quest_blitz',
       modeKey: 'blitz_match',
       title: 'Win a 60s Blitz round',
-      xpReward: 50,
+      xpReward: 35,
       badge: '25+ Words Mode',
       minWords: ADVANCED_MODE_UNLOCK_THRESHOLDS.blitz_match
     },
@@ -1133,7 +1336,7 @@ export function generateDeterministicDailyQuests(dateStr = '', unlockedWordsCoun
       id: 'quest_hsk_mock',
       modeKey: 'hsk_mock_exam',
       title: 'Complete an HSK Mock Exam',
-      xpReward: 65,
+      xpReward: 35,
       badge: '40+ Words Mode',
       minWords: ADVANCED_MODE_UNLOCK_THRESHOLDS.hsk_mock_exam
     }
