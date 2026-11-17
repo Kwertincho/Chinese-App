@@ -77,7 +77,8 @@ import {
   PixelGemSprite,
   PixelCrownSprite,
   PixelPadlockSprite,
-  PixelBlockGauge
+  PixelBlockGauge,
+  ScrollingText
 } from './SharedHudAndAudio.jsx';
 import {
   RuleExampleMiniPlayer,
@@ -121,6 +122,8 @@ export function ProgressionMapView({
     switch (iconName) {
       case 'Layers':
         return Layers;
+      case 'Target':
+        return Target;
       case 'PenTool':
         return PenTool;
       case 'Headphones':
@@ -413,6 +416,16 @@ export function ProgressionMapView({
             <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
 
+          <div className="rounded-[2px] bg-slate-950/90 border border-slate-800 px-3 py-1.5 flex items-center justify-between gap-2">
+            <span className="text-[10px] font-black uppercase text-amber-400 shrink-0">
+              Active Course:
+            </span>
+            <ScrollingText
+              text={`${activeCourse.courseName} — ${activeLesson.title} (${activeWords.length} Words)`}
+              className="text-xs font-extrabold text-slate-200 flex-1"
+            />
+          </div>
+
           {activeCourse.lessons && activeCourse.lessons.length > 1 && (
             <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-0.5">
               {activeCourse.lessons.map((lesson) => {
@@ -423,13 +436,13 @@ export function ProgressionMapView({
                     key={lesson.id}
                     type="button"
                     onClick={() => onSelectCourseAndLesson(activeCourse.id, lesson.id)}
-                    className={`game-btn-3d px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 border transition-all ${
+                    className={`game-btn-3d px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 max-w-[210px] border transition-all ${
                       isSelected
                         ? 'bg-rose-600 text-white border-rose-400 shadow'
                         : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
                     }`}
                   >
-                    {lesson.title} ({wordCount}w)
+                    <ScrollingText text={`${lesson.title} (${wordCount}w)`} />
                   </button>
                 );
               })}
@@ -452,13 +465,20 @@ export function ProgressionMapView({
             </span>
           </span>
         </div>
-        <h1 className="font-hanzi text-lg font-black text-white mt-2 relative z-10">
-          {activeLesson.title}
-        </h1>
-        <p className="text-[11px] text-rose-100/95 mt-0.5 relative z-10 font-semibold">
-          Discovery → Calligraphy → Audio & Oral Mix
-          {activeWords.length >= 6 ? ' → Context Gauntlet' : ''} → Unit Boss Battle
-        </p>
+        <div className="mt-2 relative z-10">
+          <ScrollingText
+            text={activeLesson.title}
+            className="font-hanzi text-lg font-black text-white"
+          />
+        </div>
+        <div className="mt-0.5 relative z-10">
+          <ScrollingText
+            text={`Discovery → Calligraphy → Audio & Oral Mix${
+              activeWords.length >= 6 ? ' → Context Gauntlet' : ''
+            } → Unit Boss Battle`}
+            className="text-[11px] text-rose-100/95 font-semibold"
+          />
+        </div>
       </div>
 
       {/* WINDING VERTICAL ADVENTURE PATH OF SQUARE PIXEL GAME NODES */}
@@ -645,7 +665,7 @@ export function ProgressionMapView({
         {/* Selected / Current Stage Quick Launch Footer Card */}
         {activeStageObj && (
           <div className="mt-2 rounded-2xl bg-slate-800/95 border border-slate-700 p-3.5 flex items-center justify-between gap-3">
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <div className="flex items-center gap-1.5 flex-wrap">
                 <span className="text-[10px] font-black uppercase text-rose-400">
                   {activeStageObj.title}
@@ -654,12 +674,14 @@ export function ProgressionMapView({
                   +{activeStageObj.xpReward} XP
                 </span>
               </div>
-              <p className="text-xs font-bold text-white truncate mt-0.5">
-                {activeStageObj.subtitle}
-              </p>
-              <p className="text-[11px] text-slate-400 line-clamp-1">
-                {activeStageObj.description}
-              </p>
+              <ScrollingText
+                text={activeStageObj.subtitle}
+                className="text-xs font-bold text-white mt-0.5"
+              />
+              <ScrollingText
+                text={activeStageObj.description}
+                className="text-[11px] text-slate-400"
+              />
             </div>
 
             <button
@@ -702,12 +724,13 @@ export function ProgressionMapView({
                 }}
                 className="game-btn-3d cursor-pointer rounded-2xl bg-slate-900/90 hover:bg-slate-900 border border-slate-800 p-2.5 text-center transition-all flex flex-col justify-between"
               >
-                <div className="font-clarity">
+                <div className="font-clarity min-w-0">
                   <div className="font-hanzi text-lg font-black text-white truncate">{word.hanzi}</div>
                   <div className="font-clarity text-sm font-extrabold text-rose-400 truncate">{word.pinyin}</div>
-                  <div className="font-clarity text-xs text-slate-300 truncate mt-0.5">
-                    {(word.meaning || word.english).split(/[/;]/)[0]}
-                  </div>
+                  <ScrollingText
+                    text={(word.meaning || word.english).split(/[/;]/)[0]}
+                    className="font-clarity text-xs text-slate-300 mt-0.5"
+                  />
                 </div>
                 <div className="mt-2 pt-1.5 border-t border-slate-800/80">
                   <MasterySegmentedBar level={level} compact={true} />
@@ -1420,27 +1443,30 @@ export function SmartReviewArenaView({
                 key={item.stepId}
                 className="p-2.5 rounded-xl bg-slate-900/95 border border-slate-800 flex items-center justify-between gap-2"
               >
-                <div className="flex items-center gap-2.5 min-w-0">
+                <div className="flex items-center gap-2.5 min-w-0 flex-1">
                   <span className="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 font-black text-[11px] flex items-center justify-center shrink-0">
                     {idx + 1}
                   </span>
-                  <div className="min-w-0">
+                  <div className="min-w-0 flex-1">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-hanzi text-sm font-black text-white">{item.word.hanzi}</span>
-                      <span className="text-xs font-bold text-rose-400">{item.word.pinyin}</span>
-                      <span className={`text-[10px] px-1.5 py-0.2 rounded border font-bold ${getMasteryTierMeta(item.mastery).badgeClass}`}>
-                        Lv.{item.mastery}/10 • {getMasteryTierMeta(item.mastery).tier}
-                      </span>
+                      <span className="font-clarity text-xs font-bold text-rose-400">{item.word.pinyin}</span>
                     </div>
                     <p className="text-[10px] text-slate-400 truncate">{item.reason}</p>
                   </div>
                 </div>
 
-                <span
-                  className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-full border shrink-0 ${modMeta.badgeClass}`}
-                >
-                  {modMeta.shortLabel}
-                </span>
+                <div className="flex items-center gap-1.5 shrink-0">
+                  <span className={`inline-flex flex-col items-center justify-center leading-tight px-2 py-1 shrink-0 rounded-lg border ${getMasteryTierMeta(item.mastery).badgeClass}`}>
+                    <span className="text-[11px] font-black leading-tight">Lv.{item.mastery}/10</span>
+                    <span className="text-[10px] font-bold leading-tight">{getMasteryTierMeta(item.mastery).tier}</span>
+                  </span>
+                  <span
+                    className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-full border shrink-0 ${modMeta.badgeClass}`}
+                  >
+                    {modMeta.shortLabel}
+                  </span>
+                </div>
               </div>
             );
           })}
@@ -2174,10 +2200,11 @@ export function LibraryView({
       {librarySection === 'char_grid' && (
         <div className="rounded-3xl bg-slate-800/90 border border-slate-700 p-4 space-y-4 shadow-xl">
           <div className="flex items-start justify-between gap-2">
-            <div>
-              <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-400">
-                Active Course: {activeCourse?.courseName}
-              </span>
+            <div className="min-w-0 flex-1">
+              <ScrollingText
+                text={`Active Course: ${activeCourse?.courseName}`}
+                className="text-[10px] font-extrabold uppercase tracking-wider text-amber-400"
+              />
               <h2 className="text-base font-black text-white mt-0.5">
                 Character Matrix ("Hanzi Grid")
               </h2>
@@ -2540,6 +2567,9 @@ export function LibraryView({
       {/* SUB-TAB 5: "PHONETICS" (MANDARIN INITIALS, FINALS, ALLOPHONES, SANDBOX & 4-TONE EAR DRILL) */}
       {librarySection === 'phonetics' && (
         <PhoneticsStudioView
+          courses={courses}
+          activeCourse={activeCourse}
+          customDecks={customDecks}
           isSlowMode={isSlowMode}
           onSetSlowMode={onSetSlowMode}
           speakMandarin={speakMandarin}
@@ -2581,14 +2611,17 @@ export function LibraryView({
                 key={deck.id}
                 className="rounded-2xl bg-slate-800/75 border border-slate-700/80 p-3.5 space-y-2.5"
               >
-                <div className="flex items-center justify-between">
-                  <div>
-                    <h3 className="text-sm font-black text-white">{deck.name}</h3>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <ScrollingText
+                      text={deck.name}
+                      className="text-sm font-black text-white"
+                    />
                     <p className="text-[11px] text-slate-400">
                       {deck.words?.length || 0} word{(deck.words?.length || 0) === 1 ? '' : 's'}
                     </p>
                   </div>
-                  <div className="flex items-center gap-1.5">
+                  <div className="flex items-center gap-1.5 shrink-0">
                     <button
                       type="button"
                       onClick={() => onPracticeDeck(deck.words, 'flashcards')}
@@ -2648,11 +2681,12 @@ export function LibraryView({
                   }`}
                 >
                   <div className="flex items-center justify-between gap-2">
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5">
-                        <h3 className="text-sm font-black text-white truncate">
-                          {course.courseName}
-                        </h3>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 min-w-0">
+                        <ScrollingText
+                          text={course.courseName}
+                          className="text-sm font-black text-white flex-1"
+                        />
                         {isCurrentActiveCourse && (
                           <span className="px-1.5 py-0.5 rounded-[2px] bg-sky-500/20 border border-sky-400/50 text-sky-300 text-[9px] font-black uppercase shrink-0">
                             Active
@@ -2700,9 +2734,10 @@ export function LibraryView({
 
                   {isConfirmingDelete && (
                     <div className="rounded-xl bg-rose-950/60 border border-rose-500/60 p-2.5 flex items-center justify-between gap-2">
-                      <span className="font-clarity text-xs font-bold text-rose-200">
-                        Remove "{course.courseName}" from Library?
-                      </span>
+                      <ScrollingText
+                        text={`Remove "${course.courseName}" from Library?`}
+                        className="font-clarity text-xs font-bold text-rose-200 flex-1"
+                      />
                       <div className="flex items-center gap-1.5 shrink-0">
                         <button
                           type="button"
@@ -2739,45 +2774,53 @@ export function LibraryView({
             </h2>
             {filteredWordsList.slice(0, 25).map((word, idx) => {
               const masteryLv = getWordMasteryLevel(progress.mastery, word);
+              const tierTitle = getMasteryTierMeta(masteryLv).tier;
               return (
                 <div
                   key={`${word.id}_${idx}`}
                   className="rounded-2xl bg-slate-800/70 border border-slate-700/80 p-3.5 space-y-2"
                 >
-                  <div className="flex items-start justify-between gap-2">
-                    <div className="flex items-center gap-2.5 min-w-0">
-                      <span className="font-hanzi text-2xl font-black text-white shrink-0">{word.hanzi}</span>
-                      <div className="min-w-0">
-                        <div className="text-xs font-bold text-rose-400 truncate">
-                          {word.pinyin}{' '}
-                          {word.pinyinNum ? (
-                            <span className="text-slate-500 font-normal">({word.pinyinNum})</span>
-                          ) : null}
-                        </div>
-                        <div className="text-xs font-semibold text-emerald-300 truncate">
-                          {word.meaning || word.english}
-                        </div>
+                  <div className="flex items-center justify-between gap-2.5">
+                    {/* Left: Chinese characters */}
+                    <div className="shrink-0">
+                      <span className="font-hanzi text-2xl font-black text-white block leading-tight">
+                        {word.hanzi}
+                      </span>
+                    </div>
+
+                    {/* Center: Pinyin & English meaning */}
+                    <div className="flex-1 min-w-0">
+                      <div className="font-clarity text-base font-bold text-rose-400 leading-snug break-words">
+                        {word.pinyin}
+                      </div>
+                      <div className="font-clarity text-xs font-medium text-slate-200 leading-snug line-clamp-2 mt-0.5">
+                        {word.meaning || word.english}
                       </div>
                     </div>
+
+                    {/* Right: Compact 2-line stacked mastery box + vertically stacked audio column */}
                     <div className="flex items-center gap-1.5 shrink-0">
-                      <span className={`px-2 py-0.5 rounded-full border text-[10px] font-bold ${getMasteryTierMeta(masteryLv).badgeClass}`}>
-                        Lv.{masteryLv}/10 • {getMasteryTierMeta(masteryLv).tier}
-                      </span>
+                      <div className="flex flex-col items-center justify-center px-2 py-1 border border-slate-700 bg-slate-900/90 min-w-[64px] rounded-[2px]">
+                        <span className="text-[11px] font-bold text-slate-200 leading-tight">
+                          Lv.{masteryLv}/10
+                        </span>
+                        <span className="text-[9px] text-amber-300 font-bold leading-tight">
+                          {tierTitle}
+                        </span>
+                      </div>
                       <MandarinAudioControls
                         text={word.hanzi}
+                        isSlowMode={isSlowMode}
+                        onSetSlowMode={onSetSlowMode}
                         speakMandarin={speakMandarin}
                         speakingState={speakingState}
                         size="sm"
+                        vertical={true}
                       />
                     </div>
                   </div>
-                  <div className="flex items-center justify-between text-[10px] text-slate-400 border-t border-slate-800 pt-1.5">
-                    <span className="truncate">{word.sourceBadge}</span>
-                    {word.exampleHanzi && word.exampleHanzi !== `${word.hanzi}！` && (
-                      <span className="font-hanzi text-slate-300 truncate max-w-[180px]">
-                        Ex: {word.exampleHanzi}
-                      </span>
-                    )}
+                  <div className="flex items-center justify-between gap-2 text-[10px] text-slate-400 border-t border-slate-800 pt-1.5">
+                    <ScrollingText text={word.sourceBadge} className="flex-1" />
                   </div>
                 </div>
               );

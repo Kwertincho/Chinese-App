@@ -1166,36 +1166,52 @@ export function AdaptiveMixedSessionModal({
     setTimeout(() => setCardAnim('idle'), 460);
   }, []);
 
+  const isPinyinMeaningComboStep =
+    currentModality === 'meaning_mc' && stepIdx % 2 === 1;
+
   const recognitionOptions = useMemo(() => {
-    const pool = [...UNIT_1_WORDS, ...queue.map((q) => q.word)];
+    const pool = [...queue.map((q) => q.word), ...UNIT_1_WORDS];
     const uniqueDistractors = [];
     pool.forEach((w) => {
       if (
+        w &&
         w.hanzi !== currentWord.hanzi &&
         !uniqueDistractors.some((d) => d.hanzi === w.hanzi)
       ) {
         uniqueDistractors.push(w);
       }
     });
-    while (uniqueDistractors.length < 2) {
+    while (uniqueDistractors.length < 3) {
       uniqueDistractors.push(UNIT_1_WORDS[uniqueDistractors.length % UNIT_1_WORDS.length]);
     }
+    const formatOptionLabel = (w) => {
+      const meaningStr = w.meaning || w.english;
+      if (isPinyinMeaningComboStep) {
+        return `${w.pinyin} • ${meaningStr}`;
+      }
+      return meaningStr;
+    };
     const rawOpts = [
-      { id: 'correct', text: currentWord.meaning || currentWord.english, isCorrect: true },
+      { id: 'correct', text: formatOptionLabel(currentWord), isCorrect: true },
       {
         id: 'd1',
-        text: uniqueDistractors[0].meaning || uniqueDistractors[0].english,
+        text: formatOptionLabel(uniqueDistractors[0]),
         isCorrect: false
       },
       {
         id: 'd2',
-        text: uniqueDistractors[1].meaning || uniqueDistractors[1].english,
+        text: formatOptionLabel(uniqueDistractors[1]),
+        isCorrect: false
+      },
+      {
+        id: 'd3',
+        text: formatOptionLabel(uniqueDistractors[2]),
         isCorrect: false
       }
     ];
     const shift = stepIdx % rawOpts.length;
     return rawOpts.map((_, idx) => rawOpts[(idx + shift) % rawOpts.length]);
-  }, [currentWord, queue, stepIdx]);
+  }, [currentWord, isPinyinMeaningComboStep, queue, stepIdx]);
 
   // Reset step state ONLY when advancing to a new stepIdx
   useEffect(() => {
@@ -1722,7 +1738,11 @@ export function AdaptiveMixedSessionModal({
   const isCurrentWritingCharDone =
     (charStage === 3 && writerModeStatus === 'completed') ||
     completedCharsInWord.includes(charIndex);
-  const hideRecogPinyin = masteryLv >= 4 && !recogAnswered && !isCardFlipped && !showPinyinHint;
+  const hideRecogPinyin =
+    (masteryLv >= 4 || isPinyinMeaningComboStep) &&
+    !recogAnswered &&
+    !isCardFlipped &&
+    !showPinyinHint;
   const hideWritingPinyin = writingConfig.hidePinyin && !isCurrentWritingCharDone && !showPinyinHint;
   const hideWritingHanzi = writingConfig.hideHanzi && !isCurrentWritingCharDone && !showPinyinHint;
   const hideSpeakingPinyin = masteryLv >= 4 && !stepCompleted && !showPinyinHint;
@@ -1751,24 +1771,30 @@ export function AdaptiveMixedSessionModal({
 
           {/* Dynamic Modality Pill Strip */}
           <div className="mt-2.5 flex items-center justify-between gap-2 bg-slate-950/90 border border-slate-800 rounded-2xl px-3 py-2">
-            <div className="flex items-center gap-2 min-w-0">
+            <div className="flex items-center gap-1.5 min-w-0 flex-1 flex-wrap">
               <span
                 className={`text-[10px] font-black uppercase tracking-wider px-2.5 py-0.5 rounded-full border shrink-0 ${modalityInfo.badgeClass}`}
               >
                 {modalityInfo.label}
               </span>
+              {currentItem?.isPastLessonReview && (
+                <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-400/40 shrink-0">
+                  Past Lesson Review
+                </span>
+              )}
               <span className="text-[11px] text-slate-400 truncate">
                 {currentItem?.reason || sessionConfig.badgeText}
               </span>
             </div>
-            <span className={`text-[10px] font-bold shrink-0 ${masteryTierMeta.textClass}`}>
-              Lv.{masteryLv}/10 • {masteryTierMeta.tier}
+            <span className={`inline-flex flex-col items-center justify-center leading-tight px-2 py-1 shrink-0 rounded-lg border ${masteryTierMeta.badgeClass}`}>
+              <span className="text-[11px] font-black leading-tight">Lv.{masteryLv}/10</span>
+              <span className="text-[10px] font-bold leading-tight">{masteryTierMeta.tier}</span>
             </span>
           </div>
         </div>
 
-        {/* MODALITY 1: RECOGNITION */}
-        {currentModality === 'recognition' && (
+        {/* MODALITY 1: RECOGNITION & MEANING MULTIPLE-CHOICE QUIZ (4 OPTIONS) */}
+        {(currentModality === 'recognition' || currentModality === 'meaning_mc') && (
           <div className="my-auto space-y-3.5 py-3">
             <div
               onClick={() => {
@@ -1858,7 +1884,9 @@ export function AdaptiveMixedSessionModal({
 
             <div className="space-y-2">
               <span className="font-clarity text-sm font-bold text-slate-300 block">
-                Select the matching English meaning:
+                {isPinyinMeaningComboStep
+                  ? 'Select the matching Pinyin & English meaning (4 options):'
+                  : 'Select the matching English meaning (4 options):'}
               </span>
               {recognitionOptions.map((opt) => {
                 const isSelected = recogSelectedOption === opt.id;

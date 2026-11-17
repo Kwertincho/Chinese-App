@@ -1362,26 +1362,39 @@ export function partitionLessonWordsIntoChunks(lessonWords = UNIT_1_WORDS) {
     : UNIT_1_WORDS
   ).map((w, idx) => normalizeWordEntry(w, idx));
 
-  if (normalized.length <= 4) {
-    return [normalized];
-  }
-
+  const chunkSize = 3;
   const chunks = [];
-  let i = 0;
-  while (i < normalized.length) {
-    const remaining = normalized.length - i;
-    if (remaining <= 4) {
-      chunks.push(normalized.slice(i));
-      break;
-    } else if (remaining === 5 || remaining === 6 || remaining === 9) {
-      chunks.push(normalized.slice(i, i + 3));
-      i += 3;
-    } else {
-      chunks.push(normalized.slice(i, i + 4));
-      i += 4;
-    }
+  for (let i = 0; i < normalized.length; i += chunkSize) {
+    chunks.push(normalized.slice(i, i + chunkSize));
   }
-  return chunks;
+  return chunks.length > 0 ? chunks : [normalized];
+}
+
+export function collectPastLessonWords(activeCourse, activeLessonIndex = 0, currentWords = []) {
+  if (!activeCourse || !Array.isArray(activeCourse.lessons) || activeLessonIndex < 1) {
+    return [];
+  }
+  const currentHanziSet = new Set(
+    (Array.isArray(currentWords) ? currentWords : []).map((w) => w?.hanzi).filter(Boolean)
+  );
+  const seenHanzi = new Set();
+  const pastPool = [];
+
+  for (let lIdx = 0; lIdx < activeLessonIndex; lIdx++) {
+    const lesson = activeCourse.lessons[lIdx];
+    if (!lesson || !Array.isArray(lesson.words)) continue;
+    lesson.words.forEach((rawWord, wIdx) => {
+      const norm = normalizeWordEntry(rawWord, wIdx);
+      if (norm.hanzi && !currentHanziSet.has(norm.hanzi) && !seenHanzi.has(norm.hanzi)) {
+        seenHanzi.add(norm.hanzi);
+        pastPool.push({
+          ...norm,
+          pastLessonTitle: lesson.title || `Lesson ${lIdx + 1}`
+        });
+      }
+    });
+  }
+  return pastPool;
 }
 
 export function buildProportionalUnitNodes(lessonWords = UNIT_1_WORDS) {
@@ -1397,21 +1410,21 @@ export function buildProportionalUnitNodes(lessonWords = UNIT_1_WORDS) {
   let nextNodeId = 1;
 
   chunks.forEach((chunkWords, chunkIdx) => {
-    const partLabel = hasMultipleChunks ? ` (Part ${chunkIdx + 1}/${totalChunks})` : '';
-    const shortPartBadge = hasMultipleChunks ? `Part ${chunkIdx + 1} • ` : 'Single-Skill • ';
+    const partLabel = hasMultipleChunks ? ` (Group ${chunkIdx + 1}/${totalChunks})` : '';
+    const shortPartBadge = hasMultipleChunks ? `Group ${chunkIdx + 1} • ` : 'Micro-Group • ';
     const chunkHanziPreview = chunkWords.map((w) => w.hanzi).join(' · ');
 
-    // 1. Discovery (3D Flashcards for this chunk)
+    // Node A — Discovery (flashcards): 2-tap 3D flashcards for this 3-word group
     nodes.push({
       id: nextNodeId,
       title: `Stage ${nextNodeId} • Discovery${partLabel}`,
       shortTitle: `${nextNodeId}. Discovery`,
-      subtitle: `3D Flashcards (${chunkHanziPreview})`,
+      subtitle: `2-Tap 3D Flashcards (${chunkHanziPreview})`,
       description: `Explore Hanzi, Pinyin pitch contours, and context sentences for ${chunkHanziPreview}.`,
       iconName: 'Layers',
       accentColor: 'from-rose-500 to-red-600',
       nodeCategory: 'single',
-      badgeText: `${shortPartBadge}Cards`,
+      badgeText: `${shortPartBadge}3D Cards`,
       xpReward: 15,
       launchType: 'flashcards',
       allowedModalities: ['recognition'],
@@ -1420,17 +1433,36 @@ export function buildProportionalUnitNodes(lessonWords = UNIT_1_WORDS) {
     });
     nextNodeId += 1;
 
-    // 2. Calligraphy (3-Stage Stroke Writing for this chunk)
+    // Node B — Meaning Quiz (meaning_mc): Dedicated 4-option Multiple-Choice quiz
+    nodes.push({
+      id: nextNodeId,
+      title: `Stage ${nextNodeId} • Meaning Quiz${partLabel}`,
+      shortTitle: `${nextNodeId}. Meaning Quiz`,
+      subtitle: `4-Option Meaning & Pinyin Quiz (${chunkHanziPreview})`,
+      description: `Test Hanzi ↔ English Meaning & Pinyin comprehension for ${chunkHanziPreview} with adaptive Pinyin visibility.`,
+      iconName: 'Target',
+      accentColor: 'from-indigo-500 to-blue-600',
+      nodeCategory: 'single',
+      badgeText: `${shortPartBadge}Meaning Quiz`,
+      xpReward: 20,
+      launchType: 'meaning_mc',
+      allowedModalities: ['meaning_mc'],
+      words: chunkWords,
+      chunkIndex: chunkIdx
+    });
+    nextNodeId += 1;
+
+    // Node C — Calligraphy (writing): Adaptive stroke-order writing (HanziWriter)
     nodes.push({
       id: nextNodeId,
       title: `Stage ${nextNodeId} • Calligraphy${partLabel}`,
       shortTitle: `${nextNodeId}. Calligraphy`,
-      subtitle: `3-Stage Stroke Writing (${chunkHanziPreview})`,
+      subtitle: `Adaptive Stroke Writing (${chunkHanziPreview})`,
       description: `Master stroke order through Guided, Ghost Trace, and Memory stages for ${chunkHanziPreview}.`,
       iconName: 'PenTool',
       accentColor: 'from-amber-500 to-orange-600',
       nodeCategory: 'single',
-      badgeText: `${shortPartBadge}3-Stage Write`,
+      badgeText: `${shortPartBadge}Stroke Write`,
       xpReward: 25,
       launchType: 'writing',
       allowedModalities: ['writing'],
@@ -1439,47 +1471,47 @@ export function buildProportionalUnitNodes(lessonWords = UNIT_1_WORDS) {
     });
     nextNodeId += 1;
 
-    // 3. Audio & Oral Mix (Listening Dictation + Speaking for this chunk)
+    // Node D — Skill Mix (mixed): Interleaved Listening Dictation, Speaking, Cloze (选词填空), and Sentence Builder
     nodes.push({
       id: nextNodeId,
-      title: `Stage ${nextNodeId} • Audio & Oral Mix${partLabel}`,
-      shortTitle: `${nextNodeId}. Audio & Oral Mix`,
-      subtitle: `Listening Dictation + Speaking (${chunkHanziPreview})`,
-      description: `Interleaves native listening dictation and pronunciation for ${chunkHanziPreview}.`,
+      title: `Stage ${nextNodeId} • Skill Mix${partLabel}`,
+      shortTitle: `${nextNodeId}. Skill Mix`,
+      subtitle: `Listening, Speaking, Cloze & Sentence (${chunkHanziPreview})`,
+      description: `Interleaves Listening Dictation, Speaking, Cloze (选词填空), and Sentence Builder for ${chunkHanziPreview}.`,
       iconName: 'Headphones',
       accentColor: 'from-emerald-500 to-teal-600',
       nodeCategory: 'mix',
-      badgeText: hasMultipleChunks ? `Part ${chunkIdx + 1} • Audio Mix` : 'Multi-Skill Mix',
+      badgeText: `${shortPartBadge}Skill Mix`,
       xpReward: 25,
       launchType: 'mixed',
-      allowedModalities: ['listening', 'speaking'],
+      allowedModalities: ['listening', 'speaking', 'cloze', 'sentence_builder'],
       words: chunkWords,
       chunkIndex: chunkIdx
     });
     nextNodeId += 1;
 
-    // 4. If lesson has 6+ words, add a Context Gauntlet node after every second chunk
-    if (allNormalized.length >= 6 && (chunkIdx + 1) % 2 === 0) {
+    // Every 2 micro-groups (6 words), insert an intermediate Checkpoint Gauntlet node
+    if ((chunkIdx + 1) % 2 === 0 && allNormalized.length >= 6) {
       const prevChunkWords = chunks[chunkIdx - 1] || [];
       const gauntletWords = [...prevChunkWords, ...chunkWords];
       const gauntletPreview = gauntletWords
-        .slice(0, 5)
+        .slice(0, 6)
         .map((w) => w.hanzi)
         .join(' · ');
 
       nodes.push({
         id: nextNodeId,
-        title: `Stage ${nextNodeId} • Context Gauntlet`,
-        shortTitle: `${nextNodeId}. Context Gauntlet`,
-        subtitle: `Sentence Builder + Cloze (${gauntletPreview}${gauntletWords.length > 5 ? '...' : ''})`,
-        description: `Synthesize grammar and sentence context across ${gauntletWords.length} unit words.`,
+        title: `Stage ${nextNodeId} • Checkpoint Gauntlet`,
+        shortTitle: `${nextNodeId}. Checkpoint Gauntlet`,
+        subtitle: `6-Word Synthesis Gauntlet (${gauntletPreview})`,
+        description: `Synthesize meaning, listening, grammar, and sentence context across ${gauntletWords.length} unit words.`,
         iconName: 'Flame',
         accentColor: 'from-fuchsia-600 to-rose-600',
         nodeCategory: 'gauntlet',
-        badgeText: 'Context Gauntlet • Cloze & Order',
+        badgeText: 'Checkpoint Gauntlet • Cloze & Order',
         xpReward: 25,
         launchType: 'mixed',
-        allowedModalities: ['sentence_builder', 'cloze'],
+        allowedModalities: ['meaning_mc', 'listening', 'cloze', 'sentence_builder'],
         words: gauntletWords,
         chunkIndex: chunkIdx
       });
@@ -1500,7 +1532,7 @@ export function buildProportionalUnitNodes(lessonWords = UNIT_1_WORDS) {
     badgeText: 'Boss Battle',
     xpReward: 45,
     launchType: 'boss',
-    allowedModalities: ['recognition', 'listening'],
+    allowedModalities: ['meaning_mc', 'recognition', 'listening'],
     words: allNormalized,
     chunkIndex: totalChunks
   });
@@ -1508,12 +1540,23 @@ export function buildProportionalUnitNodes(lessonWords = UNIT_1_WORDS) {
   return nodes;
 }
 
+const NON_WRITING_REVIEW_MODALITIES = [
+  'meaning_mc',
+  'listening',
+  'speaking',
+  'cloze',
+  'sentence_builder'
+];
+
 export function buildDynamicModalityQueue(
   words = UNIT_1_WORDS,
   allowedModalities = ['recognition'],
   badgeText = 'Dynamic Mix',
-  lessonIndex = 0
+  lessonIndex = 0,
+  pastLessonWords = []
 ) {
+  const safeWords =
+    Array.isArray(words) && words.length > 0 ? words : UNIT_1_WORDS;
   const baseModes =
     Array.isArray(allowedModalities) && allowedModalities.length > 0
       ? [...allowedModalities]
@@ -1524,79 +1567,150 @@ export function buildDynamicModalityQueue(
   }
   const modes = baseModes;
 
-  const targetSteps = Math.max(words.length, Math.min(6, words.length * 2));
-  const queue = [];
+  // Guarantee thorough per-word practice: at least 2 passes across a 3-word group (6 items)
+  const targetSteps = Math.max(safeWords.length * 2, Math.min(8, safeWords.length * 2));
+  const coreQueue = [];
 
   for (let i = 0; i < targetSteps; i++) {
-    const word = normalizeWordEntry(words[i % words.length], i);
-    const prev1 = queue.length >= 1 ? queue[queue.length - 1].modality : null;
-    const prev2 = queue.length >= 2 ? queue[queue.length - 2].modality : null;
+    const word = normalizeWordEntry(safeWords[i % safeWords.length], i);
+    const prev1 = coreQueue.length >= 1 ? coreQueue[coreQueue.length - 1].modality : null;
+    const prev2 = coreQueue.length >= 2 ? coreQueue[coreQueue.length - 2].modality : null;
 
     const candidates = modes.filter((m) => !(m === prev1 && m === prev2));
     const poolToPick = candidates.length > 0 ? candidates : modes;
-    const chosenModality = poolToPick[(i + Math.floor(Math.random() * poolToPick.length)) % poolToPick.length];
+    const chosenModality = poolToPick[i % poolToPick.length];
 
-    queue.push({
+    coreQueue.push({
       stepId: `mix_${word.id}_${chosenModality}_${i}`,
       word,
       modality: chosenModality,
+      isPastLessonReview: false,
       reason: `${badgeText} • ${MODALITY_META[chosenModality]?.label || chosenModality}`
     });
   }
 
-  return queue;
+  // Sporadic Spiral Review of Past Lessons (Strictly Excluding Writing)
+  // Only in Lesson 2 or later (lessonIndex >= 1) and when allowedModalities are non-writing practice
+  const hasOnlyWriting = modes.every((m) => m === 'writing');
+  if (
+    lessonIndex >= 1 &&
+    !hasOnlyWriting &&
+    Array.isArray(pastLessonWords) &&
+    pastLessonWords.length > 0
+  ) {
+    // Strictly exclude 'writing' from allowed review modalities
+    const validReviewModes = modes
+      .map((m) => (m === 'recognition' ? 'meaning_mc' : m))
+      .filter((m) => m !== 'writing' && NON_WRITING_REVIEW_MODALITIES.includes(m));
+    const reviewModePool =
+      validReviewModes.length > 0 ? validReviewModes : ['meaning_mc', 'listening', 'cloze'];
+
+    // ~20% of the node's question queue (1 to 2 review items)
+    const reviewCount = Math.min(
+      pastLessonWords.length,
+      coreQueue.length >= 6 ? 2 : 1
+    );
+
+    // Pick 1 to 2 distinct past-lesson words
+    const shuffledPast = [...pastLessonWords].sort(() => Math.random() - 0.5);
+    const selectedReviewWords = shuffledPast.slice(0, reviewCount);
+
+    selectedReviewWords.forEach((revWord, rIdx) => {
+      const normalizedRev = normalizeWordEntry(revWord, 100 + rIdx);
+      // Strictly never 'writing'
+      const chosenReviewModality =
+        reviewModePool[(rIdx + Math.floor(Math.random() * reviewModePool.length)) % reviewModePool.length];
+      const safeReviewModality =
+        chosenReviewModality === 'writing' ? 'meaning_mc' : chosenReviewModality;
+
+      const reviewItem = {
+        stepId: `spiral_review_${normalizedRev.id}_${safeReviewModality}_${rIdx}`,
+        word: normalizedRev,
+        modality: safeReviewModality,
+        isPastLessonReview: true,
+        reviewBadge: 'Past Lesson Review',
+        reason: `Past Lesson Review • ${MODALITY_META[safeReviewModality]?.label || safeReviewModality}`
+      };
+
+      // Insert sporadically (e.g., after index 2 and after index 5)
+      const insertAt =
+        rIdx === 0
+          ? Math.min(coreQueue.length, 2)
+          : Math.min(coreQueue.length, 5);
+      coreQueue.splice(insertAt, 0, reviewItem);
+    });
+  }
+
+  return coreQueue;
 }
 
-export function buildBossQuestionsForWords(words = UNIT_1_WORDS) {
+export function buildBossQuestionsForWords(words = UNIT_1_WORDS, pastLessonWords = []) {
   const normalizedPool = (words.length > 0 ? words : UNIT_1_WORDS).map((w, idx) =>
     normalizeWordEntry(w, idx)
   );
+  const normalizedPastPool = (Array.isArray(pastLessonWords) ? pastLessonWords : []).map((w, idx) =>
+    normalizeWordEntry(w, 200 + idx)
+  );
   const fallbackPool = [
     ...normalizedPool,
-    ...UNIT_1_WORDS.filter((u) => !normalizedPool.some((p) => p.hanzi === u.hanzi))
+    ...normalizedPastPool,
+    ...UNIT_1_WORDS.filter(
+      (u) =>
+        !normalizedPool.some((p) => p.hanzi === u.hanzi) &&
+        !normalizedPastPool.some((p) => p.hanzi === u.hanzi)
+    )
   ];
 
-  const questions = [];
-
-  normalizedPool.forEach((word, idx) => {
+  const createQuestionForWord = (word, idx, isPastReview = false, questionType = 'meaning') => {
     const distractors = fallbackPool.filter((w) => w.hanzi !== word.hanzi);
-    const d1 = distractors[idx % distractors.length] || UNIT_1_WORDS[1];
-    const d2 = distractors[(idx + 1) % distractors.length] || UNIT_1_WORDS[2];
+    const d1 = distractors[idx % Math.max(1, distractors.length)] || UNIT_1_WORDS[0];
+    const d2 = distractors[(idx + 1) % Math.max(1, distractors.length)] || UNIT_1_WORDS[1];
+    const d3 = distractors[(idx + 2) % Math.max(1, distractors.length)] || UNIT_1_WORDS[2];
 
-    const meaningOpts = [
-      { id: `${word.id}_m_correct`, text: word.meaning || word.english, isCorrect: true },
-      { id: `${word.id}_m_d1`, text: d1.meaning || d1.english, isCorrect: false },
-      { id: `${word.id}_m_d2`, text: d2.meaning || d2.english, isCorrect: false }
-    ];
-    const rotatedMeaningOpts = meaningOpts.map(
-      (_, oIdx) => meaningOpts[(oIdx + idx) % meaningOpts.length]
-    );
+    if (questionType === 'meaning') {
+      const meaningOpts = [
+        { id: `${word.id}_m_correct_${idx}`, text: word.meaning || word.english, isCorrect: true },
+        { id: `${word.id}_m_d1_${idx}`, text: d1.meaning || d1.english, isCorrect: false },
+        { id: `${word.id}_m_d2_${idx}`, text: d2.meaning || d2.english, isCorrect: false },
+        { id: `${word.id}_m_d3_${idx}`, text: d3.meaning || d3.english, isCorrect: false }
+      ];
+      const rotatedMeaningOpts = meaningOpts.map(
+        (_, oIdx) => meaningOpts[(oIdx + idx) % meaningOpts.length]
+      );
 
-    questions.push({
-      id: `boss_q_meaning_${word.id}_${idx}`,
-      wordId: word.id,
-      prompt: 'Select the correct English meaning for this Mandarin word:',
-      focusHanzi: word.hanzi,
-      focusPinyin: word.pinyin,
-      speechText: word.hanzi,
-      explanation: `${word.hanzi} (${word.pinyin}) means "${word.meaning || word.english}".`,
-      options: rotatedMeaningOpts
-    });
+      return {
+        id: `boss_q_meaning_${word.id}_${idx}`,
+        wordId: word.id,
+        isPastLessonReview: isPastReview,
+        reviewBadge: isPastReview ? 'Past Lesson Review' : null,
+        prompt: 'Select the correct English meaning for this Mandarin word:',
+        focusHanzi: word.hanzi,
+        focusPinyin: word.pinyin,
+        speechText: word.hanzi,
+        explanation: `${word.hanzi} (${word.pinyin}) means "${word.meaning || word.english}".`,
+        options: rotatedMeaningOpts
+      };
+    }
 
     const pinyinOpts = [
       {
-        id: `${word.id}_p_correct`,
+        id: `${word.id}_p_correct_${idx}`,
         text: `${word.pinyin} — "${(word.meaning || word.english).split(/[;/]/)[0]}"`,
         isCorrect: true
       },
       {
-        id: `${word.id}_p_d1`,
+        id: `${word.id}_p_d1_${idx}`,
         text: `${d1.pinyin} — "${(d1.meaning || d1.english).split(/[;/]/)[0]}"`,
         isCorrect: false
       },
       {
-        id: `${word.id}_p_d2`,
+        id: `${word.id}_p_d2_${idx}`,
         text: `${d2.pinyin} — "${(d2.meaning || d2.english).split(/[;/]/)[0]}"`,
+        isCorrect: false
+      },
+      {
+        id: `${word.id}_p_d3_${idx}`,
+        text: `${d3.pinyin} — "${(d3.meaning || d3.english).split(/[;/]/)[0]}"`,
         isCorrect: false
       }
     ];
@@ -1604,19 +1718,41 @@ export function buildBossQuestionsForWords(words = UNIT_1_WORDS) {
       (_, oIdx) => pinyinOpts[(oIdx + idx + 1) % pinyinOpts.length]
     );
 
-    questions.push({
+    return {
       id: `boss_q_pinyin_${word.id}_${idx}`,
       wordId: word.id,
+      isPastLessonReview: isPastReview,
+      reviewBadge: isPastReview ? 'Past Lesson Review' : null,
       prompt: `Which Pinyin & meaning matches "${word.hanzi}" in "${word.exampleHanzi}"?`,
       focusHanzi: word.hanzi,
       focusPinyin: 'Listen & Identify Pinyin',
       speechText: word.exampleHanzi || word.hanzi,
       explanation: `${word.exampleHanzi} (${word.examplePinyin}) — "${word.exampleEnglish}"`,
       options: rotatedPinyinOpts
-    });
+    };
+  };
+
+  const questions = [];
+
+  normalizedPool.forEach((word, idx) => {
+    questions.push(createQuestionForWord(word, idx, false, 'meaning'));
+    questions.push(createQuestionForWord(word, idx, false, 'pinyin'));
   });
 
-  return questions.slice(0, 6);
+  const baseQuestions = questions.slice(0, 6);
+
+  if (normalizedPastPool.length > 0) {
+    const reviewCount = Math.min(normalizedPastPool.length, 2);
+    const shuffledPast = [...normalizedPastPool].sort(() => Math.random() - 0.5);
+    shuffledPast.slice(0, reviewCount).forEach((revWord, rIdx) => {
+      const qType = rIdx % 2 === 0 ? 'meaning' : 'pinyin';
+      const revQ = createQuestionForWord(revWord, 50 + rIdx, true, qType);
+      const insertPos = rIdx === 0 ? Math.min(2, baseQuestions.length) : Math.min(5, baseQuestions.length);
+      baseQuestions.splice(insertPos, 0, revQ);
+    });
+  }
+
+  return baseQuestions;
 }
 
 export function highlightRadicalOutlineStrokes(containerEl, radStrokes = [], shouldHighlight = true) {

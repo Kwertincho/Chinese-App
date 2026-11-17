@@ -270,6 +270,11 @@ export const MODALITY_META = {
     shortLabel: 'Recognition',
     badgeClass: 'bg-rose-500/20 text-rose-300 border-rose-500/40'
   },
+  meaning_mc: {
+    label: 'Meaning Quiz',
+    shortLabel: 'Meaning Quiz',
+    badgeClass: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
+  },
   writing: {
     label: 'Stroke Writing',
     shortLabel: 'Writing',

@@ -44,6 +44,7 @@ import {
   generateDeterministicDailyQuests,
   buildDynamicModalityQueue,
   buildProportionalUnitNodes,
+  collectPastLessonWords,
   getWordMasteryLevel
 } from './utils/mandarinHelpers.js';
 import {
@@ -740,6 +741,11 @@ export default function App() {
     soundFX.playPop();
     const targetWords =
       Array.isArray(stage.words) && stage.words.length > 0 ? stage.words : activeWords;
+    const pastLessonWords = collectPastLessonWords(
+      activeCourse,
+      activeLessonIndex,
+      targetWords
+    );
 
     if (stage.launchType === 'flashcards') {
       setActiveModal({
@@ -772,14 +778,20 @@ export default function App() {
         type: 'boss',
         stageId: stage.id,
         words: targetWords,
+        pastLessonWords,
         isPractice: false
       });
     } else {
+      const modalitiesForNode =
+        stage.launchType === 'meaning_mc'
+          ? ['meaning_mc']
+          : stage.allowedModalities;
       const queue = buildDynamicModalityQueue(
         targetWords,
-        stage.allowedModalities,
+        modalitiesForNode,
         stage.badgeText,
-        activeLessonIndex
+        activeLessonIndex,
+        pastLessonWords
       );
       setActiveModal({
         type: 'mixed_session',
@@ -1771,6 +1783,7 @@ export default function App() {
         {activeModal?.type === 'boss' && (
           <BossChallengeModal
             words={activeModal.words || activeWords}
+            pastLessonWords={activeModal.pastLessonWords || []}
             isPracticeMode={Boolean(activeModal.isPractice)}
             isSlowMode={progress.isSlowMode}
             onSetSlowMode={handleSetSlowMode}

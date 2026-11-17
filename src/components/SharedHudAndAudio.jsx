@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   Volume2,
   Turtle,
@@ -445,7 +445,8 @@ export function MandarinAudioControls({
   onSetSlowMode,
   speakMandarin,
   speakingState,
-  size = 'md'
+  size = 'md',
+  vertical = false
 }) {
   const [, setLocalTick] = useState(0);
   const effectiveSlow =
@@ -455,9 +456,17 @@ export function MandarinAudioControls({
   const isPlayingThis =
     speakingState?.active && speakingState?.text === text;
 
-  const playBtnPadding = size === 'sm' ? 'px-2 py-1 text-[10px]' : 'px-2.5 py-1.5 text-xs';
-  const toggleBtnPadding = size === 'sm' ? 'px-2 py-1 text-[10px]' : 'px-2 py-1.5 text-xs';
-  const iconClass = size === 'sm' ? 'w-3.5 h-3.5' : 'w-4 h-4';
+  const playBtnPadding = vertical
+    ? 'px-1.5 py-1 text-[10px] w-full justify-center'
+    : size === 'sm'
+    ? 'px-2 py-1 text-[10px]'
+    : 'px-2.5 py-1.5 text-xs';
+  const toggleBtnPadding = vertical
+    ? 'px-1.5 py-1 text-[10px] w-full justify-center'
+    : size === 'sm'
+    ? 'px-2 py-1 text-[10px]'
+    : 'px-2 py-1.5 text-xs';
+  const iconClass = size === 'sm' || vertical ? 'w-3.5 h-3.5' : 'w-4 h-4';
 
   const handlePlayCurrentSpeed = () => {
     speakMandarin(text, activeRate);
@@ -476,7 +485,14 @@ export function MandarinAudioControls({
   };
 
   return (
-    <div className="inline-flex items-center gap-1.5" onClick={(e) => e.stopPropagation()}>
+    <div
+      className={
+        vertical
+          ? 'flex flex-col gap-1 w-[74px] shrink-0'
+          : 'inline-flex items-center gap-1.5'
+      }
+      onClick={(e) => e.stopPropagation()}
+    >
       <button
         type="button"
         onClick={handlePlayCurrentSpeed}
@@ -501,7 +517,7 @@ export function MandarinAudioControls({
             : 'bg-slate-900 hover:bg-slate-800 text-slate-300 border-slate-700'
         }`}
       >
-        {effectiveSlow && <Turtle className={size === 'sm' ? 'w-3 h-3' : 'w-3.5 h-3.5'} />}
+        {effectiveSlow && <Turtle className={size === 'sm' || vertical ? 'w-3 h-3' : 'w-3.5 h-3.5'} />}
         <span>{effectiveSlow ? '0.65x' : '1.0x'}</span>
       </button>
     </div>
@@ -541,10 +557,14 @@ export function SessionGameTopHud({
         </button>
 
         <div className="text-center min-w-0 flex-1 px-1">
-          <span className="font-pixel-header text-[9px] uppercase text-amber-400 block truncate">
-            {title}
-          </span>
-          <span className="font-clarity text-xs font-semibold text-slate-300 block truncate mt-0.5">{subtitle}</span>
+          <ScrollingText
+            text={title}
+            className="font-pixel-header text-[9px] uppercase text-amber-400"
+          />
+          <ScrollingText
+            text={subtitle}
+            className="font-clarity text-xs font-semibold text-slate-300 mt-0.5"
+          />
         </div>
 
         <div className="flex items-center gap-1.5 shrink-0">
@@ -754,3 +774,118 @@ export function CharacterInspectModal({
     </div>
   );
 }
+
+// ============================================================================
+// REUSABLE AUTO-SCROLLING MARQUEE FOR OVERFLOWING TEXT (<ScrollingText />)
+// ============================================================================
+export function ScrollingText({
+  text = '',
+  children = null,
+  className = '',
+  pauseMs = 1200,
+  pixelsPerSecond = 38
+}) {
+  const containerRef = useRef(null);
+  const contentRef = useRef(null);
+  const [overflowPx, setOverflowPx] = useState(0);
+  const [offsetPx, setOffsetPx] = useState(0);
+  const [transitionDurationMs, setTransitionDurationMs] = useState(0);
+
+  const measureOverflow = useCallback(() => {
+    const container = containerRef.current;
+    const content = contentRef.current;
+    if (!container || !content) return;
+    const diff = Math.ceil(content.scrollWidth - container.clientWidth);
+    setOverflowPx(diff > 3 ? diff : 0);
+  }, []);
+
+  useEffect(() => {
+    measureOverflow();
+    const container = containerRef.current;
+    if (!container) return;
+    let ro = null;
+    if (typeof window !== 'undefined' && window.ResizeObserver) {
+      ro = new window.ResizeObserver(() => {
+        measureOverflow();
+      });
+      ro.observe(container);
+      if (contentRef.current) ro.observe(contentRef.current);
+    }
+    window.addEventListener('resize', measureOverflow);
+    return () => {
+      if (ro) ro.disconnect();
+      window.removeEventListener('resize', measureOverflow);
+    };
+  }, [text, children, measureOverflow]);
+
+  useEffect(() => {
+    if (overflowPx <= 0) {
+      setTransitionDurationMs(0);
+      setOffsetPx(0);
+      return;
+    }
+
+    let cancelled = false;
+    let timer1 = null;
+    let timer2 = null;
+    let timer3 = null;
+
+    const glideDurationMs = Math.max(1400, Math.round((overflowPx / pixelsPerSecond) * 1000));
+    const resetDurationMs = 550;
+
+    const runCycle = () => {
+      if (cancelled) return;
+      setTransitionDurationMs(0);
+      setOffsetPx(0);
+
+      timer1 = setTimeout(() => {
+        if (cancelled) return;
+        setTransitionDurationMs(glideDurationMs);
+        setOffsetPx(-overflowPx);
+
+        timer2 = setTimeout(() => {
+          if (cancelled) return;
+          setTransitionDurationMs(resetDurationMs);
+          setOffsetPx(0);
+
+          timer3 = setTimeout(() => {
+            if (cancelled) return;
+            runCycle();
+          }, resetDurationMs + 250);
+        }, glideDurationMs + pauseMs);
+      }, pauseMs);
+    };
+
+    runCycle();
+
+    return () => {
+      cancelled = true;
+      if (timer1) clearTimeout(timer1);
+      if (timer2) clearTimeout(timer2);
+      if (timer3) clearTimeout(timer3);
+    };
+  }, [overflowPx, pauseMs, pixelsPerSecond, text]);
+
+  return (
+    <div
+      ref={containerRef}
+      className={`overflow-hidden whitespace-nowrap min-w-0 max-w-full block ${className}`}
+      title={typeof text === 'string' && text ? text : undefined}
+    >
+      <div
+        ref={contentRef}
+        style={{
+          transform: `translate3d(${offsetPx}px, 0, 0)`,
+          transition:
+            transitionDurationMs > 0
+              ? `transform ${transitionDurationMs}ms cubic-bezier(0.37, 0, 0.63, 1)`
+              : 'none'
+        }}
+        className="inline-block whitespace-nowrap will-change-transform"
+      >
+        {children !== null && children !== undefined ? children : text}
+      </div>
+    </div>
+  );
+}
+

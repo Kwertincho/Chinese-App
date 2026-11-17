@@ -897,7 +897,7 @@ export function WritingStageModal({
           />
 
           <div className="mt-3 bg-slate-800/80 border border-slate-700/70 rounded-2xl p-3 flex items-center justify-between gap-2">
-            <div className="min-w-0">
+            <div className="min-w-0 flex-1">
               <span className="font-clarity text-[15px] font-extrabold text-amber-400 block truncate">
                 {currentWord.meaning || currentWord.english}
               </span>
@@ -1839,6 +1839,7 @@ export function AudioSpeechStageModal({
 // ============================================================================
 export function BossChallengeModal({
   words = UNIT_1_WORDS,
+  pastLessonWords = [],
   isPracticeMode = false,
   isSlowMode,
   onSetSlowMode,
@@ -1850,7 +1851,10 @@ export function BossChallengeModal({
   onComplete
 }) {
   const { elapsedSeconds, flushSessionTime } = useSessionTimer(true, onRecordStudySeconds);
-  const questions = useMemo(() => buildBossQuestionsForWords(words), [words]);
+  const questions = useMemo(
+    () => buildBossQuestionsForWords(words, pastLessonWords),
+    [words, pastLessonWords]
+  );
   const [questionIndex, setQuestionIndex] = useState(0);
   const [hearts, setHearts] = useState(3);
   const [bossHp, setBossHp] = useState(questions.length);
@@ -2112,9 +2116,16 @@ export function BossChallengeModal({
               }`}
             >
               <div className="flex items-center justify-between gap-2">
-                <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-400/30">
-                  Attack Turn {questionIndex + 1}/{questions.length}
-                </span>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded bg-purple-500/20 text-purple-300 border border-purple-400/30">
+                    Attack Turn {questionIndex + 1}/{questions.length}
+                  </span>
+                  {currentQuestion?.isPastLessonReview && (
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-400/40">
+                      Past Lesson Review
+                    </span>
+                  )}
+                </div>
                 <MandarinAudioControls
                   text={currentQuestion.speechText}
                   isSlowMode={isSlowMode}
