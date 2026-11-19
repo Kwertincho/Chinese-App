@@ -1,4 +1,4 @@
-const CACHE_NAME = 'hanzi-app-cache-v3';
+const CACHE_NAME = 'hanzi-app-cache-v4';
 
 const CORE_ASSETS = [
   '/',
@@ -9,13 +9,18 @@ const CORE_ASSETS = [
   'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700;900&family=Press+Start+2P&family=Silkscreen:wght@400;700&display=swap'
 ];
 
-// Pre-warm stroke data for Core Unit 1 & Stroke Dojo characters so offline calligraphy works immediately
-const PREWARM_HANZI_DATA = [
-  '你', '好', '谢', '再', '见', '朋', '友', '学', '习', '水', '茶',
-  '十', '工', '干', '王', '人', '八', '入', '木', '文', '三', '早',
-  '立', '的', '明', '林', '休', '月', '同', '问', '风', '日', '国',
-  '回', '田', '小', '办', '永'
-].map((ch) => `https://cdn.jsdelivr.net/npm/hanzi-writer-data@2.0/${encodeURIComponent(ch)}.json`);
+// Pre-warm stroke data for Core Unit 1 & all 14 Stroke-Order Dojo rule characters so offline calligraphy works immediately
+const PREWARM_HANZI_DATA = Array.from(
+  new Set([
+    '你', '好', '谢', '再', '见', '朋', '友', '学', '习', '水', '茶',
+    '十', '工', '干', '王', '人', '八', '入', '木', '文', '三', '早',
+    '立', '的', '明', '林', '休', '月', '同', '问', '风', '日', '国',
+    '回', '田', '小', '办', '永',
+    '主', '门', '广', '方', '我', '书', '犬', '瓦', '这', '远', '送',
+    '进', '厅', '床', '病', '尾', '山', '医', '画', '区', '中', '车',
+    '半', '平', '女', '子', '母', '舟'
+  ])
+).map((ch) => `https://cdn.jsdelivr.net/npm/hanzi-writer-data@2.0/${encodeURIComponent(ch)}.json`);
 
 self.addEventListener('install', (event) => {
   self.skipWaiting();
@@ -89,7 +94,46 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
-  // Stale-while-revalidate for local HTML, manifest, icons, and modular JS/CSS assets
+  // Network-first (cache fallback) for HTML navigations and /manifest.json so installed Android PWAs
+  // immediately pick up fresh Vercel deployments when online while remaining 100% offline-capable
+  const isNetworkFirstShell =
+    request.mode === 'navigate' ||
+    (url.origin === self.location.origin &&
+      (url.pathname === '/manifest.json' || url.pathname === '/index.html'));
+
+  if (isNetworkFirstShell) {
+    event.respondWith(
+      fetch(request)
+        .then((networkResponse) => {
+          if (
+            networkResponse &&
+            networkResponse.status === 200 &&
+            url.origin === self.location.origin
+          ) {
+            const responseClone = networkResponse.clone();
+            const indexClone = request.mode === 'navigate' ? networkResponse.clone() : null;
+            caches.open(CACHE_NAME).then((cache) => {
+              cache.put(request, responseClone);
+              if (indexClone) {
+                cache.put('/index.html', indexClone);
+              }
+            });
+          }
+          return networkResponse;
+        })
+        .catch(async () => {
+          const exactCached = await caches.match(request);
+          if (exactCached) return exactCached;
+          if (request.mode === 'navigate') {
+            return (await caches.match('/index.html')) || (await caches.match('/'));
+          }
+          return undefined;
+        })
+    );
+    return;
+  }
+
+  // Stale-while-revalidate for local hashed JS/CSS bundles and static icons
   event.respondWith(
     caches.match(request).then((cachedResponse) => {
       const networkFetch = fetch(request)
@@ -104,12 +148,7 @@ self.addEventListener('fetch', (event) => {
           }
           return networkResponse;
         })
-        .catch(() => {
-          if (request.mode === 'navigate') {
-            return caches.match('/index.html') || caches.match('/');
-          }
-          return cachedResponse;
-        });
+        .catch(() => cachedResponse);
 
       return cachedResponse || networkFetch;
     })
