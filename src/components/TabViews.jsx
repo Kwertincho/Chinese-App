@@ -34,7 +34,8 @@ import {
   Target,
   Swords,
   Clock,
-  Trash2
+  Trash2,
+  MessageSquare
 } from 'lucide-react';
 import {
   soundFX,
@@ -66,7 +67,17 @@ import {
   formatTodayStudyTime,
   getWordSkillTelemetry,
   partitionLessonWordsIntoChunks,
-  buildProportionalUnitNodes
+  buildProportionalUnitNodes,
+  getNodeCompletionLevel,
+  computeNodeLevelXpMultiplier,
+  SRS_ACTIVATION_MIN_WORDS,
+  getWordSrsEntry,
+  isWordSrsDue,
+  getSrsOverdueMs,
+  countWordsAtLeastLevel,
+  getClassifierDrillUnlockStatus,
+  getDialogueQaUnlockStatus,
+  getNumbersTimeLabUnlockStatus
 } from '../utils/mandarinHelpers.js';
 import {
   MandarinAudioControls,
@@ -115,7 +126,8 @@ export function ProgressionMapView({
 
   const currentLessonProg = progress.lessonProgress?.[lessonKey] || {
     unlockedStage: isDefaultUnit1 ? progress.unlockedStage : 1,
-    completedStages: isDefaultUnit1 ? progress.completedStages : []
+    completedStages: isDefaultUnit1 ? progress.completedStages : [],
+    nodeLevels: {}
   };
 
   const getStageIcon = (iconName) => {
@@ -501,7 +513,16 @@ export function ProgressionMapView({
               const midY = (y1 + y2) / 2;
               const pathD = `M ${x1} ${y1} C ${x1} ${midY}, ${x2} ${midY}, ${x2} ${y2}`;
 
-              const isSegmentMastered = currentLessonProg.completedStages.includes(stage.id);
+              const segNodeLevel = getNodeCompletionLevel(currentLessonProg, stage.id);
+              const isSegCleared = segNodeLevel >= 1;
+              const segStrokeColor =
+                segNodeLevel >= 3
+                  ? '#fbbf24'
+                  : segNodeLevel === 2
+                  ? '#10b981'
+                  : segNodeLevel === 1
+                  ? '#38bdf8'
+                  : '#334155';
 
               return (
                 <g key={`path-seg-${stage.id}`}>
@@ -515,9 +536,9 @@ export function ProgressionMapView({
                   <path
                     d={pathD}
                     fill="none"
-                    stroke={isSegmentMastered ? '#fbbf24' : '#334155'}
+                    stroke={segStrokeColor}
                     strokeWidth="2.8"
-                    strokeDasharray={isSegmentMastered ? 'none' : '4 4'}
+                    strokeDasharray={isSegCleared ? 'none' : '4 4'}
                     strokeLinecap="square"
                   />
                 </g>
@@ -528,26 +549,49 @@ export function ProgressionMapView({
           {/* Render the Proportional Square Pixel Game Nodes along the winding path */}
           {stagesList.map((stage, idx) => {
             const StageIcon = getStageIcon(stage.iconName);
-            const isMastered = currentLessonProg.completedStages.includes(stage.id);
-            const isUnlocked = stage.id <= currentLessonProg.unlockedStage || isMastered;
-            const isCurrent = stage.id === currentLessonProg.unlockedStage && !isMastered;
+            const nodeLevel = getNodeCompletionLevel(currentLessonProg, stage.id);
+            const isMaxed = nodeLevel >= 3;
+            const isUnlocked = stage.id <= currentLessonProg.unlockedStage || nodeLevel >= 1;
+            const isCurrent = stage.id === currentLessonProg.unlockedStage && nodeLevel === 0;
 
             const leftPercent = getNodeHorizontalPercent(idx, stagesList.length);
             const topPx = 22 + idx * 152;
 
-            const nodeWords =
-              Array.isArray(stage.words) && stage.words.length > 0 ? stage.words : activeWords;
-            const nodeEarned = nodeWords.reduce(
-              (sum, w) => sum + getWordMasteryLevel(progress.mastery, w),
-              0
-            );
-            const nodeMax = Math.max(1, nodeWords.length * 10);
-            const nodeMasteryRatio = Math.min(1, Math.max(0, nodeEarned / nodeMax));
-
+            // 3-Level Progressive Square Perimeter Contour Fill (0% -> 33% -> 67% -> 100%)
             const squareSide = 88;
             const squarePerimeter = squareSide * 4;
-            const ringProgress = isMastered ? 1 : isCurrent ? nodeMasteryRatio : 0;
+            const ringProgress =
+              nodeLevel >= 3 ? 1 : nodeLevel === 2 ? 2 / 3 : nodeLevel === 1 ? 1 / 3 : 0;
             const dashOffset = squarePerimeter * (1 - ringProgress);
+            const contourTrackStroke =
+              nodeLevel >= 3
+                ? '#78350f'
+                : nodeLevel === 2
+                ? '#064e3b'
+                : nodeLevel === 1
+                ? '#0c4a6e'
+                : isCurrent
+                ? '#334155'
+                : '#1e293b';
+            const contourFillStroke =
+              nodeLevel >= 3
+                ? '#fbbf24'
+                : nodeLevel === 2
+                ? '#10b981'
+                : nodeLevel === 1
+                ? '#38bdf8'
+                : '#334155';
+
+            const levelSubBadgeText =
+              nodeLevel >= 3 ? 'MAX 3/3' : `Lv.${nodeLevel}/3`;
+            const levelSubBadgeClass =
+              nodeLevel >= 3
+                ? 'bg-amber-400 text-slate-950 border-amber-200'
+                : nodeLevel === 2
+                ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/70'
+                : nodeLevel === 1
+                ? 'bg-sky-500/20 text-sky-300 border-sky-400/70'
+                : 'bg-slate-950 text-slate-300 border-slate-600';
 
             const categoryBadgeStyle =
               stage.nodeCategory === 'gauntlet'
@@ -571,7 +615,7 @@ export function ProgressionMapView({
                 )}
 
                 <div className="relative flex items-center justify-center w-24 h-24">
-                  {/* Square Perimeter SVG Progress Border (<rect>) starting strictly at 0% */}
+                  {/* Square Perimeter SVG Progress Border (<rect>): 0% | 33% Sky | 67% Emerald | 100% Gold */}
                   <svg className="w-24 h-24 pointer-events-none" viewBox="0 0 96 96">
                     <rect
                       x="4"
@@ -579,7 +623,7 @@ export function ProgressionMapView({
                       width={squareSide}
                       height={squareSide}
                       fill="none"
-                      stroke={isMastered ? '#78350f' : isCurrent ? '#334155' : '#1e293b'}
+                      stroke={contourTrackStroke}
                       strokeWidth="4"
                     />
                     {ringProgress > 0 && (
@@ -589,7 +633,7 @@ export function ProgressionMapView({
                         width={squareSide}
                         height={squareSide}
                         fill="none"
-                        stroke={isMastered ? '#fbbf24' : '#f43f5e'}
+                        stroke={contourFillStroke}
                         strokeWidth="4.5"
                         strokeLinecap="square"
                         strokeDasharray={squarePerimeter}
@@ -611,10 +655,16 @@ export function ProgressionMapView({
                       }
                     }}
                     className={`game-btn-3d absolute w-20 h-20 rounded-[2px] flex items-center justify-center border-2 transition-all ${
-                      isMastered
+                      isMaxed
                         ? 'bg-gradient-to-b from-amber-400 via-amber-500 to-yellow-600 border-amber-200 text-slate-950'
+                        : nodeLevel === 2
+                        ? `bg-gradient-to-b ${stage.accentColor} border-emerald-300 text-white`
+                        : nodeLevel === 1
+                        ? `bg-gradient-to-b ${stage.accentColor} border-sky-300 text-white`
                         : isCurrent
                         ? `bg-gradient-to-b ${stage.accentColor} border-amber-300 text-white`
+                        : isUnlocked
+                        ? `bg-gradient-to-b ${stage.accentColor} border-slate-500 text-white`
                         : 'bg-slate-900 border-slate-700 text-slate-500 opacity-75'
                     }`}
                   >
@@ -625,7 +675,7 @@ export function ProgressionMapView({
                     )}
                   </button>
 
-                  {isMastered && (
+                  {isMaxed && (
                     <div className="absolute -top-1 -right-1 w-7 h-7 rounded-[2px] bg-slate-950 border-2 border-amber-400 flex items-center justify-center shadow-md z-10">
                       <PixelCrownSprite className="w-4 h-4" />
                     </div>
@@ -638,19 +688,32 @@ export function ProgressionMapView({
                   )}
                 </div>
 
-                {/* Node Title & Category Badge */}
+                {/* Node Title, 3-Level Pixel Sub-Badge & Category Badge */}
                 <div className="mt-1 flex flex-col items-center gap-0.5">
-                  <span
-                    className={`text-[11px] font-black px-2.5 py-0.5 rounded-[2px] border whitespace-nowrap ${
-                      isMastered
-                        ? 'bg-amber-500/15 border-amber-400/40 text-amber-300'
-                        : isCurrent
-                        ? 'bg-rose-500/20 border-rose-400/50 text-white'
-                        : 'bg-slate-900/90 border-slate-800 text-slate-400'
-                    }`}
-                  >
-                    {stage.shortTitle}
-                  </span>
+                  <div className="flex items-center justify-center gap-1">
+                    <span
+                      className={`text-[11px] font-black px-2 py-0.5 rounded-[2px] border whitespace-nowrap ${
+                        isMaxed
+                          ? 'bg-amber-500/15 border-amber-400/40 text-amber-300'
+                          : nodeLevel === 2
+                          ? 'bg-emerald-500/15 border-emerald-400/40 text-emerald-200'
+                          : nodeLevel === 1
+                          ? 'bg-sky-500/15 border-sky-400/40 text-sky-200'
+                          : isCurrent
+                          ? 'bg-rose-500/20 border-rose-400/50 text-white'
+                          : 'bg-slate-900/90 border-slate-800 text-slate-400'
+                      }`}
+                    >
+                      {stage.shortTitle}
+                    </span>
+                    {isUnlocked && (
+                      <span
+                        className={`font-pixel-header text-[8px] px-1.5 py-0.5 rounded-[2px] border whitespace-nowrap ${levelSubBadgeClass}`}
+                      >
+                        {levelSubBadgeText}
+                      </span>
+                    )}
+                  </div>
                   <span
                     className={`text-[9px] font-black uppercase tracking-wider px-2 py-0.2 rounded-[2px] border whitespace-nowrap ${categoryBadgeStyle}`}
                   >
@@ -663,45 +726,86 @@ export function ProgressionMapView({
         </div>
 
         {/* Selected / Current Stage Quick Launch Footer Card */}
-        {activeStageObj && (
-          <div className="mt-2 rounded-2xl bg-slate-800/95 border border-slate-700 p-3.5 flex items-center justify-between gap-3">
-            <div className="min-w-0 flex-1">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="text-[10px] font-black uppercase text-rose-400">
-                  {activeStageObj.title}
-                </span>
-                <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">
-                  +{activeStageObj.xpReward} XP
-                </span>
-              </div>
-              <ScrollingText
-                text={activeStageObj.subtitle}
-                className="text-xs font-bold text-white mt-0.5"
-              />
-              <ScrollingText
-                text={activeStageObj.description}
-                className="text-[11px] text-slate-400"
-              />
-            </div>
+        {activeStageObj && (() => {
+          const activeNodeLv = getNodeCompletionLevel(currentLessonProg, activeStageObj.id);
+          const activeXpMult = computeNodeLevelXpMultiplier(activeNodeLv);
+          const activeScaledXp = Math.round((activeStageObj.xpReward || 25) * activeXpMult);
+          const activeIsUnlocked =
+            activeStageObj.id <= currentLessonProg.unlockedStage || activeNodeLv >= 1;
+          const activeLvBadgeLabel =
+            activeNodeLv >= 3 ? 'MAX 3/3' : `Lv.${activeNodeLv}/3`;
+          const activeLvBadgeStyle =
+            activeNodeLv >= 3
+              ? 'bg-amber-400 text-slate-950 border-amber-200'
+              : activeNodeLv === 2
+              ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/60'
+              : activeNodeLv === 1
+              ? 'bg-sky-500/20 text-sky-300 border-sky-400/60'
+              : 'bg-slate-950 text-slate-300 border-slate-700';
+          const nextTrialNote =
+            activeNodeLv === 0
+              ? 'Run 1 (0/3 → 1/3): Standard scaffolding • Unlocks next node'
+              : activeNodeLv === 1
+              ? 'Run 2 (1/3 → 2/3): Hidden Pinyin + Past Review (+25% XP)'
+              : activeNodeLv === 2
+              ? `Mastery Trial (2/3 → 3/3 MAX): No Pinyin Hints${
+                  activeStageObj.launchType === 'boss' ? ' • 12s Clock' : ''
+                } (+50% XP)`
+              : `MAX Crown Trial: Strict No-Pinyin${
+                  activeStageObj.launchType === 'boss' ? ' • 12s Clock' : ''
+                } (+50% XP)`;
 
-            <button
-              type="button"
-              disabled={
-                activeStageObj.id > currentLessonProg.unlockedStage &&
-                !currentLessonProg.completedStages.includes(activeStageObj.id)
-              }
-              onClick={() => onSelectStageNode(activeStageObj)}
-              className="game-btn-3d px-4 py-2.5 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 disabled:from-slate-800 disabled:to-slate-800 disabled:text-slate-500 text-white font-black text-xs shrink-0 border-b-4 border-rose-800 disabled:border-slate-900 flex items-center gap-1.5 shadow-lg"
-            >
-              <Play className="w-3.5 h-3.5 fill-current" />
-              <span>
-                {currentLessonProg.completedStages.includes(activeStageObj.id)
-                  ? 'Replay'
-                  : 'Play'}
-              </span>
-            </button>
-          </div>
-        )}
+          return (
+            <div className="mt-2 rounded-2xl bg-slate-800/95 border border-slate-700 p-3.5 flex items-center justify-between gap-3">
+              <div className="min-w-0 flex-1">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] font-black uppercase text-rose-400">
+                    {activeStageObj.title}
+                  </span>
+                  <span
+                    className={`font-pixel-header text-[8px] px-1.5 py-0.5 rounded-[2px] border ${activeLvBadgeStyle}`}
+                  >
+                    {activeLvBadgeLabel}
+                  </span>
+                  <span className="text-[10px] font-black px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300">
+                    +{activeScaledXp} XP
+                    {activeXpMult >= 1.5
+                      ? ' (+50%)'
+                      : activeXpMult >= 1.25
+                      ? ' (+25%)'
+                      : ''}
+                  </span>
+                </div>
+                <ScrollingText
+                  text={activeStageObj.subtitle}
+                  className="text-xs font-bold text-white mt-0.5"
+                />
+                <ScrollingText
+                  text={nextTrialNote}
+                  className="text-[11px] text-amber-300/90 font-semibold"
+                />
+              </div>
+
+              <button
+                type="button"
+                disabled={!activeIsUnlocked}
+                onClick={() => onSelectStageNode(activeStageObj)}
+                className="game-btn-3d px-4 py-2.5 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 disabled:from-slate-800 disabled:to-slate-800 disabled:text-slate-500 text-white font-black text-xs shrink-0 border-b-4 border-rose-800 disabled:border-slate-900 flex items-center gap-1.5 shadow-lg"
+              >
+                <Play className="w-3.5 h-3.5 fill-current" />
+                <span>
+                  {activeNodeLv >= 3
+                    ? 'MAX Replay'
+                    : activeNodeLv === 2
+                    ? 'Trial 3/3'
+                    : activeNodeLv === 1
+                    ? 'Lv.2/3'
+                    : 'Play'}
+                </span>
+              </button>
+            </div>
+          );
+        })()}
       </div>
 
       {/* Character Mastery Strip */}
@@ -754,11 +858,16 @@ export function SmartReviewArenaView({
   activeLesson,
   activeWords,
   customDecks,
+  allUniqueWordsArray,
+  unlockedWords,
   unlockedWordsCount = 3,
   speakMandarin,
   speakingState,
   onLaunchSmartReviewSession,
   onLaunchSentenceBuilderDrill,
+  onLaunchClassifierDrill,
+  onLaunchDialogueQaDrill,
+  onLaunchNumbersTimeLab,
   onLaunchClozeDrill,
   onLaunchToneSandhiDrill,
   onLaunchHskMockExam,
@@ -817,10 +926,45 @@ export function SmartReviewArenaView({
     return Array.from(wordMap.values());
   }, [activeCourse, activeLesson, activeWords, customDecks, progress.lessonProgress]);
 
+  const effectiveUnlockedPool = useMemo(() => {
+    return Array.isArray(unlockedWords) && unlockedWords.length > 0
+      ? unlockedWords
+      : scannedPool;
+  }, [unlockedWords, scannedPool]);
+
+  const classifierStatus = useMemo(
+    () => getClassifierDrillUnlockStatus(effectiveUnlockedPool),
+    [effectiveUnlockedPool]
+  );
+  const dialogueStatus = useMemo(
+    () => getDialogueQaUnlockStatus(effectiveUnlockedPool),
+    [effectiveUnlockedPool]
+  );
+  const numbersTimeStatus = useMemo(
+    () => getNumbersTimeLabUnlockStatus(effectiveUnlockedPool),
+    [effectiveUnlockedPool]
+  );
+
+  const isClassifierUnlocked = classifierStatus.unlocked;
+  const isDialogueQaUnlocked = dialogueStatus.unlocked;
+  const isNumbersTimeUnlocked = numbersTimeStatus.unlocked;
+
+  const learnedLv1PlusCount = useMemo(() => {
+    const referencePool =
+      Array.isArray(allUniqueWordsArray) && allUniqueWordsArray.length > 0
+        ? allUniqueWordsArray
+        : scannedPool;
+    return countWordsAtLeastLevel(progress?.mastery, referencePool, 1);
+  }, [allUniqueWordsArray, scannedPool, progress?.mastery]);
+
+  const isSrsActive = learnedLv1PlusCount >= SRS_ACTIVATION_MIN_WORDS;
+
   const reviewAnalytics = useMemo(() => {
+    const nowMs = Date.now();
     const wordsToReview = [];
     const consolidatingWords = [];
     const masteredWords = [];
+    let dueWordsCount = 0;
 
     const modalitySummary = {
       recognition: { key: 'recognition', label: 'Recognition', mistakes: 0, completions: 0 },
@@ -838,23 +982,53 @@ export function SmartReviewArenaView({
         label: 'Fill-in-the-Blank (Cloze)',
         mistakes: 0,
         completions: 0
-      }
+      },
+      ...(isClassifierUnlocked
+        ? {
+            classifier_drill: {
+              key: 'classifier_drill',
+              label: 'Measure Words (量词)',
+              mistakes: 0,
+              completions: 0
+            }
+          }
+        : {}),
+      ...(isDialogueQaUnlocked
+        ? {
+            dialogue_qa: {
+              key: 'dialogue_qa',
+              label: 'Conversational Q&A (问答)',
+              mistakes: 0,
+              completions: 0
+            }
+          }
+        : {})
     };
+
+    const activeSummaryKeys = Object.keys(modalitySummary);
 
     const enrichedWords = scannedPool.map((word) => {
       const mastery = getWordMasteryLevel(progress.mastery, word);
       const telemetry = getWordSkillTelemetry(progress.skillTelemetry, word);
+      const srsEntry = getWordSrsEntry(progress.srsData, word);
+      const isDue = isSrsActive
+        ? isWordSrsDue(progress.srsData, word, mastery, nowMs)
+        : false;
+      const overdueMs = isSrsActive
+        ? getSrsOverdueMs(progress.srsData, word, nowMs)
+        : 0;
+      if (isDue) dueWordsCount += 1;
 
-      ['recognition', 'writing', 'listening', 'speaking', 'sentence_builder', 'cloze'].forEach((mKey) => {
-        modalitySummary[mKey].mistakes += telemetry[mKey].mistakes;
-        modalitySummary[mKey].completions += telemetry[mKey].completions;
+      activeSummaryKeys.forEach((mKey) => {
+        modalitySummary[mKey].mistakes += telemetry[mKey]?.mistakes || 0;
+        modalitySummary[mKey].completions += telemetry[mKey]?.completions || 0;
       });
 
       const rankModalities = (allowedKeys) => {
         return [...allowedKeys].sort((a, b) => {
-          const mDiff = telemetry[b].mistakes - telemetry[a].mistakes;
+          const mDiff = (telemetry[b]?.mistakes || 0) - (telemetry[a]?.mistakes || 0);
           if (mDiff !== 0) return mDiff;
-          return telemetry[a].completions - telemetry[b].completions;
+          return (telemetry[a]?.completions || 0) - (telemetry[b]?.completions || 0);
         });
       };
 
@@ -863,6 +1037,8 @@ export function SmartReviewArenaView({
         'listening',
         ...(isClozeUnlocked ? ['cloze'] : []),
         ...(isSentenceBuilderUnlocked ? ['sentence_builder'] : []),
+        ...(isClassifierUnlocked ? ['classifier_drill'] : []),
+        ...(isDialogueQaUnlocked ? ['dialogue_qa'] : []),
         'speaking',
         'recognition'
       ];
@@ -882,13 +1058,18 @@ export function SmartReviewArenaView({
         telemetry.listening.mistakes +
         telemetry.speaking.mistakes +
         telemetry.sentence_builder.mistakes +
-        telemetry.cloze.mistakes;
+        telemetry.cloze.mistakes +
+        (telemetry.classifier_drill?.mistakes || 0) +
+        (telemetry.dialogue_qa?.mistakes || 0);
 
       const enriched = {
         word,
         mastery,
         telemetry,
         totalMistakes,
+        srsEntry,
+        isDue,
+        overdueMs,
         weakestAllModality,
         weakestWritingAudioModality
       };
@@ -912,11 +1093,22 @@ export function SmartReviewArenaView({
       wordsToReview,
       consolidatingWords,
       masteredWords,
+      dueWordsCount,
       modalitySummary,
       sortedModalities,
       weakestGlobalModality
     };
-  }, [scannedPool, progress.mastery, progress.skillTelemetry, isClozeUnlocked, isSentenceBuilderUnlocked]);
+  }, [
+    scannedPool,
+    progress.mastery,
+    progress.skillTelemetry,
+    progress.srsData,
+    isSrsActive,
+    isClozeUnlocked,
+    isSentenceBuilderUnlocked,
+    isClassifierUnlocked,
+    isDialogueQaUnlocked
+  ]);
 
   const adaptiveSmartQueue = useMemo(() => {
     const allowedModes =
@@ -934,18 +1126,28 @@ export function SmartReviewArenaView({
             'listening',
             'speaking',
             ...(isClozeUnlocked ? ['cloze'] : []),
-            ...(isSentenceBuilderUnlocked ? ['sentence_builder'] : [])
+            ...(isSentenceBuilderUnlocked ? ['sentence_builder'] : []),
+            ...(isClassifierUnlocked ? ['classifier_drill'] : []),
+            ...(isDialogueQaUnlocked ? ['dialogue_qa'] : [])
           ];
 
     const sortedCandidates = [...reviewAnalytics.enrichedWords].sort((a, b) => {
+      if (isSrsActive) {
+        if (a.isDue !== b.isDue) return a.isDue ? -1 : 1;
+        if (a.isDue && b.isDue && a.overdueMs !== b.overdueMs) {
+          return b.overdueMs - a.overdueMs;
+        }
+      }
       if (a.mastery !== b.mastery) return a.mastery - b.mastery;
-      const aMistakes = allowedModes.reduce((sum, k) => sum + a.telemetry[k].mistakes, 0);
-      const bMistakes = allowedModes.reduce((sum, k) => sum + b.telemetry[k].mistakes, 0);
+      const aMistakes = allowedModes.reduce((sum, k) => sum + (a.telemetry[k]?.mistakes || 0), 0);
+      const bMistakes = allowedModes.reduce((sum, k) => sum + (b.telemetry[k]?.mistakes || 0), 0);
       return bMistakes - aMistakes;
     });
 
     const targetCount = Math.min(10, Math.max(sortedCandidates.length * 2, 6));
     const queue = [];
+    let classifierCursor = 0;
+    let dialogueCursor = 0;
 
     for (let i = 0; i < targetCount; i++) {
       const candidate = sortedCandidates[i % sortedCandidates.length];
@@ -992,12 +1194,42 @@ export function SmartReviewArenaView({
           .reverse()
           .find((q) => q.word.hanzi === candidate.word.hanzi)?.modality || null;
 
-      const chosenMode =
+      let chosenMode =
         rankedModes.find(
           (m) => !(m === prev1 && m === prev2) && m !== lastModeForSameWord
         ) ||
         rankedModes.find((m) => !(m === prev1 && m === prev2)) ||
         rankedModes[0];
+
+      let classifierItem = null;
+      let dialoguePair = null;
+      let stepWord = candidate.word;
+
+      if (chosenMode === 'classifier_drill') {
+        if (isClassifierUnlocked && classifierStatus.items.length > 0) {
+          classifierItem =
+            classifierStatus.items.find(
+              (it) => it.sourceWord?.hanzi === candidate.word.hanzi
+            ) ||
+            classifierStatus.items[classifierCursor % classifierStatus.items.length];
+          classifierCursor += 1;
+          stepWord = classifierItem.sourceWord || candidate.word;
+        } else {
+          chosenMode = 'recognition';
+        }
+      } else if (chosenMode === 'dialogue_qa') {
+        if (isDialogueQaUnlocked && dialogueStatus.pairs.length > 0) {
+          dialoguePair =
+            dialogueStatus.pairs.find(
+              (p) => p.sourceWord?.hanzi === candidate.word.hanzi
+            ) ||
+            dialogueStatus.pairs[dialogueCursor % dialogueStatus.pairs.length];
+          dialogueCursor += 1;
+          stepWord = dialoguePair.sourceWord || candidate.word;
+        } else {
+          chosenMode = 'recognition';
+        }
+      }
 
       const modeTelemetry = candidate.telemetry[chosenMode] || { mistakes: 0, completions: 0 };
       const tierInfo = getMasteryTierMeta(candidate.mastery);
@@ -1006,41 +1238,73 @@ export function SmartReviewArenaView({
           ? 'Writing (Blind Memory)'
           : MODALITY_META[chosenMode]?.label || chosenMode;
       const reasonText =
-        modeTelemetry.mistakes > 0
+        isSrsActive && candidate.isDue
+          ? `SRS Due (${modeDisplayLabel}) • Mastery Lv.${candidate.mastery}/10`
+          : modeTelemetry.mistakes > 0
           ? `Targeting ${modeTelemetry.mistakes} past mistake${
               modeTelemetry.mistakes > 1 ? 's' : ''
             } in ${modeDisplayLabel}`
           : `${tierInfo.tier} Tier Focus (${modeDisplayLabel}) • Mastery Lv.${candidate.mastery}/10`;
 
       queue.push({
-        stepId: `smart_${candidate.word.id}_${chosenMode}_${i}`,
-        word: candidate.word,
+        stepId: `smart_${stepWord.id}_${chosenMode}_${i}`,
+        word: stepWord,
         modality: chosenMode,
+        classifierItem,
+        dialoguePair,
         mastery: candidate.mastery,
+        isDue: isSrsActive && candidate.isDue,
         reason: reasonText
       });
     }
 
     return queue;
-  }, [reviewAnalytics.enrichedWords, reviewFilter, isClozeUnlocked, isSentenceBuilderUnlocked]);
+  }, [
+    reviewAnalytics.enrichedWords,
+    reviewFilter,
+    isSrsActive,
+    isClozeUnlocked,
+    isSentenceBuilderUnlocked,
+    isClassifierUnlocked,
+    isDialogueQaUnlocked,
+    classifierStatus.items,
+    dialogueStatus.pairs
+  ]);
 
   return (
     <div className="p-4 space-y-4">
       <div className="rounded-3xl bg-gradient-to-br from-slate-800 via-slate-900 to-slate-950 border border-rose-500/30 p-4 space-y-3.5 shadow-xl">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full bg-rose-500/20 text-rose-300 border border-rose-500/30 flex items-center gap-1">
             <Sparkles className="w-3 h-3" />
             <span>Adaptive Spaced Repetition</span>
           </span>
-          <span className="text-[11px] font-bold text-amber-300">
-            {unlockedWordsCount} Unlocked Words
-          </span>
+          <div className="flex items-center gap-1.5">
+            {isSrsActive && (
+              <span
+                className={`px-2 py-0.5 rounded-[2px] border font-pixel-header text-[8px] uppercase tracking-wider ${
+                  reviewAnalytics.dueWordsCount > 0
+                    ? 'bg-rose-600/30 border-rose-400 text-rose-200'
+                    : 'bg-emerald-600/25 border-emerald-400 text-emerald-200'
+                }`}
+              >
+                {reviewAnalytics.dueWordsCount > 0
+                  ? `${reviewAnalytics.dueWordsCount} Due`
+                  : 'SRS Clear'}
+              </span>
+            )}
+            <span className="text-[11px] font-bold text-amber-300">
+              {unlockedWordsCount} Unlocked Words
+            </span>
+          </div>
         </div>
 
         <div>
           <h1 className="text-lg font-black text-white">Smart Review Arena</h1>
           <p className="text-xs text-slate-300 mt-0.5">
-            Automatically prioritizes your lowest-mastery characters and unlocks advanced workbook modes as your unlocked vocabulary grows.
+            {isSrsActive
+              ? 'Temporal SRS active: overdue characters are prioritized first along the forgetting curve.'
+              : 'Automatically prioritizes your lowest-mastery characters and unlocks advanced workbook modes as your unlocked vocabulary grows.'}
           </p>
         </div>
 
@@ -1176,7 +1440,7 @@ export function SmartReviewArenaView({
             Progressive Practice Modes
           </span>
           <span className="text-[10px] font-bold text-amber-300">
-            Milestones: 12 • 25 • 40 Words
+            Milestones: 12 • 15 • 20 • 25 • 40
           </span>
         </div>
 
@@ -1268,6 +1532,102 @@ export function SmartReviewArenaView({
               ) : (
                 <div className="text-[10px] font-bold text-amber-300 mt-0.5">
                   Unlocks at 12 words — {unlockedWordsCount}/12
+                </div>
+              )}
+            </div>
+          </button>
+
+          {/* 15+ Words & 3+ Classifiers: Measure Words Trainer (量词) */}
+          <button
+            type="button"
+            onClick={() => {
+              if (!isClassifierUnlocked) {
+                soundFX.playMistake();
+                triggerToast?.(
+                  'Mode Locked (Measure Words • 量词)',
+                  `Unlocks at 15+ words & 3 classifiers (${classifierStatus.unlockedWordsCount}/15 words • ${classifierStatus.distinctClassifiersCount}/3 classifiers).`
+                );
+                return;
+              }
+              onLaunchClassifierDrill?.(classifierStatus.items);
+            }}
+            className={`game-btn-3d p-3 rounded-2xl border text-left flex flex-col justify-between transition-all ${
+              isClassifierUnlocked
+                ? 'bg-gradient-to-br from-teal-500/20 to-emerald-500/20 hover:from-teal-500/30 hover:to-emerald-500/30 border-teal-400/50'
+                : 'bg-slate-900/75 border-slate-800 opacity-75'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span
+                className={`text-[10px] font-black uppercase ${
+                  isClassifierUnlocked ? 'text-teal-300' : 'text-slate-500'
+                }`}
+              >
+                <span className="font-hanzi">量词</span> • Classifiers
+              </span>
+              {isClassifierUnlocked ? (
+                <Layers className="w-3.5 h-3.5 text-teal-400" />
+              ) : (
+                <Lock className="w-3.5 h-3.5 text-amber-400" />
+              )}
+            </div>
+            <div className="mt-1">
+              <div className="text-xs font-black text-white">Measure Words</div>
+              {isClassifierUnlocked ? (
+                <div className="text-[10px] text-slate-300">
+                  {classifierStatus.distinctClassifiersCount} classifiers • {classifierStatus.items.length} phrases
+                </div>
+              ) : (
+                <div className="text-[10px] font-bold text-amber-300 mt-0.5 leading-snug">
+                  Unlocks at 15+ words & 3 classifiers ({classifierStatus.unlockedWordsCount}/15 • {classifierStatus.distinctClassifiersCount}/3)
+                </div>
+              )}
+            </div>
+          </button>
+
+          {/* 20+ Words & 4+ Dialogue Patterns: Conversational Q&A (问答) */}
+          <button
+            type="button"
+            onClick={() => {
+              if (!isDialogueQaUnlocked) {
+                soundFX.playMistake();
+                triggerToast?.(
+                  'Mode Locked (Conversational Q&A • 问答)',
+                  `Unlocks at 20+ words & 4 dialogue patterns (${dialogueStatus.unlockedWordsCount}/20 words • ${dialogueStatus.pairsCount}/4 patterns).`
+                );
+                return;
+              }
+              onLaunchDialogueQaDrill?.(dialogueStatus.pairs);
+            }}
+            className={`game-btn-3d p-3 rounded-2xl border text-left flex flex-col justify-between transition-all ${
+              isDialogueQaUnlocked
+                ? 'bg-gradient-to-br from-fuchsia-500/20 to-rose-500/20 hover:from-fuchsia-500/30 hover:to-rose-500/30 border-fuchsia-400/50'
+                : 'bg-slate-900/75 border-slate-800 opacity-75'
+            }`}
+          >
+            <div className="flex items-center justify-between">
+              <span
+                className={`text-[10px] font-black uppercase ${
+                  isDialogueQaUnlocked ? 'text-fuchsia-300' : 'text-slate-500'
+                }`}
+              >
+                <span className="font-hanzi">问答</span> • Mini-Dialogues
+              </span>
+              {isDialogueQaUnlocked ? (
+                <MessageSquare className="w-3.5 h-3.5 text-fuchsia-400" />
+              ) : (
+                <Lock className="w-3.5 h-3.5 text-amber-400" />
+              )}
+            </div>
+            <div className="mt-1">
+              <div className="text-xs font-black text-white">Conversational Q&A</div>
+              {isDialogueQaUnlocked ? (
+                <div className="text-[10px] text-slate-300">
+                  {dialogueStatus.pairsCount} Q&A patterns unlocked
+                </div>
+              ) : (
+                <div className="text-[10px] font-bold text-amber-300 mt-0.5 leading-snug">
+                  Unlocks at 20+ words & 4 dialogue patterns ({dialogueStatus.unlockedWordsCount}/20 • {dialogueStatus.pairsCount}/4)
                 </div>
               )}
             </div>
@@ -1366,6 +1726,63 @@ export function SmartReviewArenaView({
           </button>
         </div>
 
+        {/* 25+ Words & 4+ Core Number/Time Morphemes: Procedural Numbers, Time & Prices Lab (数字与时间) */}
+        <button
+          type="button"
+          onClick={() => {
+            if (!isNumbersTimeUnlocked) {
+              soundFX.playMistake();
+              triggerToast?.(
+                'Mode Locked (Numbers, Time & Prices • 数字与时间)',
+                `Unlocks at 25+ words & number/time basics (${numbersTimeStatus.unlockedWordsCount}/25 words • ${numbersTimeStatus.matchedCoreCharsCount}/4 number/time chars).`
+              );
+              return;
+            }
+            onLaunchNumbersTimeLab?.(effectiveUnlockedPool);
+          }}
+          className={`game-btn-3d w-full p-3.5 rounded-[2px] border-2 flex items-center justify-between gap-3 shadow-lg transition-all ${
+            isNumbersTimeUnlocked
+              ? 'bg-gradient-to-r from-sky-600/25 via-cyan-600/20 to-emerald-500/25 hover:from-sky-600/35 hover:to-emerald-500/35 border-sky-400/70'
+              : 'bg-slate-900/85 border-slate-700 opacity-80'
+          }`}
+        >
+          <div className="flex items-center gap-3 min-w-0 text-left">
+            <div
+              className={`w-10 h-10 rounded-[2px] border-2 flex items-center justify-center shrink-0 font-hanzi font-black text-sm ${
+                isNumbersTimeUnlocked
+                  ? 'bg-sky-500/20 border-sky-400 text-sky-200'
+                  : 'bg-slate-950 border-slate-700 text-slate-500'
+              }`}
+            >
+              {isNumbersTimeUnlocked ? '数' : <Lock className="w-4 h-4 text-amber-400" />}
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-black text-white">
+                  Numbers, Time & Prices Lab
+                </span>
+                <span className="font-hanzi text-[9px] font-black uppercase px-2 py-0.5 rounded-[2px] bg-sky-500/20 text-sky-300 border border-sky-400/40">
+                  数字与时间
+                </span>
+              </div>
+              {isNumbersTimeUnlocked ? (
+                <p className="text-[10px] text-slate-300 truncate mt-0.5">
+                  Infinite Procedural Lab • 0–999, Clock/Dates & RMB Prices (Listen + Read)
+                </p>
+              ) : (
+                <p className="text-[10px] font-bold text-amber-300 mt-0.5 leading-snug">
+                  Unlocks at 25+ words & number/time basics ({numbersTimeStatus.unlockedWordsCount}/25 words • {numbersTimeStatus.matchedCoreCharsCount}/4 chars)
+                </p>
+              )}
+            </div>
+          </div>
+          {isNumbersTimeUnlocked ? (
+            <ChevronRight className="w-4 h-4 text-sky-300 shrink-0" />
+          ) : (
+            <Lock className="w-4 h-4 text-slate-500 shrink-0" />
+          )}
+        </button>
+
         {/* 40+ Words: HSK Mock Exam Mode */}
         <button
           type="button"
@@ -1428,7 +1845,9 @@ export function SmartReviewArenaView({
       <div className="rounded-2xl bg-slate-800/75 border border-slate-700/80 p-4 space-y-2.5">
         <div className="flex items-center justify-between">
           <h2 className="text-xs font-extrabold uppercase tracking-wider text-slate-300">
-            Adaptive Queue Preview (Lowest Mastery First)
+            {isSrsActive
+              ? 'Adaptive Queue Preview (SRS Due First)'
+              : 'Adaptive Queue Preview (Lowest Mastery First)'}
           </h2>
           <span className="text-[11px] font-bold text-amber-300">
             {adaptiveSmartQueue.length} Steps Queued
@@ -1451,6 +1870,11 @@ export function SmartReviewArenaView({
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span className="font-hanzi text-sm font-black text-white">{item.word.hanzi}</span>
                       <span className="font-clarity text-xs font-bold text-rose-400">{item.word.pinyin}</span>
+                      {isSrsActive && item.isDue && (
+                        <span className="px-1.5 py-0.5 rounded-[2px] bg-rose-600/90 border border-rose-300 text-white font-pixel-header text-[7px] uppercase tracking-wider leading-none">
+                          Due
+                        </span>
+                      )}
                     </div>
                     <p className="text-[10px] text-slate-400 truncate">{item.reason}</p>
                   </div>

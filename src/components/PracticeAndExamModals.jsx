@@ -16,7 +16,8 @@ import {
   Mic,
   SkipForward,
   Sparkles,
-  Lock
+  Lock,
+  MessageSquare
 } from 'lucide-react';
 import { soundFX } from '../audio/soundEngine.js';
 import {
@@ -31,12 +32,19 @@ import {
   computeSpeechSimilarity,
   buildSentenceBuilderPuzzle,
   buildClozeExerciseData,
+  buildClassifierExerciseData,
+  buildDialogueQaExerciseData,
+  getUnlockedClassifierItems,
+  getUnlockedDialoguePairs,
+  buildNumbersTimeChallenge,
+  validateNumbersTimeTypedInput,
   buildToneSandhiOptions,
   buildHskMockExamQuestions,
   getWordMasteryLevel,
   getMasteryTierMeta,
   getAdaptiveWritingConfig,
   useSessionTimer,
+  canExposeAudioBeforeAnswer,
   highlightRadicalOutlineStrokes,
   getWritingStageMeta,
   loadHanziWriterScript
@@ -45,12 +53,15 @@ import {
   ChaoToneVisualizer,
   MandarinAudioControls,
   SessionGameTopHud,
-  SessionTimerBadge
+  SessionTimerBadge,
+  InteractiveExampleText
 } from './SharedHudAndAudio.jsx';
 
 export function ClozeExerciseCard({
   word,
   masteryLv = 0,
+  masteryMap = {},
+  courseWords,
   lessonPool = UNIT_1_WORDS,
   seed = 0,
   selectedOptionId,
@@ -60,20 +71,18 @@ export function ClozeExerciseCard({
   onSetSlowMode,
   speakMandarin,
   speakingState,
-  onSelectOption
+  onSelectOption,
+  onInspectOpenChange = null
 }) {
-  const [showPinyinHint, setShowPinyinHint] = useState(false);
-
-  useEffect(() => {
-    setShowPinyinHint(false);
-  }, [word?.hanzi, seed]);
-
   const clozeData = useMemo(
     () => buildClozeExerciseData(word, lessonPool, seed),
     [word, lessonPool, seed]
   );
 
-  const shouldShowPinyin = masteryLv <= 3 || showPinyinHint || isCompleted;
+  // Anti-Spoiler Rule: Cloze tests contextual reading deduction.
+  // Never expose audio or Pinyin hints before the learner selects an option.
+  const canShowClozeAudioBeforeAnswer = canExposeAudioBeforeAnswer('cloze', true);
+  const shouldShowPinyin = isCompleted;
 
   return (
     <div
@@ -89,19 +98,7 @@ export function ClozeExerciseCard({
         <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-cyan-500/20 text-cyan-300 border border-cyan-500/40">
           Fill-in-the-Blank • <span className="font-hanzi">选词填空</span>
         </span>
-        <div className="flex items-center gap-1.5">
-          {masteryLv >= 4 && !isCompleted && (
-            <button
-              type="button"
-              onClick={() => {
-                soundFX.playPop();
-                setShowPinyinHint((prev) => !prev);
-              }}
-              className="px-2.5 py-1 rounded-xl bg-slate-900 border border-amber-500/40 text-[10px] font-bold text-amber-300 hover:border-amber-400"
-            >
-              {showPinyinHint ? 'Hide Pinyin' : 'Show Pinyin Hint'}
-            </button>
-          )}
+        {canShowClozeAudioBeforeAnswer && (
           <MandarinAudioControls
             text={clozeData.mandarinSentence}
             isSlowMode={isSlowMode}
@@ -110,7 +107,7 @@ export function ClozeExerciseCard({
             speakingState={speakingState}
             size="sm"
           />
-        </div>
+        )}
       </div>
 
       {/* Sentence Prompt Card with [ ___ ] Blank */}
@@ -169,27 +166,424 @@ export function ClozeExerciseCard({
 
       {isCompleted && (
         <div
-          className={`rounded-xl p-3 text-xs flex items-center justify-between gap-2 border ${
+          className={`rounded-xl p-3 text-xs space-y-2 border ${
             clozeData.options.find((o) => o.id === selectedOptionId)?.isCorrect
               ? 'bg-emerald-500/15 border-emerald-400/50 text-emerald-200'
               : 'bg-rose-500/15 border-rose-400/50 text-rose-200'
           }`}
         >
-          <div>
-            <p className="font-black">
-              {clozeData.options.find((o) => o.id === selectedOptionId)?.isCorrect
-                ? `✓ Correct! ${clozeData.targetWord.hanzi} (${clozeData.targetWord.pinyin})`
-                : `✗ Incorrect — Correct answer: ${clozeData.targetWord.hanzi} (${clozeData.targetWord.pinyin})`}
-            </p>
-            <p className="font-hanzi text-[11px] opacity-90 mt-0.5">
-              {clozeData.mandarinSentence} — "{clozeData.englishSentence}"
-            </p>
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <p className="font-black">
+                {clozeData.options.find((o) => o.id === selectedOptionId)?.isCorrect
+                  ? `✓ Correct! ${clozeData.targetWord.hanzi} (${clozeData.targetWord.pinyin})`
+                  : `✗ Incorrect — Correct answer: ${clozeData.targetWord.hanzi} (${clozeData.targetWord.pinyin})`}
+              </p>
+              <p className="font-clarity text-[11px] opacity-85 italic mt-0.5">
+                "{clozeData.englishSentence}"
+              </p>
+            </div>
+            <MandarinAudioControls
+              text={clozeData.mandarinSentence}
+              isSlowMode={isSlowMode}
+              onSetSlowMode={onSetSlowMode}
+              speakMandarin={speakMandarin}
+              speakingState={speakingState}
+              size="sm"
+            />
           </div>
-          {clozeData.options.find((o) => o.id === selectedOptionId)?.isCorrect ? (
-            <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
-          ) : (
-            <X className="w-5 h-5 text-rose-400 shrink-0" />
+          <div className="pt-1.5 border-t border-white/10">
+            <InteractiveExampleText
+              sentence={clozeData.mandarinSentence}
+              speakMandarin={speakMandarin}
+              masteryMap={masteryMap}
+              courseWords={Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : lessonPool}
+              charClassName="text-sm font-bold text-white"
+              onInspectOpenChange={onInspectOpenChange}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// MEASURE WORDS / CLASSIFIERS EXERCISE CARD (量词 — classifier_drill)
+// Strict Anti-Spoiler: NO auto-play audio and NO Pinyin before answering.
+// ============================================================================
+export function ClassifierExerciseCard({
+  item,
+  masteryMap = {},
+  courseWords,
+  lessonPool = UNIT_1_WORDS,
+  seed = 0,
+  selectedOptionId,
+  isCompleted,
+  cardAnim = 'idle',
+  isSlowMode,
+  onSetSlowMode,
+  speakMandarin,
+  speakingState,
+  onSelectOption,
+  onInspectOpenChange = null
+}) {
+  const classifierData = useMemo(
+    () => buildClassifierExerciseData(item, seed),
+    [item, seed]
+  );
+
+  // Strict Anti-Spoiler Rule: Measure Words tests grammar/classifier recall.
+  // Never expose audio or Pinyin hints before the learner selects a classifier.
+  const canShowAudioBeforeAnswer = canExposeAudioBeforeAnswer('classifier_drill', true);
+  const selectedOpt = classifierData.options.find((o) => o.id === selectedOptionId);
+  const isSelectedCorrect = Boolean(selectedOpt?.isCorrect);
+
+  return (
+    <div
+      className={`my-auto rounded-3xl bg-slate-800/90 border p-4 space-y-3.5 shadow-xl transition-all ${
+        cardAnim === 'wrong'
+          ? 'border-rose-500 animate-game-shake'
+          : cardAnim === 'correct'
+          ? 'border-emerald-400 animate-game-green-pulse'
+          : 'border-teal-500/40'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-teal-500/20 text-teal-300 border border-teal-400/40">
+          Measure Words • <span className="font-hanzi">量词</span>
+        </span>
+        {canShowAudioBeforeAnswer && (
+          <MandarinAudioControls
+            text={classifierData.fullPhraseHanzi}
+            isSlowMode={isSlowMode}
+            onSetSlowMode={onSetSlowMode}
+            speakMandarin={speakMandarin}
+            speakingState={speakingState}
+            size="sm"
+          />
+        )}
+      </div>
+
+      {/* Phrase Prompt Box: Number + [ ___ ] + Noun + English meaning (NO Pinyin pre-answer) */}
+      <div className="rounded-2xl bg-slate-950/90 border border-slate-800 p-4 space-y-2 text-center">
+        <span className="font-clarity text-xs font-bold uppercase tracking-wider text-amber-400 block">
+          Choose the correct Mandarin measure word:
+        </span>
+        <div className="font-hanzi text-3xl font-black text-white tracking-wider leading-relaxed">
+          {isCompleted ? classifierData.fullPhraseHanzi : classifierData.blankPhraseHanzi}
+        </div>
+        {isCompleted && (
+          <div className="font-pinyin text-rose-300 text-base">
+            {classifierData.fullPhrasePinyin}
+          </div>
+        )}
+        <div className="font-clarity text-[15px] font-semibold text-slate-200 italic pt-1 border-t border-slate-800/80">
+          "{classifierData.englishMeaning}"
+        </div>
+      </div>
+
+      {/* 4 Square Classifier Options (Hanzi-only before answer; Pinyin revealed post-answer) */}
+      <div className="grid grid-cols-2 gap-2.5">
+        {classifierData.options.map((opt) => {
+          const isSelected = selectedOptionId === opt.id;
+          let btnClass =
+            'bg-slate-900/90 hover:bg-slate-800 border-slate-700 text-white';
+
+          if (isCompleted && opt.isCorrect) {
+            btnClass =
+              'bg-emerald-500/25 border-emerald-400 text-emerald-200 shadow-lg shadow-emerald-950/50';
+          } else if (isCompleted && isSelected && !opt.isCorrect) {
+            btnClass = 'bg-rose-500/25 border-rose-500 text-rose-200';
+          } else if (isCompleted) {
+            btnClass = 'bg-slate-900/60 border-slate-800 text-slate-500 opacity-60';
+          }
+
+          return (
+            <button
+              key={opt.id}
+              type="button"
+              disabled={isCompleted}
+              onClick={() => onSelectOption(opt, classifierData)}
+              className={`game-btn-3d font-clarity p-3.5 rounded-2xl border-2 flex flex-col items-center justify-center text-center transition-all ${btnClass}`}
+            >
+              <span className="font-hanzi text-3xl font-black leading-none">
+                {opt.classifier}
+              </span>
+              {isCompleted && (
+                <>
+                  <span className="font-clarity text-sm font-extrabold text-rose-300 mt-1">
+                    {opt.pinyin}
+                  </span>
+                  <span className="font-clarity text-[10px] text-slate-300 mt-0.5 line-clamp-1">
+                    {opt.usage}
+                  </span>
+                </>
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {isCompleted && (
+        <div
+          className={`rounded-xl p-3 text-xs space-y-2 border ${
+            isSelectedCorrect
+              ? 'bg-emerald-500/15 border-emerald-400/50 text-emerald-200'
+              : 'bg-rose-500/15 border-rose-400/50 text-rose-200'
+          }`}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <p className="font-black">
+                {isSelectedCorrect
+                  ? `✓ Correct! ${classifierData.fullPhraseHanzi} (${classifierData.fullPhrasePinyin})`
+                  : `✗ Incorrect — Correct classifier: ${classifierData.classifier} → ${classifierData.fullPhraseHanzi} (${classifierData.fullPhrasePinyin})`}
+              </p>
+              {classifierData.grammarNote && (
+                <p className="font-clarity text-[11px] opacity-90 mt-0.5">
+                  {classifierData.grammarNote}
+                </p>
+              )}
+            </div>
+            <MandarinAudioControls
+              text={classifierData.fullPhraseHanzi}
+              isSlowMode={isSlowMode}
+              onSetSlowMode={onSetSlowMode}
+              speakMandarin={speakMandarin}
+              speakingState={speakingState}
+              size="sm"
+            />
+          </div>
+          <div className="pt-1.5 border-t border-white/10">
+            <InteractiveExampleText
+              sentence={classifierData.fullPhraseHanzi}
+              speakMandarin={speakMandarin}
+              masteryMap={masteryMap}
+              courseWords={
+                Array.isArray(courseWords) && courseWords.length > 0
+                  ? courseWords
+                  : lessonPool
+              }
+              charClassName="text-sm font-bold text-white"
+              onInspectOpenChange={onInspectOpenChange}
+            />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// CONVERSATIONAL Q&A MINI-DIALOGUE CARD (问答 — dialogue_qa)
+// Strict Anti-Spoiler: NO auto-play audio before answer; NO Pinyin on Lv.4+ words.
+// ============================================================================
+export function DialogueQaExerciseCard({
+  pair,
+  masteryLv = 0,
+  masteryMap = {},
+  courseWords,
+  lessonPool = UNIT_1_WORDS,
+  nodeLevel = 0,
+  seed = 0,
+  selectedOptionId,
+  isCompleted,
+  cardAnim = 'idle',
+  isSlowMode,
+  onSetSlowMode,
+  speakMandarin,
+  speakingState,
+  onSelectOption,
+  onInspectOpenChange = null
+}) {
+  const dialogueData = useMemo(
+    () => buildDialogueQaExerciseData(pair, seed),
+    [pair, seed]
+  );
+
+  // Anti-Spoiler Rule: Never auto-play audio or expose audio controls before answering.
+  // Hide Pinyin hints before answering when word mastery is Lv. 4+ or on Run 2+/Trial 3.
+  const canShowAudioBeforeAnswer = canExposeAudioBeforeAnswer('dialogue_qa', true);
+  const hidePinyinBeforeAnswer = !isCompleted && (masteryLv >= 4 || nodeLevel >= 1);
+  const selectedOpt = dialogueData.options.find((o) => o.id === selectedOptionId);
+  const isSelectedCorrect = Boolean(selectedOpt?.isCorrect);
+
+  return (
+    <div
+      className={`my-auto rounded-3xl bg-slate-800/90 border p-4 space-y-3.5 shadow-xl transition-all ${
+        cardAnim === 'wrong'
+          ? 'border-rose-500 animate-game-shake'
+          : cardAnim === 'correct'
+          ? 'border-emerald-400 animate-game-green-pulse'
+          : 'border-fuchsia-500/40'
+      }`}
+    >
+      <div className="flex items-center justify-between gap-2">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-fuchsia-500/20 text-fuchsia-300 border border-fuchsia-400/40 inline-flex items-center gap-1">
+            <MessageSquare className="w-3 h-3" />
+            <span>
+              Conversational Q&A • <span className="font-hanzi">问答</span>
+            </span>
+          </span>
+          {dialogueData.grammarTag && (
+            <span className="text-[10px] font-black px-2 py-0.5 rounded-full bg-slate-950 text-amber-300 border border-amber-400/40 font-hanzi">
+              {dialogueData.grammarTag}
+            </span>
           )}
+        </div>
+        {canShowAudioBeforeAnswer && (
+          <MandarinAudioControls
+            text={dialogueData.questionHanzi}
+            isSlowMode={isSlowMode}
+            onSetSlowMode={onSetSlowMode}
+            speakMandarin={speakMandarin}
+            speakingState={speakingState}
+            size="sm"
+          />
+        )}
+      </div>
+
+      {/* Speaker A Question Bubble */}
+      <div className="rounded-2xl bg-slate-950/90 border border-slate-800 p-4 space-y-1.5">
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-400">
+            Speaker A asks:
+          </span>
+          {hidePinyinBeforeAnswer && (
+            <span className="text-[10px] font-bold text-slate-400">
+              Lv.{masteryLv} • Pinyin Hidden
+            </span>
+          )}
+        </div>
+        <div className="font-hanzi text-2xl font-black text-white tracking-wide leading-snug">
+          {dialogueData.questionHanzi}
+        </div>
+        {!hidePinyinBeforeAnswer && (
+          <div className="font-clarity text-sm font-semibold text-rose-300">
+            {dialogueData.questionPinyin}
+          </div>
+        )}
+        {isCompleted && (
+          <div className="font-clarity text-xs text-slate-300 italic pt-1 border-t border-slate-800/80">
+            "{dialogueData.questionEnglish}"
+          </div>
+        )}
+      </div>
+
+      {/* 3 Mandarin Reply Options */}
+      <div className="space-y-2">
+        <span className="font-clarity text-xs font-bold uppercase tracking-wider text-slate-300 block">
+          Choose the natural Mandarin reply (3 options):
+        </span>
+        {dialogueData.options.map((opt, idx) => {
+          const isSelected = selectedOptionId === opt.id;
+          const letter = ['A', 'B', 'C'][idx] || '•';
+          let btnClass =
+            'bg-slate-900/90 hover:bg-slate-800 border-slate-700 text-slate-100';
+
+          if (isCompleted && opt.isCorrect) {
+            btnClass =
+              'bg-emerald-500/20 border-emerald-400 text-emerald-200 shadow-md';
+          } else if (isCompleted && isSelected && !opt.isCorrect) {
+            btnClass = 'bg-rose-500/20 border-rose-500 text-rose-200';
+          } else if (isCompleted) {
+            btnClass = 'bg-slate-900/60 border-slate-800 text-slate-500 opacity-60';
+          }
+
+          return (
+            <button
+              key={opt.id}
+              type="button"
+              disabled={isCompleted}
+              onClick={() => onSelectOption(opt, dialogueData)}
+              className={`game-btn-3d font-clarity w-full p-3 rounded-2xl border-2 text-left flex items-center justify-between gap-2.5 transition-all ${btnClass}`}
+            >
+              <div className="flex items-start gap-2.5 min-w-0 flex-1">
+                <span
+                  className={`w-6 h-6 rounded-lg text-[11px] font-black flex items-center justify-center shrink-0 mt-0.5 ${
+                    isCompleted && opt.isCorrect
+                      ? 'bg-emerald-400 text-slate-950'
+                      : isCompleted && isSelected && !opt.isCorrect
+                      ? 'bg-rose-500 text-white'
+                      : 'bg-slate-800 text-slate-300'
+                  }`}
+                >
+                  {letter}
+                </span>
+                <div className="min-w-0 flex-1 space-y-0.5">
+                  <div className="font-hanzi text-lg font-black leading-snug">
+                    {opt.hanzi}
+                  </div>
+                  {!hidePinyinBeforeAnswer && (
+                    <div className="font-clarity text-xs font-semibold text-rose-300">
+                      {opt.pinyin}
+                    </div>
+                  )}
+                  {isCompleted && (
+                    <div className="font-clarity text-[11px] text-slate-300 italic">
+                      "{opt.english}"
+                    </div>
+                  )}
+                </div>
+              </div>
+              {isCompleted && opt.isCorrect && (
+                <Check className="w-4 h-4 text-emerald-400 shrink-0" />
+              )}
+              {isCompleted && isSelected && !opt.isCorrect && (
+                <X className="w-4 h-4 text-rose-400 shrink-0" />
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {isCompleted && (
+        <div
+          className={`rounded-xl p-3 text-xs space-y-2 border ${
+            isSelectedCorrect
+              ? 'bg-emerald-500/15 border-emerald-400/50 text-emerald-200'
+              : 'bg-rose-500/15 border-rose-400/50 text-rose-200'
+          }`}
+        >
+          <div className="flex items-center justify-between gap-2">
+            <div className="min-w-0 flex-1">
+              <p className="font-black">
+                {isSelectedCorrect
+                  ? `✓ Natural Reply! ${dialogueData.correctReply.hanzi}`
+                  : `✗ Mismatched Reply — Best answer: ${dialogueData.correctReply.hanzi}`}
+              </p>
+              <p className="font-clarity text-[11px] text-rose-200/90 mt-0.5">
+                {dialogueData.correctReply.pinyin}
+              </p>
+              <p className="font-clarity text-[11px] opacity-85 italic">
+                "{dialogueData.correctReply.english}"
+              </p>
+            </div>
+            <MandarinAudioControls
+              text={`${dialogueData.questionHanzi} ${dialogueData.correctReply.hanzi}`}
+              isSlowMode={isSlowMode}
+              onSetSlowMode={onSetSlowMode}
+              speakMandarin={speakMandarin}
+              speakingState={speakingState}
+              size="sm"
+            />
+          </div>
+          <div className="pt-1.5 border-t border-white/10">
+            <InteractiveExampleText
+              sentence={dialogueData.correctReply.hanzi}
+              speakMandarin={speakMandarin}
+              masteryMap={masteryMap}
+              courseWords={
+                Array.isArray(courseWords) && courseWords.length > 0
+                  ? courseWords
+                  : lessonPool
+              }
+              charClassName="text-sm font-bold text-white"
+              onInspectOpenChange={onInspectOpenChange}
+            />
+          </div>
         </div>
       )}
     </div>
@@ -488,9 +882,15 @@ export function HskMockExamModal({
     return () => clearFeedbackTimer();
   }, [currentIdx, clearFeedbackTimer]);
 
-  // Auto-play audio when entering a Listening question (1–10)
+  // Auto-play audio ONLY for Part I Listening questions (never Part II Reading)
   useEffect(() => {
-    if (!submitted && currentQ?.section === 'Listening' && currentQ?.audioText) {
+    const examModality =
+      currentQ?.section === 'Listening' ? 'hsk_mock_listening' : 'hsk_mock_reading';
+    if (
+      !submitted &&
+      canExposeAudioBeforeAnswer(examModality, true) &&
+      currentQ?.audioText
+    ) {
       speakMandarin(currentQ.audioText);
     }
   }, [currentIdx, submitted, currentQ, speakMandarin]);
@@ -686,7 +1086,10 @@ export function HskMockExamModal({
 
               {/* Question Prompt Box */}
               <div className="rounded-2xl bg-slate-950/90 border border-slate-800 p-4 text-center space-y-2.5">
-                {currentQ.section === 'Listening' ? (
+                {canExposeAudioBeforeAnswer(
+                  currentQ.section === 'Listening' ? 'hsk_mock_listening' : 'hsk_mock_reading',
+                  true
+                ) ? (
                   <div className="flex flex-col items-center gap-2 py-2">
                     <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-400/40 flex items-center justify-center text-emerald-300">
                       <Headphones className="w-6 h-6" />
@@ -932,6 +1335,7 @@ export function HskMockExamModal({
 // ============================================================================
 export function AdaptiveMixedSessionModal({
   sessionConfig,
+  courseWords,
   progress,
   wordNotes = {},
   onSaveWordNote,
@@ -980,10 +1384,13 @@ export function AdaptiveMixedSessionModal({
   });
   const [completedCharsInWord, setCompletedCharsInWord] = useState([]);
   const [wordWritingXpAwarded, setWordWritingXpAwarded] = useState(false);
+  const [charMissCount, setCharMissCount] = useState(0);
+  const [touchNudgeMessage, setTouchNudgeMessage] = useState('');
   const writerTargetRef = useRef(null);
   const writerInstanceRef = useRef(null);
   const writerStageTransitionTimerRef = useRef(null);
   const feedbackTimerRef = useRef(null);
+  const charMissCountRef = useRef(0);
 
   // Sub-state for 'listening' modality
   const [dictationSubMode, setDictationSubMode] = useState('pinyin');
@@ -1002,13 +1409,21 @@ export function AdaptiveMixedSessionModal({
   const [selectedSentenceTiles, setSelectedSentenceTiles] = useState([]);
   const [sentenceCheckStatus, setSentenceCheckStatus] = useState(null);
 
-  // Sub-state for 'cloze' modality
+  // Sub-state for 'cloze', 'classifier_drill', and 'dialogue_qa' modalities
   const [clozeSelectedId, setClozeSelectedId] = useState(null);
+  const [classifierSelectedId, setClassifierSelectedId] = useState(null);
+  const [dialogueSelectedId, setDialogueSelectedId] = useState(null);
   const [showPinyinHint, setShowPinyinHint] = useState(false);
+  const [isInspectingExample, setIsInspectingExample] = useState(false);
 
   const currentItem = queue[stepIdx] || queue[0];
   const currentWord = currentItem?.word || UNIT_1_WORDS[0];
   const currentModality = currentItem?.modality || 'recognition';
+  const nodeLevel = Number(sessionConfig?.nodeLevel || 0);
+  const isRun2OrHigher = nodeLevel >= 1;
+  const isMasteryTrial = nodeLevel >= 2;
+  const isPinyinMeaningComboStep =
+    currentModality === 'meaning_mc' && stepIdx % 2 === 1;
   const currentChar = currentWord.chars?.[charIndex] || currentWord.chars?.[0] || currentWord.hanzi[0];
   const masteryLv = getWordMasteryLevel(progress?.mastery, currentWord);
   const masteryTierMeta = getMasteryTierMeta(masteryLv);
@@ -1062,6 +1477,7 @@ export function AdaptiveMixedSessionModal({
     wordWritingXpAwarded,
     currentWord,
     currentModality,
+    isPinyinMeaningComboStep,
     charIndex,
     writingConfig,
     sentencePuzzle
@@ -1078,6 +1494,7 @@ export function AdaptiveMixedSessionModal({
     wordWritingXpAwarded,
     currentWord,
     currentModality,
+    isPinyinMeaningComboStep,
     charIndex,
     writingConfig,
     sentencePuzzle
@@ -1112,24 +1529,37 @@ export function AdaptiveMixedSessionModal({
     []
   );
 
-  // Dedicated auto-advance effect strictly tied to [stepCompleted, stepIdx] so parent re-renders never cancel it
-  useEffect(() => {
-    if (!stepCompleted) return;
+  const advanceMixedStepNow = useCallback(() => {
     if (feedbackTimerRef.current) {
       clearTimeout(feedbackTimerRef.current);
+      feedbackTimerRef.current = null;
+    }
+    setIsInspectingExample(false);
+    const {
+      queue: liveQueue,
+      bonusXp: liveBonus,
+      maxCombo: liveMax
+    } = liveSessionRef.current;
+    if (stepIdx < liveQueue.length - 1) {
+      setStepIdx((s) => s + 1);
+    } else {
+      finishMixedSession(liveBonus, liveMax);
+    }
+  }, [stepIdx, finishMixedSession]);
+
+  // Dedicated auto-advance effect strictly tied to [stepCompleted, stepIdx, isInspectingExample]
+  // Pauses cleanly if the learner taps a character in the post-answer Character Inspector.
+  useEffect(() => {
+    if (!stepCompleted || isInspectingExample) {
+      if (feedbackTimerRef.current) {
+        clearTimeout(feedbackTimerRef.current);
+        feedbackTimerRef.current = null;
+      }
+      return;
     }
     const delayMs = autoAdvanceDelayRef.current || 1400;
     feedbackTimerRef.current = setTimeout(() => {
-      const {
-        queue: liveQueue,
-        bonusXp: liveBonus,
-        maxCombo: liveMax
-      } = liveSessionRef.current;
-      if (stepIdx < liveQueue.length - 1) {
-        setStepIdx((s) => s + 1);
-      } else {
-        finishMixedSession(liveBonus, liveMax);
-      }
+      advanceMixedStepNow();
     }, delayMs);
 
     return () => {
@@ -1138,7 +1568,7 @@ export function AdaptiveMixedSessionModal({
         feedbackTimerRef.current = null;
       }
     };
-  }, [stepCompleted, stepIdx, finishMixedSession]);
+  }, [stepCompleted, stepIdx, isInspectingExample, advanceMixedStepNow]);
 
   const awardComboXp = useCallback((base = 5) => {
     const next = (liveSessionRef.current.combo || 0) + 1;
@@ -1165,9 +1595,6 @@ export function AdaptiveMixedSessionModal({
     setCardAnim('wrong');
     setTimeout(() => setCardAnim('idle'), 460);
   }, []);
-
-  const isPinyinMeaningComboStep =
-    currentModality === 'meaning_mc' && stepIdx % 2 === 1;
 
   const recognitionOptions = useMemo(() => {
     const pool = [...queue.map((q) => q.word), ...UNIT_1_WORDS];
@@ -1219,12 +1646,13 @@ export function AdaptiveMixedSessionModal({
     const {
       writingConfig: liveWritingCfg,
       currentModality: liveModality,
-      sentencePuzzle: livePuzzle,
+      isPinyinMeaningComboStep: liveOptionsHavePinyin,
       currentWord: liveWord,
       speakMandarin: speakFn
     } = liveSessionRef.current;
 
     setStepCompleted(false);
+    setIsInspectingExample(false);
     setCardAnim('idle');
     setIsCardFlipped(false);
     setRecogAnswered(false);
@@ -1236,6 +1664,9 @@ export function AdaptiveMixedSessionModal({
     setCompletedCharsInWord([]);
     setWordWritingXpAwarded(false);
     liveSessionRef.current.wordWritingXpAwarded = false;
+    charMissCountRef.current = 0;
+    setCharMissCount(0);
+    setTouchNudgeMessage('');
     setStrokeStats({
       completedStrokes: 0,
       totalStrokes: 0,
@@ -1256,12 +1687,16 @@ export function AdaptiveMixedSessionModal({
     setSelectedSentenceTiles([]);
     setSentenceCheckStatus(null);
     setClozeSelectedId(null);
+    setClassifierSelectedId(null);
+    setDialogueSelectedId(null);
 
-    speakFn(
-      liveModality === 'sentence_builder'
-        ? livePuzzle.cleanSentence
-        : liveWord.hanzi
-    );
+    // FUTURE-PROOF ANTI-SPOILER GUARDRAIL:
+    // Always check canExposeAudioBeforeAnswer(...) before auto-playing audio on mount.
+    // Only pure listening/speaking exercises auto-play; reading, meaning_mc, recognition,
+    // cloze, and sentence_builder MUST remain silent until after the user submits an answer.
+    if (canExposeAudioBeforeAnswer(liveModality, liveOptionsHavePinyin)) {
+      speakFn(liveWord.hanzi);
+    }
 
     return () => {
       if (recognitionRef.current) {
@@ -1328,6 +1763,9 @@ export function AdaptiveMixedSessionModal({
 
       const activeStageMeta = getWritingStageMeta(targetStage);
       setWriterModeStatus('quiz');
+      charMissCountRef.current = 0;
+      setCharMissCount(0);
+      setTouchNudgeMessage('');
       setStrokeStats((prev) => ({
         ...prev,
         completedStrokes: 0,
@@ -1347,6 +1785,25 @@ export function AdaptiveMixedSessionModal({
         showHintAfterMisses: activeStageMeta.showHintAfterMisses,
         highlightOnComplete: true,
         onMistake: (strokeData) => {
+          const nextCharMiss = charMissCountRef.current + 1;
+          charMissCountRef.current = nextCharMiss;
+          setCharMissCount(nextCharMiss);
+
+          // 3-strike touchscreen mistake buffer per character:
+          // 1st & 2nd off-path touches trigger only a subtle amber nudge (no mistake SFX, no combo reset, no red shake, no telemetry mistake)
+          if (nextCharMiss < 3) {
+            setTouchNudgeMessage(`Touch off-path (${nextCharMiss}/3) — try stroke again`);
+            setStrokeStats((prev) => ({
+              ...prev,
+              mistakesOnCurrent: strokeData.mistakesOnStroke,
+              totalMistakes: strokeData.totalMistakes,
+              hintTriggered: false
+            }));
+            return;
+          }
+
+          // 3rd+ miss on this character registers as a real mistake and flashes the stroke hint
+          setTouchNudgeMessage('');
           registerMistakeFeedback();
           const { currentWord: liveWord, onRecordSkillEvent: recordEvt } = liveSessionRef.current;
           recordEvt?.(liveWord, 'writing', { mistakesDelta: 1, completionsDelta: 0 });
@@ -1354,10 +1811,19 @@ export function AdaptiveMixedSessionModal({
             ...prev,
             mistakesOnCurrent: strokeData.mistakesOnStroke,
             totalMistakes: strokeData.totalMistakes,
-            hintTriggered: strokeData.mistakesOnStroke >= activeStageMeta.showHintAfterMisses
+            hintTriggered: true
           }));
+
+          if (writerInstanceRef.current === activeWriter && typeof strokeData?.strokeNum === 'number') {
+            try {
+              activeWriter.highlightStroke(strokeData.strokeNum);
+            } catch (e) {
+              // Ignore
+            }
+          }
         },
         onCorrectStroke: (strokeData) => {
+          setTouchNudgeMessage('');
           const doneCount = strokeData.strokeNum + 1;
           const total = doneCount + strokeData.strokesRemaining;
           const nextCombo = (liveSessionRef.current.combo || 0) + 1;
@@ -1390,6 +1856,7 @@ export function AdaptiveMixedSessionModal({
           }
         },
         onComplete: (summaryData) => {
+          setTouchNudgeMessage('');
           setCardAnim('correct');
           setTimeout(() => setCardAnim('idle'), 500);
           setStrokeStats((prev) => ({
@@ -1501,8 +1968,8 @@ export function AdaptiveMixedSessionModal({
       radicalColor: '#dc2626',
       outlineColor: '#334155',
       drawingColor: '#f43f5e',
-      drawingWidth: 24,
-      leniency: 1.55,
+      drawingWidth: 26,
+      leniency: 1.85,
       highlightColor: '#38bdf8',
       showHintAfterMisses: currentStageConfig.showHintAfterMisses,
       highlightOnComplete: true,
@@ -1658,7 +2125,10 @@ export function AdaptiveMixedSessionModal({
   const handleTapAvailableTile = (tile) => {
     if (stepCompleted) return;
     soundFX.playPop();
-    speakMandarin(tile.text);
+    // Anti-Spoiler Rule: Keep individual word tiles silent when tapped if mastery is Lv. 4+ or Run 2+
+    if (masteryLv < 4 && !isRun2OrHigher) {
+      speakMandarin(tile.text);
+    }
     const nextSelected = [...selectedSentenceTiles, tile];
     setSelectedSentenceTiles(nextSelected);
     setSentenceCheckStatus(null);
@@ -1739,22 +2209,34 @@ export function AdaptiveMixedSessionModal({
     (charStage === 3 && writerModeStatus === 'completed') ||
     completedCharsInWord.includes(charIndex);
   const hideRecogPinyin =
-    (masteryLv >= 4 || isPinyinMeaningComboStep) &&
     !recogAnswered &&
     !isCardFlipped &&
-    !showPinyinHint;
-  const hideWritingPinyin = writingConfig.hidePinyin && !isCurrentWritingCharDone && !showPinyinHint;
+    (isMasteryTrial ||
+      isPinyinMeaningComboStep ||
+      ((masteryLv >= 4 || isRun2OrHigher) && !showPinyinHint));
+  const hideWritingPinyin =
+    !isCurrentWritingCharDone &&
+    (isMasteryTrial || ((writingConfig.hidePinyin || isRun2OrHigher) && !showPinyinHint));
   const hideWritingHanzi = writingConfig.hideHanzi && !isCurrentWritingCharDone && !showPinyinHint;
-  const hideSpeakingPinyin = masteryLv >= 4 && !stepCompleted && !showPinyinHint;
+  const hideSpeakingPinyin =
+    !stepCompleted &&
+    (isMasteryTrial || ((masteryLv >= 4 || isRun2OrHigher) && !showPinyinHint));
   const hideSpeakingHanzi = masteryLv >= 7 && !stepCompleted && !showPinyinHint;
-  const showSentenceBuilderPinyin = masteryLv <= 3 || showPinyinHint || stepCompleted;
+  const showSentenceBuilderPinyin =
+    stepCompleted || (!isMasteryTrial && ((masteryLv <= 3 && !isRun2OrHigher) || showPinyinHint));
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex justify-center">
       <div className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto">
         <div>
           <SessionGameTopHud
-            title={sessionConfig.title}
+            title={
+              isMasteryTrial
+                ? `${sessionConfig.title} • Trial 3/3`
+                : isRun2OrHigher
+                ? `${sessionConfig.title} • Run 2/3`
+                : sessionConfig.title
+            }
             subtitle={`Step ${stepIdx + 1}/${queue.length} • ${modalityInfo.label} Mode`}
             totalSegments={queue.length}
             completedSegments={stepIdx + (stepCompleted ? 1 : 0)}
@@ -1777,6 +2259,17 @@ export function AdaptiveMixedSessionModal({
               >
                 {modalityInfo.label}
               </span>
+              {isRun2OrHigher && (
+                <span
+                  className={`font-pixel-header text-[8px] uppercase px-2 py-0.5 rounded-[2px] border shrink-0 ${
+                    isMasteryTrial
+                      ? 'bg-amber-400 text-slate-950 border-amber-200'
+                      : 'bg-emerald-500/20 text-emerald-300 border-emerald-400/60'
+                  }`}
+                >
+                  {isMasteryTrial ? 'Trial 3/3' : 'Run 2/3'}
+                </span>
+              )}
               {currentItem?.isPastLessonReview && (
                 <span className="text-[10px] font-extrabold uppercase tracking-wider px-2 py-0.5 rounded-full bg-amber-500/20 text-amber-300 border border-amber-400/40 shrink-0">
                   Past Lesson Review
@@ -1798,6 +2291,8 @@ export function AdaptiveMixedSessionModal({
           <div className="my-auto space-y-3.5 py-3">
             <div
               onClick={() => {
+                // Anti-Spoiler Rule: Do not flip card or speak audio before the learner answers
+                if (!recogAnswered) return;
                 soundFX.playPop();
                 setIsCardFlipped((f) => !f);
                 speakMandarin(
@@ -1806,7 +2301,7 @@ export function AdaptiveMixedSessionModal({
                     : currentWord.hanzi
                 );
               }}
-              className={`cursor-pointer rounded-3xl bg-gradient-to-b from-slate-800 to-slate-900 border-2 p-5 text-center space-y-2.5 shadow-xl transition-all ${
+              className={`${recogAnswered ? 'cursor-pointer' : ''} rounded-3xl bg-gradient-to-b from-slate-800 to-slate-900 border-2 p-5 text-center space-y-2.5 shadow-xl transition-all ${
                 cardAnim === 'wrong'
                   ? 'border-rose-500 animate-game-shake'
                   : cardAnim === 'correct'
@@ -1820,18 +2315,22 @@ export function AdaptiveMixedSessionModal({
                 <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-0.5 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30">
                   {isCardFlipped
                     ? 'Context & Example'
-                    : masteryLv >= 4
-                    ? `Lv.${masteryLv} Active Recall`
-                    : 'Tap Card to Flip'}
+                    : recogAnswered
+                    ? 'Tap Card for Context'
+                    : masteryLv >= 4 || isPinyinMeaningComboStep
+                    ? `Lv.${masteryLv} Reading Recall`
+                    : 'Read & Deduce'}
                 </span>
-                <MandarinAudioControls
-                  text={currentWord.hanzi}
-                  isSlowMode={isSlowMode}
-                  onSetSlowMode={onSetSlowMode}
-                  speakMandarin={speakMandarin}
-                  speakingState={speakingState}
-                  size="sm"
-                />
+                {canExposeAudioBeforeAnswer(currentModality, isPinyinMeaningComboStep) && (
+                  <MandarinAudioControls
+                    text={currentWord.hanzi}
+                    isSlowMode={isSlowMode}
+                    onSetSlowMode={onSetSlowMode}
+                    speakMandarin={speakMandarin}
+                    speakingState={speakingState}
+                    size="sm"
+                  />
+                )}
               </div>
 
               <div className="font-hanzi text-5xl font-black text-white tracking-wider pt-1">
@@ -1841,20 +2340,28 @@ export function AdaptiveMixedSessionModal({
               {hideRecogPinyin ? (
                 <div className="py-1.5 space-y-1.5">
                   <p className="text-[11px] font-bold text-slate-400">
-                    Lv.{masteryLv} Recall • Pinyin hidden until answered
+                    {isPinyinMeaningComboStep
+                      ? 'Identify the matching Pinyin & meaning below'
+                      : isMasteryTrial
+                      ? 'Mastery Trial 3/3 • Pinyin hidden until answered'
+                      : isRun2OrHigher
+                      ? 'Run 2/3 • Pinyin hidden by default'
+                      : `Lv.${masteryLv} Recall • Pinyin hidden until answered`}
                   </p>
-                  <button
-                    type="button"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      soundFX.playPop();
-                      setShowPinyinHint(true);
-                    }}
-                    className="px-3 py-1 rounded-xl bg-slate-900 hover:bg-slate-800 border border-amber-500/40 text-amber-300 text-xs font-bold inline-flex items-center gap-1"
-                  >
-                    <Eye className="w-3.5 h-3.5" />
-                    <span>Show Pinyin Hint</span>
-                  </button>
+                  {!isPinyinMeaningComboStep && !isMasteryTrial && (
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        soundFX.playPop();
+                        setShowPinyinHint(true);
+                      }}
+                      className="px-3 py-1 rounded-xl bg-slate-900 hover:bg-slate-800 border border-amber-500/40 text-amber-300 text-xs font-bold inline-flex items-center gap-1"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>Show Pinyin Hint</span>
+                    </button>
+                  )}
                 </div>
               ) : (
                 <>
@@ -1868,12 +2375,19 @@ export function AdaptiveMixedSessionModal({
                 </>
               )}
 
-              {isCardFlipped && (
+              {isCardFlipped && recogAnswered && (
                 <div
                   className="rounded-2xl bg-slate-950/80 border border-slate-800 p-3.5 text-left space-y-1.5 mt-2"
                   onClick={(e) => e.stopPropagation()}
                 >
-                  <p className="font-hanzi text-base font-bold text-white">{currentWord.exampleHanzi}</p>
+                  <InteractiveExampleText
+                    sentence={currentWord.exampleHanzi}
+                    speakMandarin={speakMandarin}
+                    masteryMap={progress?.mastery}
+                    courseWords={Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : lessonWordPool}
+                    charClassName="text-base font-bold text-white"
+                    onInspectOpenChange={setIsInspectingExample}
+                  />
                   <p className="font-clarity text-[15px] font-semibold text-rose-300">{currentWord.examplePinyin}</p>
                   <p className="font-clarity text-sm text-slate-300 italic">
                     "{currentWord.exampleEnglish}"
@@ -1921,17 +2435,43 @@ export function AdaptiveMixedSessionModal({
 
               {recogAnswered && (
                 <div
-                  className={`font-clarity rounded-xl p-3 text-sm font-bold border ${
+                  className={`font-clarity rounded-xl p-3 text-sm font-bold border space-y-2 ${
                     recognitionOptions.find((o) => o.id === recogSelectedOption)?.isCorrect
                       ? 'bg-emerald-500/15 border-emerald-400/50 text-emerald-200'
                       : 'bg-rose-500/15 border-rose-400/50 text-rose-200'
                   }`}
                 >
-                  {recognitionOptions.find((o) => o.id === recogSelectedOption)?.isCorrect
-                    ? `✓ Correct! ${currentWord.hanzi} (${currentWord.pinyin}) — ${
-                        currentWord.meaning || currentWord.english
-                      }`
-                    : `✗ Incorrect — Correct answer: ${currentWord.meaning || currentWord.english}`}
+                  <div className="flex items-center justify-between gap-2">
+                    <span className="min-w-0 flex-1">
+                      {recognitionOptions.find((o) => o.id === recogSelectedOption)?.isCorrect
+                        ? `✓ Correct! ${currentWord.hanzi} (${currentWord.pinyin}) — ${
+                            currentWord.meaning || currentWord.english
+                          }`
+                        : `✗ Incorrect — Correct answer: ${currentWord.hanzi} (${currentWord.pinyin}) • ${
+                            currentWord.meaning || currentWord.english
+                          }`}
+                    </span>
+                    <MandarinAudioControls
+                      text={currentWord.hanzi}
+                      isSlowMode={isSlowMode}
+                      onSetSlowMode={onSetSlowMode}
+                      speakMandarin={speakMandarin}
+                      speakingState={speakingState}
+                      size="sm"
+                    />
+                  </div>
+                  {currentWord.exampleHanzi && (
+                    <div className="pt-1.5 border-t border-white/10">
+                      <InteractiveExampleText
+                        sentence={currentWord.exampleHanzi}
+                        speakMandarin={speakMandarin}
+                        masteryMap={progress?.mastery}
+                        courseWords={Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : lessonWordPool}
+                        charClassName="text-sm font-bold text-white"
+                        onInspectOpenChange={setIsInspectingExample}
+                      />
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1951,17 +2491,23 @@ export function AdaptiveMixedSessionModal({
                     {hideWritingHanzi ? '？'.repeat(currentWord.chars?.length || 1) : currentWord.hanzi}
                   </span>
                   {hideWritingPinyin ? (
-                    <button
-                      type="button"
-                      onClick={() => {
-                        soundFX.playPop();
-                        setShowPinyinHint(true);
-                      }}
-                      className="px-2 py-0.5 rounded-lg bg-slate-900 border border-amber-500/40 text-xs font-bold text-amber-300 flex items-center gap-1"
-                    >
-                      <Eye className="w-3 h-3" />
-                      <span>Show Pinyin Hint</span>
-                    </button>
+                    isMasteryTrial ? (
+                      <span className="px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-400/40 text-[10px] font-extrabold text-amber-300">
+                        Trial 3/3 • No Pinyin
+                      </span>
+                    ) : (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          soundFX.playPop();
+                          setShowPinyinHint(true);
+                        }}
+                        className="px-2 py-0.5 rounded-lg bg-slate-900 border border-amber-500/40 text-xs font-bold text-amber-300 flex items-center gap-1"
+                      >
+                        <Eye className="w-3 h-3" />
+                        <span>Show Pinyin Hint</span>
+                      </button>
+                    )
                   ) : (
                     <span className="font-pinyin text-rose-400">{currentWord.pinyin}</span>
                   )}
@@ -2112,6 +2658,8 @@ export function AdaptiveMixedSessionModal({
                   ? 'border-rose-500 animate-game-shake'
                   : cardAnim === 'correct'
                   ? 'border-emerald-400 animate-game-green-pulse'
+                  : touchNudgeMessage
+                  ? 'border-amber-400/80'
                   : charStage === 3
                   ? 'border-emerald-500/50'
                   : charStage === 2
@@ -2180,9 +2728,19 @@ export function AdaptiveMixedSessionModal({
                       strokeStats.totalStrokes || '?'
                     }`}
               </p>
-              <p className="text-[10px] text-slate-400 mt-0.5">
-                {currentWritingStageMeta.instruction}
-              </p>
+              {touchNudgeMessage ? (
+                <p className="text-[10px] font-bold text-amber-300 mt-0.5">
+                  {touchNudgeMessage}
+                </p>
+              ) : strokeStats.hintTriggered || charMissCount >= 3 ? (
+                <p className="text-[10px] font-bold text-rose-300 mt-0.5">
+                  3+ misses on character — follow the flashing stroke hint!
+                </p>
+              ) : (
+                <p className="text-[10px] text-slate-400 mt-0.5">
+                  {currentWritingStageMeta.instruction}
+                </p>
+              )}
             </div>
           </div>
         )}
@@ -2316,6 +2874,18 @@ export function AdaptiveMixedSessionModal({
                     compact
                   />
                 </div>
+                {currentWord.exampleHanzi && (
+                  <div className="pt-1.5 border-t border-white/10">
+                    <InteractiveExampleText
+                      sentence={currentWord.exampleHanzi}
+                      speakMandarin={speakMandarin}
+                      masteryMap={progress?.mastery}
+                      courseWords={Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : lessonWordPool}
+                      charClassName="text-sm font-bold text-white"
+                      onInspectOpenChange={setIsInspectingExample}
+                    />
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -2329,7 +2899,7 @@ export function AdaptiveMixedSessionModal({
                 Oral Pronunciation Check
               </span>
               <div className="flex items-center gap-1.5">
-                {hideSpeakingPinyin && (
+                {hideSpeakingPinyin && !isMasteryTrial && (
                   <button
                     type="button"
                     onClick={() => {
@@ -2416,6 +2986,18 @@ export function AdaptiveMixedSessionModal({
                     ? `✓ Correct! ${similarityData.feedback}`
                     : `✗ Incorrect — Correct answer: ${currentWord.hanzi} (${currentWord.pinyin})`}
                 </p>
+                {currentWord.exampleHanzi && (
+                  <div className="pt-1.5 border-t border-white/10">
+                    <InteractiveExampleText
+                      sentence={currentWord.exampleHanzi}
+                      speakMandarin={speakMandarin}
+                      masteryMap={progress?.mastery}
+                      courseWords={Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : lessonWordPool}
+                      charClassName="text-sm font-bold text-white"
+                      onInspectOpenChange={setIsInspectingExample}
+                    />
+                  </div>
+                )}
               </div>
             )}
 
@@ -2458,19 +3040,7 @@ export function AdaptiveMixedSessionModal({
               <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-purple-500/20 text-purple-300 border border-purple-500/40">
                 Sentence Builder • Word Order
               </span>
-              <div className="flex items-center gap-1.5">
-                {masteryLv >= 4 && !stepCompleted && (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      soundFX.playPop();
-                      setShowPinyinHint((prev) => !prev);
-                    }}
-                    className="px-2.5 py-1 rounded-xl bg-slate-900 border border-amber-500/40 text-[10px] font-bold text-amber-300"
-                  >
-                    {showPinyinHint ? 'Hide Pinyin' : 'Show Pinyin Hint'}
-                  </button>
-                )}
+              {canExposeAudioBeforeAnswer('sentence_builder', false) && (
                 <MandarinAudioControls
                   text={sentencePuzzle.cleanSentence}
                   isSlowMode={isSlowMode}
@@ -2479,7 +3049,7 @@ export function AdaptiveMixedSessionModal({
                   speakingState={speakingState}
                   size="sm"
                 />
-              </div>
+              )}
             </div>
 
             <div className="rounded-2xl bg-slate-950/85 border border-slate-800 p-3.5 space-y-1">
@@ -2491,7 +3061,7 @@ export function AdaptiveMixedSessionModal({
               <p className="font-clarity text-[16px] font-black text-white">
                 "{sentencePuzzle.englishTranslation}"
               </p>
-              {showSentenceBuilderPinyin && (
+              {stepCompleted && (
                 <p className="font-pinyin text-rose-300 pt-0.5">
                   {sentencePuzzle.pinyinHint}
                 </p>
@@ -2580,28 +3150,59 @@ export function AdaptiveMixedSessionModal({
             </div>
 
             {sentenceCheckStatus === 'correct' && (
-              <div className="rounded-xl bg-emerald-500/15 border border-emerald-400/50 p-3 text-xs text-emerald-200 flex items-center justify-between">
-                <div>
+              <div className="rounded-xl bg-emerald-500/15 border border-emerald-400/50 p-3 text-xs text-emerald-200 space-y-2">
+                <div className="flex items-center justify-between gap-2">
                   <p className="font-black">✓ Correct! Perfect Mandarin Word Order</p>
-                  <p className="font-hanzi text-[11px] text-emerald-100 mt-0.5">
-                    {sentencePuzzle.targetHanziSentence}
-                  </p>
+                  <MandarinAudioControls
+                    text={sentencePuzzle.cleanSentence}
+                    isSlowMode={isSlowMode}
+                    onSetSlowMode={onSetSlowMode}
+                    speakMandarin={speakMandarin}
+                    speakingState={speakingState}
+                    size="sm"
+                  />
                 </div>
-                <CheckCircle2 className="w-5 h-5 text-emerald-400 shrink-0" />
+                <div className="pt-1 border-t border-white/10">
+                  <InteractiveExampleText
+                    sentence={sentencePuzzle.targetHanziSentence}
+                    speakMandarin={speakMandarin}
+                    masteryMap={progress?.mastery}
+                    courseWords={Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : lessonWordPool}
+                    charClassName="text-sm font-bold text-emerald-100"
+                    onInspectOpenChange={setIsInspectingExample}
+                  />
+                </div>
               </div>
             )}
 
             {sentenceCheckStatus === 'wrong' && (
-              <div className="rounded-xl bg-rose-500/15 border border-rose-400/50 p-3 text-xs text-rose-200 flex items-center justify-between gap-2">
-                <div>
-                  <p className="font-black">
-                    ✗ Incorrect — Correct answer: <span className="font-hanzi">{sentencePuzzle.targetHanziSentence}</span>
-                  </p>
-                  <p className="text-[11px] text-emerald-300 font-bold mt-0.5">
-                    {sentencePuzzle.pinyinHint}
-                  </p>
+              <div className="rounded-xl bg-rose-500/15 border border-rose-400/50 p-3 text-xs text-rose-200 space-y-2">
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-black">✗ Incorrect — Correct sentence:</p>
+                    <p className="text-[11px] text-emerald-300 font-bold mt-0.5">
+                      {sentencePuzzle.pinyinHint}
+                    </p>
+                  </div>
+                  <MandarinAudioControls
+                    text={sentencePuzzle.cleanSentence}
+                    isSlowMode={isSlowMode}
+                    onSetSlowMode={onSetSlowMode}
+                    speakMandarin={speakMandarin}
+                    speakingState={speakingState}
+                    size="sm"
+                  />
                 </div>
-                <X className="w-5 h-5 text-rose-400 shrink-0" />
+                <div className="pt-1 border-t border-white/10">
+                  <InteractiveExampleText
+                    sentence={sentencePuzzle.targetHanziSentence}
+                    speakMandarin={speakMandarin}
+                    masteryMap={progress?.mastery}
+                    courseWords={Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : lessonWordPool}
+                    charClassName="text-sm font-bold text-white"
+                    onInspectOpenChange={setIsInspectingExample}
+                  />
+                </div>
               </div>
             )}
           </div>
@@ -2612,6 +3213,8 @@ export function AdaptiveMixedSessionModal({
           <ClozeExerciseCard
             word={currentWord}
             masteryLv={masteryLv}
+            masteryMap={progress?.mastery}
+            courseWords={Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : lessonWordPool}
             lessonPool={lessonWordPool}
             seed={stepIdx}
             selectedOptionId={clozeSelectedId}
@@ -2621,6 +3224,7 @@ export function AdaptiveMixedSessionModal({
             onSetSlowMode={onSetSlowMode}
             speakMandarin={speakMandarin}
             speakingState={speakingState}
+            onInspectOpenChange={setIsInspectingExample}
             onSelectOption={(opt, clozeData) => {
               if (stepCompleted) return;
               setClozeSelectedId(opt.id);
@@ -2647,10 +3251,128 @@ export function AdaptiveMixedSessionModal({
           />
         )}
 
+        {/* MODALITY 7: MEASURE WORDS / CLASSIFIERS TRAINER (量词) */}
+        {currentModality === 'classifier_drill' && (
+          <ClassifierExerciseCard
+            item={
+              currentItem?.classifierItem ||
+              getUnlockedClassifierItems(
+                Array.isArray(courseWords) && courseWords.length > 0
+                  ? courseWords
+                  : lessonWordPool
+              )[stepIdx % Math.max(1, getUnlockedClassifierItems(Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : lessonWordPool).length)]
+            }
+            masteryMap={progress?.mastery}
+            courseWords={
+              Array.isArray(courseWords) && courseWords.length > 0
+                ? courseWords
+                : lessonWordPool
+            }
+            lessonPool={lessonWordPool}
+            seed={stepIdx}
+            selectedOptionId={classifierSelectedId}
+            isCompleted={stepCompleted}
+            cardAnim={cardAnim}
+            isSlowMode={isSlowMode}
+            onSetSlowMode={onSetSlowMode}
+            speakMandarin={speakMandarin}
+            speakingState={speakingState}
+            onInspectOpenChange={setIsInspectingExample}
+            onSelectOption={(opt, classifierData) => {
+              if (stepCompleted) return;
+              setClassifierSelectedId(opt.id);
+              setStepCompleted(true);
+              if (opt.isCorrect) {
+                setCardAnim('correct');
+                setTimeout(() => setCardAnim('idle'), 500);
+                onRecordSkillEvent?.(currentWord, 'classifier_drill', {
+                  mistakesDelta: 0,
+                  completionsDelta: 1
+                });
+                const { nextBonus, nextMax } = awardComboXp(5);
+                speakMandarin(classifierData.fullPhraseHanzi);
+                scheduleNextQueueItem(1600, nextBonus, nextMax);
+              } else {
+                registerMistakeFeedback();
+                onRecordSkillEvent?.(currentWord, 'classifier_drill', {
+                  mistakesDelta: 1,
+                  completionsDelta: 0
+                });
+                scheduleNextQueueItem(2000, bonusXp, maxCombo);
+              }
+            }}
+          />
+        )}
+
+        {/* MODALITY 8: CONVERSATIONAL Q&A MINI-DIALOGUES (问答) */}
+        {currentModality === 'dialogue_qa' && (
+          <DialogueQaExerciseCard
+            pair={
+              currentItem?.dialoguePair ||
+              getUnlockedDialoguePairs(
+                Array.isArray(courseWords) && courseWords.length > 0
+                  ? courseWords
+                  : lessonWordPool
+              )[stepIdx % Math.max(1, getUnlockedDialoguePairs(Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : lessonWordPool).length)]
+            }
+            masteryLv={masteryLv}
+            masteryMap={progress?.mastery}
+            courseWords={
+              Array.isArray(courseWords) && courseWords.length > 0
+                ? courseWords
+                : lessonWordPool
+            }
+            lessonPool={lessonWordPool}
+            nodeLevel={nodeLevel}
+            seed={stepIdx}
+            selectedOptionId={dialogueSelectedId}
+            isCompleted={stepCompleted}
+            cardAnim={cardAnim}
+            isSlowMode={isSlowMode}
+            onSetSlowMode={onSetSlowMode}
+            speakMandarin={speakMandarin}
+            speakingState={speakingState}
+            onInspectOpenChange={setIsInspectingExample}
+            onSelectOption={(opt, dialogueData) => {
+              if (stepCompleted) return;
+              setDialogueSelectedId(opt.id);
+              setStepCompleted(true);
+              if (opt.isCorrect) {
+                setCardAnim('correct');
+                setTimeout(() => setCardAnim('idle'), 500);
+                onRecordSkillEvent?.(currentWord, 'dialogue_qa', {
+                  mistakesDelta: 0,
+                  completionsDelta: 1
+                });
+                const { nextBonus, nextMax } = awardComboXp(5);
+                speakMandarin(dialogueData.correctReply.hanzi);
+                scheduleNextQueueItem(1700, nextBonus, nextMax);
+              } else {
+                registerMistakeFeedback();
+                onRecordSkillEvent?.(currentWord, 'dialogue_qa', {
+                  mistakesDelta: 1,
+                  completionsDelta: 0
+                });
+                scheduleNextQueueItem(2100, bonusXp, maxCombo);
+              }
+            }}
+          />
+        )}
+
         <div className="pt-1 text-center text-[11px] font-bold text-slate-400">
-          {stepCompleted
-            ? 'Auto-advancing to next item...'
-            : `Complete the ${modalityInfo.shortLabel} prompt above`}
+          {stepCompleted && isInspectingExample ? (
+            <button
+              type="button"
+              onClick={advanceMixedStepNow}
+              className="game-btn-3d w-full py-2.5 rounded-[2px] bg-emerald-600 hover:bg-emerald-500 border-2 border-emerald-300 text-white font-pixel-header text-[9px] uppercase tracking-wider"
+            >
+              Continue →
+            </button>
+          ) : stepCompleted ? (
+            'Auto-advancing to next item...'
+          ) : (
+            `Complete the ${modalityInfo.shortLabel} prompt above`
+          )}
         </div>
       </div>
     </div>
@@ -3183,10 +3905,13 @@ export function StrokeRuleIntuitionModal({
   });
   const [completedCharIndices, setCompletedCharIndices] = useState([]);
   const [boardFeedback, setBoardFeedback] = useState('idle');
+  const [charMissCount, setCharMissCount] = useState(0);
+  const [touchNudgeMessage, setTouchNudgeMessage] = useState('');
 
   const writerTargetRef = useRef(null);
   const writerInstanceRef = useRef(null);
   const transitionTimerRef = useRef(null);
+  const charMissCountRef = useRef(0);
 
   const currentChallenge = unseenList[charIdx] || unseenList[0];
   const currentChar = currentChallenge?.char || '干';
@@ -3226,6 +3951,9 @@ export function StrokeRuleIntuitionModal({
       const missesAllowed = isStep1Trace ? 2 : 3;
 
       setModeStatus('quiz');
+      charMissCountRef.current = 0;
+      setCharMissCount(0);
+      setTouchNudgeMessage('');
       setStrokeStats((prev) => ({
         ...prev,
         completedStrokes: 0,
@@ -3245,6 +3973,25 @@ export function StrokeRuleIntuitionModal({
         showHintAfterMisses: missesAllowed,
         highlightOnComplete: true,
         onMistake: (strokeData) => {
+          const nextCharMiss = charMissCountRef.current + 1;
+          charMissCountRef.current = nextCharMiss;
+          setCharMissCount(nextCharMiss);
+
+          // 3-strike touchscreen mistake buffer per character:
+          // 1st & 2nd off-path touches trigger only a subtle amber nudge (no mistake SFX, no red shake)
+          if (nextCharMiss < 3) {
+            setTouchNudgeMessage(`Touch off-path (${nextCharMiss}/3) — try stroke again`);
+            setStrokeStats((prev) => ({
+              ...prev,
+              mistakesOnCurrent: strokeData.mistakesOnStroke,
+              totalMistakes: strokeData.totalMistakes,
+              hintTriggered: false
+            }));
+            return;
+          }
+
+          // 3rd+ miss registers as a real mistake and flashes the stroke hint
+          setTouchNudgeMessage('');
           soundFX.playMistake();
           setBoardFeedback('wrong');
           setTimeout(() => setBoardFeedback('idle'), 450);
@@ -3252,10 +3999,19 @@ export function StrokeRuleIntuitionModal({
             ...prev,
             mistakesOnCurrent: strokeData.mistakesOnStroke,
             totalMistakes: strokeData.totalMistakes,
-            hintTriggered: strokeData.mistakesOnStroke >= missesAllowed
+            hintTriggered: true
           }));
+
+          if (writerInstanceRef.current === activeWriter && typeof strokeData?.strokeNum === 'number') {
+            try {
+              activeWriter.highlightStroke(strokeData.strokeNum);
+            } catch (e) {
+              // Ignore
+            }
+          }
         },
         onCorrectStroke: (strokeData) => {
+          setTouchNudgeMessage('');
           const done = strokeData.strokeNum + 1;
           const total = done + strokeData.strokesRemaining;
           soundFX.playCorrect(done);
@@ -3268,6 +4024,7 @@ export function StrokeRuleIntuitionModal({
           });
         },
         onComplete: (summaryData) => {
+          setTouchNudgeMessage('');
           setBoardFeedback('correct');
           setTimeout(() => setBoardFeedback('idle'), 500);
           setStrokeStats((prev) => ({
@@ -3323,8 +4080,8 @@ export function StrokeRuleIntuitionModal({
       radicalColor: '#dc2626',
       outlineColor: '#334155',
       drawingColor: '#f43f5e',
-      drawingWidth: 24,
-      leniency: 1.55,
+      drawingWidth: 26,
+      leniency: 1.85,
       highlightColor: '#38bdf8',
       showHintAfterMisses: hintMissThreshold,
       highlightOnComplete: true,
@@ -3558,6 +4315,8 @@ export function StrokeRuleIntuitionModal({
                 ? 'border-rose-500 animate-game-shake'
                 : boardFeedback === 'correct'
                 ? 'border-emerald-400 animate-game-green-pulse'
+                : touchNudgeMessage
+                ? 'border-amber-400/80'
                 : quizStep === 2
                 ? 'border-emerald-500/50'
                 : 'border-amber-500/50'
@@ -3590,11 +4349,19 @@ export function StrokeRuleIntuitionModal({
               </span>
             </div>
             <p className="text-[11px] text-slate-300">
-              {modeStatus === 'step_transition'
-                ? '✓ Ghost Trace complete! Switching to Step 2: Blind Memory...'
-                : isCurrentCharFinished
-                ? `✓ Deduce & Write mastered for unseen character "${currentChar}"!`
-                : `Apply "${rule.title}" (${rule.chineseRule}) to deduce the stroke order!`}
+              {modeStatus === 'step_transition' ? (
+                '✓ Ghost Trace complete! Switching to Step 2: Blind Memory...'
+              ) : isCurrentCharFinished ? (
+                `✓ Deduce & Write mastered for unseen character "${currentChar}"!`
+              ) : touchNudgeMessage ? (
+                <span className="text-amber-300 font-bold">{touchNudgeMessage}</span>
+              ) : strokeStats.hintTriggered || charMissCount >= 3 ? (
+                <span className="text-rose-300 font-bold">
+                  3+ misses on character — follow the flashing stroke hint!
+                </span>
+              ) : (
+                `Apply "${rule.title}" (${rule.chineseRule}) to deduce the stroke order!`
+              )}
             </p>
           </div>
         </div>
@@ -3616,3 +4383,576 @@ export function StrokeRuleIntuitionModal({
     </div>
   );
 }
+
+// ============================================================================
+// PROCEDURAL NUMBERS, TIME & PRICES LAB MODAL (数字与时间)
+// Infinite procedural generator across Numbers (0-999), Time & Dates, RMB Prices
+// Alternates Listening (zh-CN audio + type/pick) & Reading (anti-spoiler Hanzi)
+// ============================================================================
+const NUMBERS_TIME_SUBMODES = [
+  { id: 'numbers', label: 'Numbers', sub: '0–999' },
+  { id: 'time_date', label: 'Time & Dates', sub: '时间与日期' },
+  { id: 'prices', label: 'RMB Prices', sub: '人民币价格' }
+];
+
+export function NumbersTimeLabModal({
+  words,
+  courseWords,
+  progress,
+  isSlowMode,
+  onSetSlowMode,
+  speakMandarin,
+  speakingState,
+  onRecordStudySeconds,
+  onClose,
+  onComplete
+}) {
+  const { elapsedSeconds, flushSessionTime } = useSessionTimer(true, onRecordStudySeconds);
+  const ROUND_BATCH_SIZE = 8;
+
+  const [subMode, setSubMode] = useState('numbers');
+  const [roundIdx, setRoundIdx] = useState(0); // 0-indexed across endless rounds
+  const [targetRounds, setTargetRounds] = useState(ROUND_BATCH_SIZE);
+  const [challenge, setChallenge] = useState(() =>
+    buildNumbersTimeChallenge('numbers', 'listening')
+  );
+  const [typedAnswer, setTypedAnswer] = useState('');
+  const [selectedOptionId, setSelectedOptionId] = useState(null);
+  const [isAnswered, setIsAnswered] = useState(false);
+  const [wasCorrect, setWasCorrect] = useState(false);
+  const [cardAnim, setCardAnim] = useState('idle');
+  const [combo, setCombo] = useState(0);
+  const [maxCombo, setMaxCombo] = useState(0);
+  const [correctCount, setCorrectCount] = useState(0);
+  const [answeredCount, setAnsweredCount] = useState(0);
+  const [bonusXp, setBonusXp] = useState(0);
+  const [xpPopupKey, setXpPopupKey] = useState(0);
+  const [xpPopupAmount, setXpPopupAmount] = useState(5);
+  const [isInspectingExample, setIsInspectingExample] = useState(false);
+  const [showBatchSummary, setShowBatchSummary] = useState(false);
+
+  const feedbackTimerRef = useRef(null);
+  const autoAdvanceDelayRef = useRef(1500);
+
+  const clearFeedbackTimer = useCallback(() => {
+    if (feedbackTimerRef.current) {
+      clearTimeout(feedbackTimerRef.current);
+      feedbackTimerRef.current = null;
+    }
+  }, []);
+
+  const loadNextChallenge = useCallback(
+    (nextSubMode, nextRoundIndex) => {
+      clearFeedbackTimer();
+      const nextFormat = nextRoundIndex % 2 === 0 ? 'listening' : 'reading';
+      const nextPrompt = buildNumbersTimeChallenge(nextSubMode, nextFormat);
+      setChallenge(nextPrompt);
+      setTypedAnswer('');
+      setSelectedOptionId(null);
+      setIsAnswered(false);
+      setWasCorrect(false);
+      setCardAnim('idle');
+      setIsInspectingExample(false);
+    },
+    [clearFeedbackTimer]
+  );
+
+  // Strict Anti-Spoiler Audio Guardrail:
+  // Auto-play zh-CN audio ONLY on Listening rounds; NEVER auto-play on Reading rounds.
+  useEffect(() => {
+    if (showBatchSummary || !challenge) return;
+    if (
+      challenge.format === 'listening' &&
+      canExposeAudioBeforeAnswer('listening', false)
+    ) {
+      speakMandarin(challenge.hanzi);
+    }
+  }, [challenge, showBatchSummary, speakMandarin]);
+
+  const advanceToNextRound = useCallback(() => {
+    clearFeedbackTimer();
+    setIsInspectingExample(false);
+    const nextRound = roundIdx + 1;
+    if (nextRound >= targetRounds) {
+      soundFX.playVictory();
+      setShowBatchSummary(true);
+      return;
+    }
+    setRoundIdx(nextRound);
+    loadNextChallenge(subMode, nextRound);
+  }, [clearFeedbackTimer, roundIdx, targetRounds, subMode, loadNextChallenge]);
+
+  // Pause auto-advance cleanly if learner inspects a character in InteractiveExampleText
+  useEffect(() => {
+    if (!isAnswered || isInspectingExample || showBatchSummary) {
+      clearFeedbackTimer();
+      return;
+    }
+    feedbackTimerRef.current = setTimeout(() => {
+      advanceToNextRound();
+    }, autoAdvanceDelayRef.current || 1500);
+
+    return () => clearFeedbackTimer();
+  }, [isAnswered, isInspectingExample, showBatchSummary, advanceToNextRound, clearFeedbackTimer]);
+
+  useEffect(() => {
+    return () => clearFeedbackTimer();
+  }, [clearFeedbackTimer]);
+
+  const finalizeAnswer = (isRight, chosenOptId = null) => {
+    if (isAnswered) return;
+    clearFeedbackTimer();
+    setSelectedOptionId(chosenOptId);
+    setIsAnswered(true);
+    setWasCorrect(isRight);
+    setAnsweredCount((c) => c + 1);
+
+    if (isRight) {
+      setCorrectCount((c) => c + 1);
+      setCardAnim('correct');
+      setTimeout(() => setCardAnim('idle'), 500);
+      const nextCombo = combo + 1;
+      const nextMax = Math.max(maxCombo, nextCombo);
+      setCombo(nextCombo);
+      setMaxCombo(nextMax);
+      soundFX.playCorrect(nextCombo);
+      const comboBonus = nextCombo >= 2 ? Math.min(3, nextCombo - 1) : 0;
+      const gain = 5 + comboBonus;
+      setBonusXp((prev) => prev + gain);
+      setXpPopupAmount(gain);
+      setXpPopupKey((k) => k + 1);
+      speakMandarin(challenge.hanzi);
+      autoAdvanceDelayRef.current = 1550;
+    } else {
+      soundFX.playMistake();
+      setCombo(0);
+      setCardAnim('wrong');
+      setTimeout(() => setCardAnim('idle'), 460);
+      autoAdvanceDelayRef.current = 2050;
+    }
+  };
+
+  const handleSubmitTypedAnswer = (e) => {
+    e.preventDefault();
+    if (isAnswered || !typedAnswer.trim()) return;
+    const isRight = validateNumbersTimeTypedInput(typedAnswer, challenge);
+    finalizeAnswer(isRight, null);
+  };
+
+  const handleSwitchSubMode = (nextMode) => {
+    if (nextMode === subMode && !showBatchSummary) return;
+    soundFX.playPop();
+    setSubMode(nextMode);
+    setShowBatchSummary(false);
+    loadNextChallenge(nextMode, roundIdx);
+  };
+
+  const handleClaimAndFinish = () => {
+    clearFeedbackTimer();
+    flushSessionTime();
+    const baseXp = answeredCount >= ROUND_BATCH_SIZE ? 25 : Math.max(10, correctCount * 3);
+    const totalXp = baseXp + bonusXp;
+    const safeWords = Array.isArray(words) && words.length > 0 ? words : UNIT_1_WORDS;
+    onComplete(safeWords.slice(0, 6), totalXp, Math.max(1, maxCombo));
+  };
+
+  const handleContinueEndless = () => {
+    soundFX.playPop();
+    const nextRound = roundIdx + 1;
+    setTargetRounds((prev) => prev + ROUND_BATCH_SIZE);
+    setShowBatchSummary(false);
+    setRoundIdx(nextRound);
+    loadNextChallenge(subMode, nextRound);
+  };
+
+  const isListeningFormat = challenge?.format === 'listening';
+  const batchProgressCompleted =
+    (roundIdx % ROUND_BATCH_SIZE) + (isAnswered || showBatchSummary ? 1 : 0);
+  const referenceCourseWords =
+    Array.isArray(courseWords) && courseWords.length > 0
+      ? courseWords
+      : Array.isArray(words) && words.length > 0
+      ? words
+      : UNIT_1_WORDS;
+
+  return (
+    <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex justify-center">
+      <div className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto">
+        <div className="space-y-2.5">
+          <SessionGameTopHud
+            title="Numbers, Time & Prices • 数字与时间"
+            subtitle={
+              showBatchSummary
+                ? `Milestone Complete • ${correctCount}/${answeredCount} Correct`
+                : `Round ${roundIdx + 1} of ${targetRounds} • ${
+                    isListeningFormat ? 'Listening Challenge' : 'Reading Challenge'
+                  }`
+            }
+            totalSegments={ROUND_BATCH_SIZE}
+            completedSegments={Math.min(ROUND_BATCH_SIZE, batchProgressCompleted)}
+            combo={combo}
+            sessionSeconds={elapsedSeconds}
+            xpPopupKey={xpPopupKey}
+            xpPopupAmount={xpPopupAmount}
+            onClose={() => {
+              clearFeedbackTimer();
+              flushSessionTime();
+              onClose();
+            }}
+          />
+
+          {/* 3 Selectable Procedural Sub-Mode Tabs */}
+          <div className="grid grid-cols-3 gap-1.5 p-1 rounded-2xl bg-slate-950 border border-slate-800">
+            {NUMBERS_TIME_SUBMODES.map((tab) => {
+              const isActive = subMode === tab.id;
+              return (
+                <button
+                  key={tab.id}
+                  type="button"
+                  onClick={() => handleSwitchSubMode(tab.id)}
+                  className={`game-btn-3d py-2 px-1.5 rounded-xl border text-center transition-all ${
+                    isActive
+                      ? 'bg-sky-500/25 border-sky-400 text-white shadow'
+                      : 'bg-transparent border-transparent text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  <div className="text-[11px] font-black leading-tight">{tab.label}</div>
+                  <div className="font-hanzi text-[10px] font-bold text-amber-300/90 leading-tight mt-0.5">
+                    {tab.sub}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
+        {/* MAIN CHALLENGE BODY OR MILESTONE SUMMARY */}
+        {showBatchSummary ? (
+          <div className="my-auto py-4 space-y-4">
+            <div className="rounded-3xl bg-gradient-to-b from-slate-800 to-slate-950 border-2 border-amber-400/60 p-5 text-center space-y-3 shadow-2xl">
+              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-[2px] bg-amber-500/20 border-2 border-amber-400 font-pixel-header text-[9px] text-amber-300 uppercase tracking-wider">
+                <Trophy className="w-3.5 h-3.5" />
+                <span>Lab Milestone Cleared!</span>
+              </div>
+              <div className="font-hanzi text-3xl font-black text-white">数字与时间</div>
+              <div className="grid grid-cols-3 gap-2 pt-1">
+                <div className="rounded-xl bg-slate-900 border border-slate-800 p-2.5">
+                  <div className="text-[10px] font-bold uppercase text-slate-400">Accuracy</div>
+                  <div className="text-lg font-black text-emerald-300">
+                    {answeredCount > 0 ? Math.round((correctCount / answeredCount) * 100) : 0}%
+                  </div>
+                </div>
+                <div className="rounded-xl bg-slate-900 border border-slate-800 p-2.5">
+                  <div className="text-[10px] font-bold uppercase text-slate-400">Max Combo</div>
+                  <div className="text-lg font-black text-amber-300">{maxCombo}x</div>
+                </div>
+                <div className="rounded-xl bg-slate-900 border border-slate-800 p-2.5">
+                  <div className="text-[10px] font-bold uppercase text-slate-400">Session XP</div>
+                  <div className="text-lg font-black text-sky-300">+{25 + bonusXp}</div>
+                </div>
+              </div>
+              <p className="font-clarity text-xs text-slate-300">
+                Claim your XP now or keep generating infinite procedural rounds across Numbers, Time & Dates, and RMB Prices.
+              </p>
+            </div>
+
+            <div className="space-y-2.5">
+              <button
+                type="button"
+                onClick={handleClaimAndFinish}
+                className="game-btn-3d w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-500 via-rose-500 to-emerald-500 text-slate-950 font-black text-xs shadow-lg border-b-4 border-emerald-700 flex items-center justify-center gap-2"
+              >
+                <Trophy className="w-4 h-4" />
+                <span>Finish & Claim +{25 + bonusXp} XP</span>
+              </button>
+              <button
+                type="button"
+                onClick={handleContinueEndless}
+                className="game-btn-3d w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-sky-400/50 text-sky-200 font-black text-xs flex items-center justify-center gap-1.5"
+              >
+                <Sparkles className="w-4 h-4 text-amber-300" />
+                <span>Continue Infinite Practice (+8 More Rounds)</span>
+              </button>
+            </div>
+          </div>
+        ) : (
+          <div className="my-auto py-3 space-y-3.5">
+            <div
+              className={`rounded-3xl bg-slate-800/90 border p-4 space-y-3.5 shadow-xl transition-all ${
+                cardAnim === 'wrong'
+                  ? 'border-rose-500 animate-game-shake'
+                  : cardAnim === 'correct'
+                  ? 'border-emerald-400 animate-game-green-pulse'
+                  : isListeningFormat
+                  ? 'border-emerald-500/40'
+                  : 'border-sky-500/40'
+              }`}
+            >
+              {/* Format Badge Header */}
+              <div className="flex items-center justify-between gap-2">
+                <span
+                  className={`text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full border inline-flex items-center gap-1 ${
+                    isListeningFormat
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40'
+                      : 'bg-sky-500/20 text-sky-300 border-sky-400/40'
+                  }`}
+                >
+                  {isListeningFormat ? (
+                    <>
+                      <Headphones className="w-3 h-3" />
+                      <span>Listening • Type or Pick Value</span>
+                    </>
+                  ) : (
+                    <>
+                      <Eye className="w-3 h-3" />
+                      <span>Reading • Anti-Spoiler Hanzi</span>
+                    </>
+                  )}
+                </span>
+
+                {/* Anti-Spoiler: Audio controls before answer ONLY in Listening Challenge */}
+                {isListeningFormat && canExposeAudioBeforeAnswer('listening', false) && (
+                  <MandarinAudioControls
+                    text={challenge.hanzi}
+                    isSlowMode={isSlowMode}
+                    onSetSlowMode={onSetSlowMode}
+                    speakMandarin={speakMandarin}
+                    speakingState={speakingState}
+                    size="sm"
+                  />
+                )}
+              </div>
+
+              {/* PROMPT DISPLAY BOX */}
+              {isListeningFormat ? (
+                <div className="rounded-2xl bg-slate-950/90 border border-slate-800 p-4 text-center space-y-2.5">
+                  <div className="w-12 h-12 rounded-2xl bg-emerald-500/15 border border-emerald-400/40 flex items-center justify-center text-emerald-300 mx-auto">
+                    <Headphones className="w-6 h-6" />
+                  </div>
+                  <p className="font-clarity text-sm font-bold text-slate-200">
+                    Listen to the Mandarin{' '}
+                    <span className="text-amber-300">
+                      {challenge.kind === 'number'
+                        ? 'number'
+                        : challenge.kind === 'time'
+                        ? 'clock time'
+                        : challenge.kind === 'date'
+                        ? 'date'
+                        : 'RMB price'}
+                    </span>{' '}
+                    and enter or pick its value:
+                  </p>
+                  {isAnswered && (
+                    <div className="pt-1 space-y-0.5">
+                      <div className="font-hanzi text-2xl font-black text-white">
+                        {challenge.hanzi}
+                      </div>
+                      <div className="font-pinyin text-rose-300 text-sm">
+                        {challenge.pinyin}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ) : (
+                <div className="rounded-2xl bg-slate-950/90 border border-slate-800 p-4 text-center space-y-1.5">
+                  <span className="font-clarity text-xs font-bold uppercase tracking-wider text-amber-400 block">
+                    Select the matching Mandarin expression:
+                  </span>
+                  <div className="font-pixel-header text-2xl sm:text-3xl text-white tracking-wider py-2">
+                    {challenge.numericDisplay}
+                  </div>
+                  <span className="font-clarity text-xs text-slate-400 block">
+                    {challenge.englishLabel} • No audio / Pinyin until answered
+                  </span>
+                </div>
+              )}
+
+              {/* INTERACTIVE ANSWER AREA */}
+              {isListeningFormat ? (
+                <div className="space-y-3">
+                  {/* Optional Direct Numeric Typing Input */}
+                  <form onSubmit={handleSubmitTypedAnswer} className="flex gap-2">
+                    <input
+                      type="text"
+                      inputMode={challenge.kind === 'number' ? 'numeric' : 'text'}
+                      value={typedAnswer}
+                      disabled={isAnswered}
+                      onChange={(e) => setTypedAnswer(e.target.value)}
+                      placeholder={challenge.inputPlaceholder}
+                      className="flex-1 min-w-0 px-3 py-2.5 rounded-xl bg-slate-950 border border-slate-700 focus:border-emerald-400 focus:outline-none text-sm font-bold text-white placeholder:text-slate-500"
+                    />
+                    <button
+                      type="submit"
+                      disabled={isAnswered || !typedAnswer.trim()}
+                      className="game-btn-3d px-4 py-2.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 disabled:bg-slate-800 disabled:text-slate-500 text-slate-950 font-black text-xs shrink-0"
+                    >
+                      Check
+                    </button>
+                  </form>
+
+                  <div className="flex items-center gap-2">
+                    <div className="h-px flex-1 bg-slate-700/80" />
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
+                      Or tap 1 of 4 numeric choices
+                    </span>
+                    <div className="h-px flex-1 bg-slate-700/80" />
+                  </div>
+
+                  {/* 4 Numeric Multiple-Choice Options */}
+                  <div className="grid grid-cols-2 gap-2">
+                    {challenge.options.map((opt) => {
+                      const isSelected = selectedOptionId === opt.id;
+                      let btnClass =
+                        'bg-slate-900/90 hover:bg-slate-800 border-slate-700 text-white';
+                      if (isAnswered && opt.isCorrect) {
+                        btnClass =
+                          'bg-emerald-500/25 border-emerald-400 text-emerald-200 shadow-md';
+                      } else if (isAnswered && isSelected && !opt.isCorrect) {
+                        btnClass = 'bg-rose-500/25 border-rose-500 text-rose-200';
+                      } else if (isAnswered) {
+                        btnClass = 'bg-slate-900/60 border-slate-800 text-slate-500 opacity-60';
+                      }
+                      return (
+                        <button
+                          key={opt.id}
+                          type="button"
+                          disabled={isAnswered}
+                          onClick={() => finalizeAnswer(opt.isCorrect, opt.id)}
+                          className={`game-btn-3d font-clarity p-3 rounded-2xl border-2 text-center transition-all flex flex-col items-center justify-center ${btnClass}`}
+                        >
+                          <span className="text-base font-black">{opt.numericDisplay}</span>
+                          {isAnswered && (
+                            <span className="font-hanzi text-xs font-bold text-slate-300 mt-0.5">
+                              {opt.hanzi}
+                            </span>
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ) : (
+                /* READING CHALLENGE: 4 Mandarin Hanzi Options (NO Pinyin pre-answer) */
+                <div className="grid grid-cols-2 gap-2.5">
+                  {challenge.options.map((opt) => {
+                    const isSelected = selectedOptionId === opt.id;
+                    let btnClass =
+                      'bg-slate-900/90 hover:bg-slate-800 border-slate-700 text-white';
+                    if (isAnswered && opt.isCorrect) {
+                      btnClass =
+                        'bg-emerald-500/25 border-emerald-400 text-emerald-200 shadow-md';
+                    } else if (isAnswered && isSelected && !opt.isCorrect) {
+                      btnClass = 'bg-rose-500/25 border-rose-500 text-rose-200';
+                    } else if (isAnswered) {
+                      btnClass = 'bg-slate-900/60 border-slate-800 text-slate-500 opacity-60';
+                    }
+                    return (
+                      <button
+                        key={opt.id}
+                        type="button"
+                        disabled={isAnswered}
+                        onClick={() => finalizeAnswer(opt.isCorrect, opt.id)}
+                        className={`game-btn-3d font-clarity p-3.5 rounded-2xl border-2 text-center transition-all flex flex-col items-center justify-center ${btnClass}`}
+                      >
+                        <span className="font-hanzi text-xl font-black leading-snug">
+                          {opt.hanzi}
+                        </span>
+                        {isAnswered && (
+                          <>
+                            <span className="font-clarity text-xs font-bold text-rose-300 mt-1">
+                              {opt.pinyin}
+                            </span>
+                            <span className="font-clarity text-[10px] text-slate-300 mt-0.5">
+                              {opt.numericDisplay}
+                            </span>
+                          </>
+                        )}
+                      </button>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* POST-ANSWER FEEDBACK + CHARACTER INSPECTOR + AUDIO */}
+              {isAnswered && (
+                <div
+                  className={`rounded-xl p-3 text-xs space-y-2 border ${
+                    wasCorrect
+                      ? 'bg-emerald-500/15 border-emerald-400/50 text-emerald-200'
+                      : 'bg-rose-500/15 border-rose-400/50 text-rose-200'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-2">
+                    <div className="min-w-0 flex-1">
+                      <p className="font-black">
+                        {wasCorrect
+                          ? `✓ Correct! ${challenge.numericDisplay} = ${challenge.hanzi}`
+                          : `✗ Answer: ${challenge.numericDisplay} = ${challenge.hanzi}`}
+                      </p>
+                      <p className="font-clarity text-[11px] text-rose-200/90 mt-0.5">
+                        {challenge.pinyin}
+                      </p>
+                    </div>
+                    <MandarinAudioControls
+                      text={challenge.hanzi}
+                      isSlowMode={isSlowMode}
+                      onSetSlowMode={onSetSlowMode}
+                      speakMandarin={speakMandarin}
+                      speakingState={speakingState}
+                      size="sm"
+                    />
+                  </div>
+                  <div className="pt-1.5 border-t border-white/10">
+                    <InteractiveExampleText
+                      sentence={challenge.hanzi}
+                      speakMandarin={speakMandarin}
+                      masteryMap={progress?.mastery}
+                      courseWords={referenceCourseWords}
+                      charClassName="text-sm font-bold text-white"
+                      onInspectOpenChange={setIsInspectingExample}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* FOOTER CONTROLS */}
+        {!showBatchSummary && (
+          <div className="pt-1 space-y-2">
+            {isAnswered && isInspectingExample ? (
+              <button
+                type="button"
+                onClick={advanceToNextRound}
+                className="game-btn-3d w-full py-2.5 rounded-[2px] bg-emerald-600 hover:bg-emerald-500 border-2 border-emerald-300 text-white font-pixel-header text-[9px] uppercase tracking-wider"
+              >
+                Next Round →
+              </button>
+            ) : (
+              <div className="flex items-center justify-between gap-2 text-[11px] font-bold text-slate-400">
+                <span>
+                  {isAnswered
+                    ? 'Auto-advancing to next procedural prompt...'
+                    : isListeningFormat
+                    ? 'Type numeric value or pick 1 of 4 options'
+                    : 'Tap the matching Mandarin Hanzi expression'}
+                </span>
+                {answeredCount >= 3 && (
+                  <button
+                    type="button"
+                    onClick={handleClaimAndFinish}
+                    className="px-2.5 py-1 rounded-lg bg-slate-800 hover:bg-slate-700 border border-amber-400/40 text-amber-300 text-[10px] font-black shrink-0"
+                  >
+                    Finish & Claim XP
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+

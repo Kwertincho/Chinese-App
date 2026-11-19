@@ -45,7 +45,11 @@ import {
   buildDynamicModalityQueue,
   buildProportionalUnitNodes,
   collectPastLessonWords,
-  getWordMasteryLevel
+  getWordMasteryLevel,
+  getNodeCompletionLevel,
+  migrateLessonProgressNodeLevels,
+  computeNodeLevelXpMultiplier,
+  writeWordSrsEntry
 } from './utils/mandarinHelpers.js';
 import {
   FlashcardStageModal,
@@ -57,7 +61,8 @@ import {
   ToneSandhiDrillModal,
   HskMockExamModal,
   AdaptiveMixedSessionModal,
-  BlitzMatchModal
+  BlitzMatchModal,
+  NumbersTimeLabModal
 } from './components/PracticeAndExamModals.jsx';
 import {
   ProgressionMapView,
@@ -86,6 +91,10 @@ export default function App() {
         );
         setGlobalIsSlowMode(slow);
         soundFX.setMuted(Boolean(parsed.soundMuted));
+        const migratedLessonProgress = migrateLessonProgressNodeLevels(
+          parsed.lessonProgress || {},
+          parsed.completedStages || []
+        );
         return {
           ...INITIAL_PROGRESS_STATE,
           ...parsed,
@@ -100,8 +109,13 @@ export default function App() {
                   seconds: Math.max(0, Number(parsed.dailyStudySeconds.seconds) || 0)
                 }
               : { date: null, seconds: 0 },
+          lessonProgress: migratedLessonProgress,
           wordNotes: { ...(parsed.wordNotes || {}) },
           mastery: { ...INITIAL_PROGRESS_STATE.mastery, ...(parsed.mastery || {}) },
+          srsData:
+            parsed.srsData && typeof parsed.srsData === 'object'
+              ? { ...parsed.srsData }
+              : {},
           skillTelemetry: { ...(parsed.skillTelemetry || {}) },
           stats: { ...INITIAL_PROGRESS_STATE.stats, ...(parsed.stats || {}) }
         };
@@ -446,7 +460,10 @@ export default function App() {
             pool,
             ['recognition', 'writing', 'listening', 'speaking'],
             'Daily Quest • Smart Review',
-            activeLessonIndex
+            activeLessonIndex,
+            [],
+            0,
+            unlockedWords
           );
           setActiveModal({
             type: 'mixed_session',
@@ -576,9 +593,16 @@ export default function App() {
           if (word.hanzi) nextMastery[word.hanzi] = nextLv;
         }
 
+        const nextSrsData = { ...(prev.srsData || {}) };
+        if (mistakesDelta > 0 || completionsDelta > 0) {
+          const updatedLv = getWordMasteryLevel(nextMastery, word);
+          writeWordSrsEntry(nextSrsData, word, updatedLv, Date.now());
+        }
+
         return {
           ...prev,
           mastery: nextMastery,
+          srsData: nextSrsData,
           skillTelemetry: {
             ...prevTelemetry,
             [key]: {
@@ -614,31 +638,73 @@ export default function App() {
       const isDefaultUnit1 =
         activeCourse.id === 'course_default_unit1' && activeLesson.id === 'lesson_unit_1';
 
+      const currentLessonSnapshot = progress.lessonProgress?.[lessonKey] || {
+        unlockedStage: isDefaultUnit1 ? progress.unlockedStage : 1,
+        completedStages: isDefaultUnit1 ? progress.completedStages : [],
+        nodeLevels: {}
+      };
+      const prevNodeLvForToast = stageId
+        ? getNodeCompletionLevel(currentLessonSnapshot, stageId)
+        : 0;
+      const xpMultiplierForToast = stageId
+        ? computeNodeLevelXpMultiplier(prevNodeLvForToast)
+        : 1.0;
+      const finalStageXpForToast = Math.round(xpEarned * xpMultiplierForToast);
+      const nextNodeLvForToast = stageId ? Math.min(3, prevNodeLvForToast + 1) : 0;
+
       setProgress((prev: any) => {
         const nextMastery = { ...(prev.mastery || {}) };
+        const nextSrsData = { ...(prev.srsData || {}) };
         const masteryStep = isBossWin ? 2 : 1;
+        const reviewTimestamp = Date.now();
         wordsPracticed.forEach((w: any) => {
           const curLv = getWordMasteryLevel(nextMastery, w);
           const nextLv = Math.max(0, Math.min(10, curLv + masteryStep));
           if (w.id) nextMastery[w.id] = nextLv;
           if (w.hanzi) nextMastery[w.hanzi] = nextLv;
+          writeWordSrsEntry(nextSrsData, w, nextLv, reviewTimestamp);
         });
 
         const prevLessonProg = prev.lessonProgress?.[lessonKey] || {
           unlockedStage: isDefaultUnit1 ? prev.unlockedStage : 1,
-          completedStages: isDefaultUnit1 ? prev.completedStages : []
+          completedStages: isDefaultUnit1 ? prev.completedStages : [],
+          nodeLevels: {}
         };
 
         const totalLessonNodes = buildProportionalUnitNodes(activeWords).length;
-        let nextUnlocked = prevLessonProg.unlockedStage;
+        let nextUnlocked = prevLessonProg.unlockedStage || 1;
         const nextCompleted = [...(prevLessonProg.completedStages || [])];
+        const nextNodeLevels: Record<string, number> = {
+          ...(prevLessonProg.nodeLevels || {})
+        };
+        // Preserve any legacy completed stages as Level 3
+        nextCompleted.forEach((sid: any) => {
+          const sidKey = String(sid);
+          if (typeof nextNodeLevels[sidKey] !== 'number') {
+            nextNodeLevels[sidKey] = 3;
+          }
+        });
+
+        let appliedXpEarned = xpEarned;
 
         if (stageId) {
-          if (!nextCompleted.includes(stageId)) {
-            nextCompleted.push(stageId);
-          }
-          if (stageId >= nextUnlocked && stageId < totalLessonNodes) {
-            nextUnlocked = stageId + 1;
+          const prevNodeLv = getNodeCompletionLevel(
+            { ...prevLessonProg, nodeLevels: nextNodeLevels },
+            stageId
+          );
+          const xpMultiplier = computeNodeLevelXpMultiplier(prevNodeLv);
+          appliedXpEarned = Math.round(xpEarned * xpMultiplier);
+
+          const nextNodeLv = Math.min(3, prevNodeLv + 1);
+          nextNodeLevels[String(stageId)] = nextNodeLv;
+
+          if (nextNodeLv >= 1) {
+            if (!nextCompleted.includes(stageId)) {
+              nextCompleted.push(stageId);
+            }
+            if (stageId >= nextUnlocked && stageId < totalLessonNodes) {
+              nextUnlocked = stageId + 1;
+            }
           }
         }
 
@@ -667,7 +733,7 @@ export default function App() {
         const justReachedAllThreeQuests =
           nextCompletedQuestIds.length >= 3 && !prevDq.bonusChestClaimed;
         const chestBonusXp = justReachedAllThreeQuests ? 25 : 0;
-        const totalGainWithChest = xpEarned + chestBonusXp;
+        const totalGainWithChest = appliedXpEarned + chestBonusXp;
         const nextTotalXp = (prev.xp || 0) + totalGainWithChest;
 
         return {
@@ -691,10 +757,12 @@ export default function App() {
             ...(prev.lessonProgress || {}),
             [lessonKey]: {
               unlockedStage: nextUnlocked,
-              completedStages: nextCompleted
+              completedStages: nextCompleted,
+              nodeLevels: nextNodeLevels
             }
           },
           mastery: nextMastery,
+          srsData: nextSrsData,
           stats: {
             ...(prev.stats || {}),
             writingStagesCompleted:
@@ -707,9 +775,40 @@ export default function App() {
       });
 
       setActiveModal(null);
-      triggerToast(`Stage Complete! +${xpEarned} XP`, 'Character mastery levels updated!');
+      if (stageId) {
+        const bonusTag =
+          xpMultiplierForToast >= 1.5
+            ? ' (+50%)'
+            : xpMultiplierForToast >= 1.25
+            ? ' (+25%)'
+            : '';
+        const toastTitle =
+          nextNodeLvForToast >= 3
+            ? prevNodeLvForToast < 3
+              ? `Node MAXED (3/3)! +${finalStageXpForToast} XP${bonusTag}`
+              : `MAX Mastery Replay! +${finalStageXpForToast} XP${bonusTag}`
+            : `Node Level ${nextNodeLvForToast}/3! +${finalStageXpForToast} XP${bonusTag}`;
+        const toastSub =
+          nextNodeLvForToast === 1
+            ? 'Next map node unlocked! Replay for Lv.2/3 (+25% XP).'
+            : nextNodeLvForToast === 2
+            ? 'Replay for Mastery Trial 3/3 (+50% XP & Golden Crown)!'
+            : 'Golden Crown mastered! Character mastery levels updated.';
+        triggerToast(toastTitle, toastSub);
+      } else {
+        triggerToast(`Stage Complete! +${xpEarned} XP`, 'Character mastery levels updated!');
+      }
     },
-    [activeCourse.id, activeLesson.id, activeWords, dailyQuests, triggerToast]
+    [
+      activeCourse.id,
+      activeLesson.id,
+      activeWords,
+      dailyQuests,
+      progress.completedStages,
+      progress.lessonProgress,
+      progress.unlockedStage,
+      triggerToast
+    ]
   );
 
   const handleSaveWordNote = useCallback((word: any, noteText: string) => {
@@ -746,37 +845,60 @@ export default function App() {
       activeLessonIndex,
       targetWords
     );
+    const lessonKey = `${activeCourse.id}__${activeLesson.id}`;
+    const isDefaultUnit1 =
+      activeCourse.id === 'course_default_unit1' && activeLesson.id === 'lesson_unit_1';
+    const currentLessonProg = progress.lessonProgress?.[lessonKey] || {
+      unlockedStage: isDefaultUnit1 ? progress.unlockedStage : 1,
+      completedStages: isDefaultUnit1 ? progress.completedStages : [],
+      nodeLevels: {}
+    };
+    const currentNodeLevel = getNodeCompletionLevel(currentLessonProg, stage.id);
+
+    // Run 2+ adds +1 past-lesson review item to non-writing nodes (strictly excluding writing)
+    const wordsWithRun2Review =
+      currentNodeLevel >= 1 && pastLessonWords.length > 0
+        ? [
+            ...targetWords,
+            pastLessonWords[Math.floor(Math.random() * pastLessonWords.length)]
+          ]
+        : targetWords;
 
     if (stage.launchType === 'flashcards') {
       setActiveModal({
         type: 'flashcards',
         stageId: stage.id,
-        words: targetWords
+        nodeLevel: currentNodeLevel,
+        words: wordsWithRun2Review
       });
     } else if (stage.launchType === 'writing') {
       setActiveModal({
         type: 'writing',
         stageId: stage.id,
+        nodeLevel: currentNodeLevel,
         words: targetWords
       });
     } else if (stage.launchType === 'dictation_only') {
       setActiveModal({
         type: 'audio_speech',
         stageId: stage.id,
-        words: targetWords,
+        nodeLevel: currentNodeLevel,
+        words: wordsWithRun2Review,
         focusMode: 'dictation'
       });
     } else if (stage.launchType === 'speaking_only') {
       setActiveModal({
         type: 'audio_speech',
         stageId: stage.id,
-        words: targetWords,
+        nodeLevel: currentNodeLevel,
+        words: wordsWithRun2Review,
         focusMode: 'speaking'
       });
     } else if (stage.launchType === 'boss') {
       setActiveModal({
         type: 'boss',
         stageId: stage.id,
+        nodeLevel: currentNodeLevel,
         words: targetWords,
         pastLessonWords,
         isPractice: false
@@ -791,15 +913,19 @@ export default function App() {
         modalitiesForNode,
         stage.badgeText,
         activeLessonIndex,
-        pastLessonWords
+        pastLessonWords,
+        currentNodeLevel,
+        unlockedWords
       );
       setActiveModal({
         type: 'mixed_session',
         stageId: stage.id,
+        nodeLevel: currentNodeLevel,
         sessionConfig: {
           title: stage.title,
           badgeText: stage.badgeText,
           xpReward: stage.xpReward || 25,
+          nodeLevel: currentNodeLevel,
           queue
         }
       });
@@ -828,6 +954,11 @@ export default function App() {
     });
     return map;
   }, [courses, customDecks]);
+
+  const allUniqueWordsArray = useMemo(
+    () => Array.from(allUniqueWordsMap.values()),
+    [allUniqueWordsMap]
+  );
 
   const globalStats = useMemo(() => {
     let masteredWordsCount = 0; // Lv. 8–10
@@ -1244,6 +1375,8 @@ export default function App() {
               activeLesson={activeLesson}
               activeWords={activeWords}
               customDecks={customDecks}
+              allUniqueWordsArray={allUniqueWordsArray}
+              unlockedWords={unlockedWords}
               unlockedWordsCount={unlockedWordsCount}
               speakMandarin={speakMandarin}
               speakingState={speakingState}
@@ -1279,6 +1412,62 @@ export default function App() {
                     xpReward: 25,
                     queue
                   }
+                });
+              }}
+              onLaunchClassifierDrill={(items: any) => {
+                soundFX.playPop();
+                const safeItems = Array.isArray(items) ? items : [];
+                if (safeItems.length === 0) return;
+                const shuffled = [...safeItems].sort(() => Math.random() - 0.5).slice(0, 8);
+                const queue = shuffled.map((item: any, idx: number) => ({
+                  stepId: `clf_${item.id}_${idx}`,
+                  word: item.sourceWord || activeWords[idx % activeWords.length],
+                  modality: 'classifier_drill',
+                  classifierItem: item,
+                  reason: 'Measure Words • 量词 Trainer'
+                }));
+                setActiveModal({
+                  type: 'mixed_session',
+                  stageId: null,
+                  questModeKey: 'classifier_drill',
+                  sessionConfig: {
+                    title: 'Measure Words Trainer (量词)',
+                    badgeText: 'HSK 1 Classifiers',
+                    xpReward: 25,
+                    queue
+                  }
+                });
+              }}
+              onLaunchDialogueQaDrill={(pairs: any) => {
+                soundFX.playPop();
+                const safePairs = Array.isArray(pairs) ? pairs : [];
+                if (safePairs.length === 0) return;
+                const shuffled = [...safePairs].sort(() => Math.random() - 0.5).slice(0, 8);
+                const queue = shuffled.map((pair: any, idx: number) => ({
+                  stepId: `qa_${pair.id}_${idx}`,
+                  word: pair.sourceWord || activeWords[idx % activeWords.length],
+                  modality: 'dialogue_qa',
+                  dialoguePair: pair,
+                  reason: `Conversational Q&A • ${pair.grammarTag || '问答'}`
+                }));
+                setActiveModal({
+                  type: 'mixed_session',
+                  stageId: null,
+                  questModeKey: 'dialogue_qa',
+                  sessionConfig: {
+                    title: 'Conversational Q&A (问答)',
+                    badgeText: 'Mini-Dialogues',
+                    xpReward: 25,
+                    queue
+                  }
+                });
+              }}
+              onLaunchNumbersTimeLab={(pool: any) => {
+                soundFX.playPop();
+                setActiveModal({
+                  type: 'numbers_time_lab',
+                  questModeKey: 'numbers_time_lab',
+                  words: Array.isArray(pool) && pool.length > 0 ? pool : activeWords
                 });
               }}
               onLaunchClozeDrill={(pool: any) => {
@@ -1449,7 +1638,10 @@ export default function App() {
               onExportAllData={() => {
                 const payload = {
                   exportedAt: new Date().toISOString(),
-                  progress,
+                  progress: {
+                    ...progress,
+                    srsData: progress.srsData || {}
+                  },
                   courses,
                   customDecks
                 };
@@ -1473,6 +1665,11 @@ export default function App() {
                   setProgress((prev: any) => ({
                     ...prev,
                     ...parsedBackup.progress,
+                    srsData:
+                      parsedBackup.progress.srsData &&
+                      typeof parsedBackup.progress.srsData === 'object'
+                        ? { ...parsedBackup.progress.srsData }
+                        : prev.srsData || {},
                     totalStudySeconds: Math.max(
                       0,
                       Number(parsedBackup.progress.totalStudySeconds ?? prev.totalStudySeconds) || 0
@@ -1556,7 +1753,10 @@ export default function App() {
               onExportAllData={() => {
                 const payload = {
                   exportedAt: new Date().toISOString(),
-                  progress,
+                  progress: {
+                    ...progress,
+                    srsData: progress.srsData || {}
+                  },
                   courses,
                   customDecks
                 };
@@ -1576,6 +1776,11 @@ export default function App() {
                   setProgress((prev: any) => ({
                     ...prev,
                     ...parsedBackup.progress,
+                    srsData:
+                      parsedBackup.progress.srsData &&
+                      typeof parsedBackup.progress.srsData === 'object'
+                        ? { ...parsedBackup.progress.srsData }
+                        : prev.srsData || {},
                     totalStudySeconds: Math.max(
                       0,
                       Number(parsedBackup.progress.totalStudySeconds ?? prev.totalStudySeconds) || 0
@@ -1628,6 +1833,7 @@ export default function App() {
                     zaijian: 0,
                     再见: 0
                   },
+                  srsData: {},
                   skillTelemetry: {},
                   stats: {
                     writingStagesCompleted: 0,
@@ -1707,6 +1913,8 @@ export default function App() {
         {activeModal?.type === 'flashcards' && (
           <FlashcardStageModal
             words={activeModal.words || activeWords}
+            courseWords={allUniqueWordsArray}
+            nodeLevel={activeModal.nodeLevel || 0}
             progress={progress}
             wordNotes={progress.wordNotes}
             onSaveWordNote={handleSaveWordNote}
@@ -1732,6 +1940,7 @@ export default function App() {
         {activeModal?.type === 'writing' && (
           <WritingStageModal
             words={activeModal.words || activeWords}
+            nodeLevel={activeModal.nodeLevel || 0}
             progress={progress}
             isSlowMode={progress.isSlowMode}
             onSetSlowMode={handleSetSlowMode}
@@ -1755,6 +1964,8 @@ export default function App() {
         {activeModal?.type === 'audio_speech' && (
           <AudioSpeechStageModal
             words={activeModal.words || activeWords}
+            courseWords={allUniqueWordsArray}
+            nodeLevel={activeModal.nodeLevel || 0}
             progress={progress}
             initialFocusMode={activeModal.focusMode || 'combined'}
             isSlowMode={progress.isSlowMode}
@@ -1783,7 +1994,10 @@ export default function App() {
         {activeModal?.type === 'boss' && (
           <BossChallengeModal
             words={activeModal.words || activeWords}
+            courseWords={allUniqueWordsArray}
+            progress={progress}
             pastLessonWords={activeModal.pastLessonWords || []}
+            nodeLevel={activeModal.nodeLevel || 0}
             isPracticeMode={Boolean(activeModal.isPractice)}
             isSlowMode={progress.isSlowMode}
             onSetSlowMode={handleSetSlowMode}
@@ -1809,6 +2023,7 @@ export default function App() {
         {activeModal?.type === 'mixed_session' && (
           <AdaptiveMixedSessionModal
             sessionConfig={activeModal.sessionConfig}
+            courseWords={allUniqueWordsArray}
             progress={progress}
             wordNotes={progress.wordNotes}
             onSaveWordNote={handleSaveWordNote}
@@ -1897,6 +2112,30 @@ export default function App() {
                 xpEarned: totalXp,
                 maxCombo: totalCorrect,
                 completedModeKeys: ['hsk_mock_exam', activeModal.questModeKey].filter(Boolean)
+              })
+            }
+          />
+        )}
+
+        {activeModal?.type === 'numbers_time_lab' && (
+          <NumbersTimeLabModal
+            words={activeModal.words || activeWords}
+            courseWords={allUniqueWordsArray}
+            progress={progress}
+            isSlowMode={progress.isSlowMode}
+            onSetSlowMode={handleSetSlowMode}
+            speakMandarin={speakMandarin}
+            speakingState={speakingState}
+            onRecordStudySeconds={handleRecordStudySeconds}
+            onClose={() => setActiveModal(null)}
+            onComplete={(practicedWords: any[], totalXp = 25, maxCombo = 1) =>
+              handleCompleteStageSession({
+                stageId: null,
+                wordsPracticed:
+                  practicedWords && practicedWords.length > 0 ? practicedWords : activeWords,
+                xpEarned: totalXp,
+                maxCombo,
+                completedModeKeys: ['numbers_time_lab', activeModal.questModeKey].filter(Boolean)
               })
             }
           />

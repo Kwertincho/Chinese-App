@@ -35,6 +35,7 @@ import {
   getAdaptiveWritingConfig,
   useSessionTimer,
   buildBossQuestionsForWords,
+  canExposeAudioBeforeAnswer,
   highlightRadicalOutlineStrokes,
   getWritingStageMeta,
   loadHanziWriterScript
@@ -45,7 +46,8 @@ import {
   SessionGameTopHud,
   PixelHeartSprite,
   PixelJadeDragonSprite,
-  PixelBlockGauge
+  PixelBlockGauge,
+  InteractiveExampleText
 } from './SharedHudAndAudio.jsx';
 
 // ============================================================================
@@ -53,6 +55,8 @@ import {
 // ============================================================================
 export function FlashcardStageModal({
   words = UNIT_1_WORDS,
+  courseWords,
+  nodeLevel = 0,
   progress,
   wordNotes = {},
   onSaveWordNote,
@@ -78,7 +82,11 @@ export function FlashcardStageModal({
   const currentWord = words[cardIndex] || words[0];
   const masteryLevel = getWordMasteryLevel(progress?.mastery, currentWord);
   const tierMeta = getMasteryTierMeta(masteryLevel);
-  const hideFrontPinyin = masteryLevel >= 4 && !showPinyinHint && !isFlipped;
+  const isRun2OrHigher = nodeLevel >= 1;
+  const isMasteryTrial = nodeLevel >= 2;
+  const hideFrontPinyin =
+    !isFlipped &&
+    (isMasteryTrial || ((masteryLevel >= 4 || isRun2OrHigher) && !showPinyinHint));
 
   useEffect(() => {
     setShowPinyinHint(false);
@@ -159,7 +167,13 @@ export function FlashcardStageModal({
     <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex justify-center">
       <div className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto">
         <SessionGameTopHud
-          title="Stage 1 • Flashcards"
+          title={
+            isMasteryTrial
+              ? 'Flashcards • Trial 3/3'
+              : isRun2OrHigher
+              ? 'Flashcards • Run 2/3'
+              : 'Stage 1 • Flashcards'
+          }
           subtitle={`Card ${cardIndex + 1} of ${words.length} • Mastery Lv.${masteryLevel}/10 (${tierMeta.tier})`}
           totalSegments={words.length}
           completedSegments={cardIndex + (isFlipped ? 1 : 0)}
@@ -192,7 +206,13 @@ export function FlashcardStageModal({
             >
               <div className="flex items-center justify-between gap-2">
                 <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-rose-500/15 text-rose-300 border border-rose-500/30">
-                  {masteryLevel >= 4 ? `Front • Lv.${masteryLevel} Recall` : 'Front • Hanzi & Pinyin'}
+                  {isMasteryTrial
+                    ? 'Mastery Trial • Strict Recall'
+                    : isRun2OrHigher
+                    ? 'Run 2/3 • Active Recall'
+                    : masteryLevel >= 4
+                    ? `Front • Lv.${masteryLevel} Recall`
+                    : 'Front • Hanzi & Pinyin'}
                 </span>
                 <MandarinAudioControls
                   text={currentWord.hanzi}
@@ -211,20 +231,26 @@ export function FlashcardStageModal({
                 {hideFrontPinyin ? (
                   <div className="py-3 space-y-2.5">
                     <p className="font-clarity text-xs font-bold text-slate-400">
-                      Lv.{masteryLevel} Active Recall • Pinyin scaffolding hidden
+                      {isMasteryTrial
+                        ? 'Mastery Trial 3/3 • Pinyin hidden until card flip'
+                        : isRun2OrHigher
+                        ? 'Run 2/3 • Pinyin hidden by default'
+                        : `Lv.${masteryLevel} Active Recall • Pinyin scaffolding hidden`}
                     </p>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        soundFX.playPop();
-                        setShowPinyinHint(true);
-                      }}
-                      className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-amber-500/40 text-amber-300 text-xs font-bold inline-flex items-center gap-1.5 transition-all"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      <span>Show Pinyin Hint</span>
-                    </button>
+                    {!isMasteryTrial && (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          soundFX.playPop();
+                          setShowPinyinHint(true);
+                        }}
+                        className="px-3.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-amber-500/40 text-amber-300 text-xs font-bold inline-flex items-center gap-1.5 transition-all"
+                      >
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Show Pinyin Hint</span>
+                      </button>
+                    )}
                   </div>
                 ) : (
                   <>
@@ -308,7 +334,14 @@ export function FlashcardStageModal({
                       size="sm"
                     />
                   </div>
-                  <p className="text-lg font-bold text-white font-hanzi">{currentWord.exampleHanzi}</p>
+                  <InteractiveExampleText
+                    sentence={currentWord.exampleHanzi}
+                    speakMandarin={speakMandarin}
+                    masteryMap={progress?.mastery}
+                    courseWords={Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : words}
+                    charClassName="text-lg font-bold text-white"
+                    stopPropagation={true}
+                  />
                   <p className="font-clarity text-[16px] font-bold text-rose-300">
                     {currentWord.examplePinyin}
                   </p>
@@ -369,6 +402,7 @@ export function FlashcardStageModal({
 // ============================================================================
 export function WritingStageModal({
   words = UNIT_1_WORDS,
+  nodeLevel = 0,
   progress,
   isSlowMode,
   onSetSlowMode,
@@ -405,6 +439,8 @@ export function WritingStageModal({
   const [xpPopupKey, setXpPopupKey] = useState(0);
   const [xpPopupAmount, setXpPopupAmount] = useState(5);
   const [boardFeedback, setBoardFeedback] = useState('idle'); // 'idle' | 'correct' | 'wrong'
+  const [charMissCount, setCharMissCount] = useState(0);
+  const [touchNudgeMessage, setTouchNudgeMessage] = useState('');
   const [charStrokeMeta, setCharStrokeMeta] = useState({
     strokeCount: null,
     radStrokes: [],
@@ -415,6 +451,7 @@ export function WritingStageModal({
   const writerInstanceRef = useRef(null);
   const stageTransitionTimerRef = useRef(null);
   const feedbackTimerRef = useRef(null);
+  const charMissCountRef = useRef(0);
 
   const currentWord = words[wordIndex] || words[0];
   const currentChar = currentWord.chars[charIndex] || currentWord.chars[0];
@@ -484,11 +521,17 @@ export function WritingStageModal({
 
   useEffect(() => {
     setShowPinyinHint(false);
+    charMissCountRef.current = 0;
+    setCharMissCount(0);
+    setTouchNudgeMessage('');
     speakMandarin(currentWord.hanzi);
   }, [wordIndex, currentWord.hanzi, speakMandarin]);
 
   useEffect(() => {
     setShowPinyinHint(false);
+    charMissCountRef.current = 0;
+    setCharMissCount(0);
+    setTouchNudgeMessage('');
   }, [charIndex]);
 
   // Preload character stroke count & radical stroke indices via HanziWriter.loadCharacterData(char)
@@ -567,6 +610,9 @@ export function WritingStageModal({
 
       const activeStageMeta = getWritingStageMeta(targetStage);
       setModeStatus('quiz');
+      charMissCountRef.current = 0;
+      setCharMissCount(0);
+      setTouchNudgeMessage('');
       setStrokeStats((prev) => ({
         ...prev,
         completedStrokes: 0,
@@ -586,7 +632,27 @@ export function WritingStageModal({
         showHintAfterMisses: activeStageMeta.showHintAfterMisses,
         highlightOnComplete: true,
         onMistake: (strokeData) => {
+          const nextCharMiss = charMissCountRef.current + 1;
+          charMissCountRef.current = nextCharMiss;
+          setCharMissCount(nextCharMiss);
+
+          // 3-strike touchscreen mistake buffer per character:
+          // 1st & 2nd off-path touches trigger only a subtle amber nudge (no mistake SFX, no combo reset, no red shake, no telemetry mistake)
+          if (nextCharMiss < 3) {
+            setTouchNudgeMessage(`Touch off-path (${nextCharMiss}/3) — try stroke again`);
+            setStrokeStats((prev) => ({
+              ...prev,
+              mistakesOnCurrent: strokeData.mistakesOnStroke,
+              totalMistakes: strokeData.totalMistakes,
+              hintTriggered: false
+            }));
+            return;
+          }
+
+          // 3rd+ miss on this character registers as a real mistake and flashes the stroke hint
+          setTouchNudgeMessage('');
           soundFX.playMistake();
+          liveStateRef.current.combo = 0;
           setCombo(0);
           triggerBoardFeedback('wrong');
           const { currentWord: liveWord, onRecordSkillEvent: recordEvt } = liveStateRef.current;
@@ -595,10 +661,19 @@ export function WritingStageModal({
             ...prev,
             mistakesOnCurrent: strokeData.mistakesOnStroke,
             totalMistakes: strokeData.totalMistakes,
-            hintTriggered: strokeData.mistakesOnStroke >= activeStageMeta.showHintAfterMisses
+            hintTriggered: true
           }));
+
+          if (writerInstanceRef.current === activeWriter && typeof strokeData?.strokeNum === 'number') {
+            try {
+              activeWriter.highlightStroke(strokeData.strokeNum);
+            } catch (e) {
+              // Ignore if writer was unmounted
+            }
+          }
         },
         onCorrectStroke: (strokeData) => {
+          setTouchNudgeMessage('');
           const doneCount = strokeData.strokeNum + 1;
           const total = doneCount + strokeData.strokesRemaining;
           const nextCombo = (liveStateRef.current.combo || 0) + 1;
@@ -632,6 +707,7 @@ export function WritingStageModal({
           }
         },
         onComplete: (summaryData) => {
+          setTouchNudgeMessage('');
           triggerBoardFeedback('correct');
           setStrokeStats((prev) => ({
             ...prev,
@@ -766,8 +842,8 @@ export function WritingStageModal({
       radicalColor: '#dc2626',
       outlineColor: '#334155',
       drawingColor: '#f43f5e',
-      drawingWidth: 24,
-      leniency: 1.55,
+      drawingWidth: 26,
+      leniency: 1.85,
       highlightColor: '#38bdf8',
       showHintAfterMisses: currentStageConfig.showHintAfterMisses,
       highlightOnComplete: true,
@@ -863,7 +939,11 @@ export function WritingStageModal({
     completedCharsInWord.includes(charIndex);
   const isLastCharOfWord = charIndex === currentWord.chars.length - 1;
   const isLastWord = wordIndex === words.length - 1;
-  const hidePinyinScaffolding = writingConfig.hidePinyin && !isCharComplete && !showPinyinHint;
+  const isRun2OrHigher = nodeLevel >= 1;
+  const isMasteryTrial = nodeLevel >= 2;
+  const hidePinyinScaffolding =
+    !isCharComplete &&
+    (isMasteryTrial || ((writingConfig.hidePinyin || isRun2OrHigher) && !showPinyinHint));
   const hideHanziScaffolding = writingConfig.hideHanzi && !isCharComplete && !showPinyinHint;
 
   return (
@@ -871,7 +951,13 @@ export function WritingStageModal({
       <div className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto">
         <div>
           <SessionGameTopHud
-            title="Stage 2 • Progressive Calligraphy"
+            title={
+              isMasteryTrial
+                ? 'Calligraphy • Trial 3/3'
+                : isRun2OrHigher
+                ? 'Calligraphy • Run 2/3'
+                : 'Stage 2 • Progressive Calligraphy'
+            }
             subtitle={`Word ${wordIndex + 1}/${words.length} • Lv.${masteryLevel}/10 (${tierMeta.tier}) • ${stageMeta.shortLabel}`}
             totalSegments={totalStageSteps}
             completedSegments={completedStageSteps}
@@ -906,17 +992,23 @@ export function WritingStageModal({
                   {hideHanziScaffolding ? '？'.repeat(currentWord.chars?.length || 1) : currentWord.hanzi}
                 </h3>
                 {hidePinyinScaffolding ? (
-                  <button
-                    type="button"
-                    onClick={() => {
-                      soundFX.playPop();
-                      setShowPinyinHint(true);
-                    }}
-                    className="px-2 py-0.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-amber-500/40 text-xs font-bold text-amber-300 flex items-center gap-1"
-                  >
-                    <Eye className="w-3 h-3" />
-                    <span>Show Pinyin Hint</span>
-                  </button>
+                  isMasteryTrial ? (
+                    <span className="px-2 py-0.5 rounded-lg bg-amber-500/15 border border-amber-400/40 text-[10px] font-extrabold text-amber-300">
+                      Trial 3/3 • No Pinyin
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        soundFX.playPop();
+                        setShowPinyinHint(true);
+                      }}
+                      className="px-2 py-0.5 rounded-lg bg-slate-900 hover:bg-slate-800 border border-amber-500/40 text-xs font-bold text-amber-300 flex items-center gap-1"
+                    >
+                      <Eye className="w-3 h-3" />
+                      <span>Show Pinyin Hint</span>
+                    </button>
+                  )
                 ) : (
                   <span className="font-pinyin text-rose-400">{currentWord.pinyin}</span>
                 )}
@@ -1074,6 +1166,8 @@ export function WritingStageModal({
                 ? 'border-rose-500 bg-rose-950/20 animate-game-shake'
                 : boardFeedback === 'correct'
                 ? 'border-emerald-400 animate-game-green-pulse'
+                : touchNudgeMessage
+                ? 'border-amber-400/80'
                 : charStage === 3
                 ? 'border-emerald-500/50'
                 : charStage === 2
@@ -1250,14 +1344,13 @@ export function WritingStageModal({
                     Completed! Auto-advancing...
                   </span>
                 </span>
-              ) : strokeStats.hintTriggered ? (
-                <span className="text-rose-300 font-bold">
-                  {stageMeta.showHintAfterMisses} miss
-                  {stageMeta.showHintAfterMisses > 1 ? 'es' : ''} — follow the flashing stroke hint!
+              ) : touchNudgeMessage ? (
+                <span className="text-amber-300 font-bold">
+                  {touchNudgeMessage}
                 </span>
-              ) : strokeStats.mistakesOnCurrent > 0 ? (
-                <span className="text-amber-300 font-semibold">
-                  Try again ({strokeStats.mistakesOnCurrent}/{stageMeta.showHintAfterMisses} misses before hint)
+              ) : strokeStats.hintTriggered || charMissCount >= 3 ? (
+                <span className="text-rose-300 font-bold">
+                  {charMissCount >= 3 ? '3+ misses on character' : `${stageMeta.showHintAfterMisses} miss${stageMeta.showHintAfterMisses > 1 ? 'es' : ''}`} — follow the flashing stroke hint!
                 </span>
               ) : (
                 <span className="text-slate-400">{stageMeta.instruction}</span>
@@ -1281,6 +1374,8 @@ export function WritingStageModal({
 // ============================================================================
 export function AudioSpeechStageModal({
   words = UNIT_1_WORDS,
+  courseWords,
+  nodeLevel = 0,
   progress,
   initialFocusMode = 'combined',
   isSlowMode,
@@ -1315,8 +1410,10 @@ export function AudioSpeechStageModal({
   const [xpPopupKey, setXpPopupKey] = useState(0);
   const [xpPopupAmount, setXpPopupAmount] = useState(5);
 
+  const [isInspectingExample, setIsInspectingExample] = useState(false);
   const recognitionRef = useRef(null);
   const feedbackTimerRef = useRef(null);
+  const pendingAdvancePayloadRef = useRef(null);
   const currentWord = words[stepIndex] || words[0];
   const masteryLevel = getWordMasteryLevel(progress?.mastery, currentWord);
   const tierMeta = getMasteryTierMeta(masteryLevel);
@@ -1331,8 +1428,25 @@ export function AudioSpeechStageModal({
     }
   }, []);
 
+  const advanceAudioSpeechNow = useCallback(
+    (updatedBonusXp = bonusXp, updatedMaxCombo = maxCombo) => {
+      clearFeedbackTimer();
+      pendingAdvancePayloadRef.current = null;
+      setIsInspectingExample(false);
+      if (stepIndex < words.length - 1) {
+        setStepIndex((prev) => prev + 1);
+      } else {
+        flushSessionTime();
+        onComplete(updatedBonusXp, updatedMaxCombo);
+      }
+    },
+    [bonusXp, maxCombo, clearFeedbackTimer, flushSessionTime, onComplete, stepIndex, words.length]
+  );
+
   useEffect(() => {
     clearFeedbackTimer();
+    pendingAdvancePayloadRef.current = null;
+    setIsInspectingExample(false);
     setDictationInput('');
     setDictationResult(null);
     setDictationSubmitted(false);
@@ -1363,17 +1477,19 @@ export function AudioSpeechStageModal({
       if (!nextDictationDone || !nextSpeakingDone) return;
       clearFeedbackTimer();
       const delayMs = wasCorrectAnswer ? 1400 : 1800;
+      pendingAdvancePayloadRef.current = { updatedBonusXp, updatedMaxCombo };
       feedbackTimerRef.current = setTimeout(() => {
-        if (stepIndex < words.length - 1) {
-          setStepIndex((prev) => prev + 1);
-        } else {
-          flushSessionTime();
-          onComplete(updatedBonusXp, updatedMaxCombo);
-        }
+        advanceAudioSpeechNow(updatedBonusXp, updatedMaxCombo);
       }, delayMs);
     },
-    [clearFeedbackTimer, flushSessionTime, onComplete, stepIndex, words.length]
+    [clearFeedbackTimer, advanceAudioSpeechNow]
   );
+
+  useEffect(() => {
+    if (isInspectingExample) {
+      clearFeedbackTimer();
+    }
+  }, [isInspectingExample, clearFeedbackTimer]);
 
   const handleCheckDictation = (e) => {
     if (e) e.preventDefault();
@@ -1520,7 +1636,11 @@ export function AudioSpeechStageModal({
   const isDictationDone = !showDictation || dictationSubmitted;
   const isSpeakingDone = !showSpeaking || speakingSkipped || speakingEvaluated;
   const canAdvance = isDictationDone && isSpeakingDone;
-  const hideSpeakingPinyin = masteryLevel >= 4 && !speakingEvaluated && !showPinyinHint;
+  const isRun2OrHigher = nodeLevel >= 1;
+  const isMasteryTrial = nodeLevel >= 2;
+  const hideSpeakingPinyin =
+    !speakingEvaluated &&
+    (isMasteryTrial || ((masteryLevel >= 4 || isRun2OrHigher) && !showPinyinHint));
   const hideSpeakingHanzi = masteryLevel >= 7 && !speakingEvaluated && !showPinyinHint;
 
   return (
@@ -1529,9 +1649,17 @@ export function AudioSpeechStageModal({
         <SessionGameTopHud
           title={
             initialFocusMode === 'dictation'
-              ? 'Listening (Dictation)'
+              ? isMasteryTrial
+                ? 'Listening • Trial 3/3'
+                : isRun2OrHigher
+                ? 'Listening • Run 2/3'
+                : 'Listening (Dictation)'
               : initialFocusMode === 'speaking'
-              ? 'Speaking (Pronunciation)'
+              ? isMasteryTrial
+                ? 'Speaking • Trial 3/3'
+                : isRun2OrHigher
+                ? 'Speaking • Run 2/3'
+                : 'Speaking (Pronunciation)'
               : 'Stage 3 • Listening & Speaking'
           }
           subtitle={`Word ${stepIndex + 1} of ${words.length} • Lv.${masteryLevel}/10 (${tierMeta.tier})`}
@@ -1690,6 +1818,24 @@ export function AudioSpeechStageModal({
                       compact
                     />
                   </div>
+
+                  {currentWord.exampleHanzi && (
+                    <div className="pt-1.5 border-t border-white/10 space-y-0.5">
+                      <InteractiveExampleText
+                        sentence={currentWord.exampleHanzi}
+                        speakMandarin={speakMandarin}
+                        masteryMap={progress?.mastery}
+                        courseWords={Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : words}
+                        charClassName="text-sm font-bold text-white"
+                        onInspectOpenChange={setIsInspectingExample}
+                      />
+                      {currentWord.exampleEnglish && (
+                        <p className="font-clarity text-[11px] opacity-85 italic">
+                          "{currentWord.exampleEnglish}"
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -1703,7 +1849,7 @@ export function AudioSpeechStageModal({
                   <span>Speaking (Pronunciation)</span>
                 </span>
                 <div className="flex items-center gap-1.5">
-                  {hideSpeakingPinyin && (
+                  {hideSpeakingPinyin && !isMasteryTrial && (
                     <button
                       type="button"
                       onClick={() => {
@@ -1799,6 +1945,18 @@ export function AudioSpeechStageModal({
                       ? `✓ Correct! ${similarityData.feedback}`
                       : `✗ Incorrect — Correct answer: ${currentWord.hanzi} (${currentWord.pinyin})`}
                   </p>
+                  {currentWord.exampleHanzi && (
+                    <div className="pt-1.5 border-t border-white/10 space-y-0.5">
+                      <InteractiveExampleText
+                        sentence={currentWord.exampleHanzi}
+                        speakMandarin={speakMandarin}
+                        masteryMap={progress?.mastery}
+                        courseWords={Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : words}
+                        charClassName="text-sm font-bold text-white"
+                        onInspectOpenChange={setIsInspectingExample}
+                      />
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -1825,9 +1983,25 @@ export function AudioSpeechStageModal({
         </div>
 
         <div className="pt-1 text-center text-[11px] font-bold text-slate-400">
-          {canAdvance
-            ? 'Auto-advancing to next word...'
-            : 'Complete the activity above to auto-advance'}
+          {canAdvance && isInspectingExample ? (
+            <button
+              type="button"
+              onClick={() => {
+                const payload = pendingAdvancePayloadRef.current;
+                advanceAudioSpeechNow(
+                  payload?.updatedBonusXp ?? bonusXp,
+                  payload?.updatedMaxCombo ?? maxCombo
+                );
+              }}
+              className="game-btn-3d w-full py-2.5 rounded-[2px] bg-emerald-600 hover:bg-emerald-500 border-2 border-emerald-300 text-white font-pixel-header text-[9px] uppercase tracking-wider"
+            >
+              Continue →
+            </button>
+          ) : canAdvance ? (
+            'Auto-advancing to next word...'
+          ) : (
+            'Complete the activity above to auto-advance'
+          )}
         </div>
       </div>
     </div>
@@ -1839,7 +2013,10 @@ export function AudioSpeechStageModal({
 // ============================================================================
 export function BossChallengeModal({
   words = UNIT_1_WORDS,
+  courseWords,
+  progress,
   pastLessonWords = [],
+  nodeLevel = 0,
   isPracticeMode = false,
   isSlowMode,
   onSetSlowMode,
@@ -1851,16 +2028,21 @@ export function BossChallengeModal({
   onComplete
 }) {
   const { elapsedSeconds, flushSessionTime } = useSessionTimer(true, onRecordStudySeconds);
+  const isRun2OrHigher = nodeLevel >= 1;
+  const isMasteryTrial = nodeLevel >= 2;
+  const turnDurationSeconds = isMasteryTrial ? 12 : 15;
+
   const questions = useMemo(
-    () => buildBossQuestionsForWords(words, pastLessonWords),
-    [words, pastLessonWords]
+    () => buildBossQuestionsForWords(words, pastLessonWords, nodeLevel),
+    [words, pastLessonWords, nodeLevel]
   );
   const [questionIndex, setQuestionIndex] = useState(0);
   const [hearts, setHearts] = useState(3);
   const [bossHp, setBossHp] = useState(questions.length);
-  const [timeLeft, setTimeLeft] = useState(15);
+  const [timeLeft, setTimeLeft] = useState(turnDurationSeconds);
   const [selectedOptionId, setSelectedOptionId] = useState(null);
   const [isAnswered, setIsAnswered] = useState(false);
+  const [showPinyinHint, setShowPinyinHint] = useState(false);
   const [correctWordIds, setCorrectWordIds] = useState([]);
   const [status, setStatus] = useState('playing'); // 'playing' | 'lost' | 'won'
 
@@ -1872,9 +2054,27 @@ export function BossChallengeModal({
   const [xpPopupAmount, setXpPopupAmount] = useState(5);
   const [bossDamageAnim, setBossDamageAnim] = useState(false);
   const [playerDamageAnim, setPlayerDamageAnim] = useState(false);
+  const [isInspectingExample, setIsInspectingExample] = useState(false);
 
   const feedbackTimerRef = useRef(null);
+  const pendingNextHeartsRef = useRef(null);
   const currentQuestion = questions[questionIndex] || questions[0];
+  const currentQuestionWord = useMemo(() => {
+    const allBossPool = [
+      ...words,
+      ...pastLessonWords,
+      ...(Array.isArray(courseWords) ? courseWords : [])
+    ];
+    return (
+      allBossPool.find(
+        (w) =>
+          w &&
+          (w.id === currentQuestion?.wordId || w.hanzi === currentQuestion?.focusHanzi)
+      ) || null
+    );
+  }, [words, pastLessonWords, courseWords, currentQuestion]);
+  const bossPostAnswerExample =
+    currentQuestionWord?.exampleHanzi || currentQuestion?.speechText || '';
   const maxBossHp = questions.length;
   const bossHpPercent = Math.max(0, Math.round((bossHp / Math.max(1, maxBossHp)) * 100));
 
@@ -1889,32 +2089,55 @@ export function BossChallengeModal({
     return () => clearFeedbackTimer();
   }, [clearFeedbackTimer]);
 
+  const allowBossAudioBeforeAnswer = canExposeAudioBeforeAnswer(
+    'boss',
+    Boolean(currentQuestion?.optionsHavePinyin)
+  );
+
   useEffect(() => {
-    if (status === 'playing' && currentQuestion) {
+    if (status === 'playing' && currentQuestion && allowBossAudioBeforeAnswer) {
       speakMandarin(currentQuestion.speechText);
     }
-  }, [questionIndex, status, currentQuestion, speakMandarin]);
+  }, [questionIndex, status, currentQuestion, allowBossAudioBeforeAnswer, speakMandarin]);
+
+  const advanceBossTurnNow = useCallback(
+    (nextHeartsValue) => {
+      clearFeedbackTimer();
+      pendingNextHeartsRef.current = null;
+      setIsInspectingExample(false);
+      if (nextHeartsValue <= 0) {
+        setStatus('lost');
+        return;
+      }
+      if (questionIndex < questions.length - 1) {
+        setQuestionIndex((prev) => prev + 1);
+        setSelectedOptionId(null);
+        setIsAnswered(false);
+        setShowPinyinHint(false);
+        setTimeLeft(turnDurationSeconds);
+      } else {
+        setStatus('won');
+      }
+    },
+    [clearFeedbackTimer, questionIndex, questions.length, turnDurationSeconds]
+  );
 
   const scheduleBossTurnAdvance = useCallback(
     (delayMs, nextHeartsValue) => {
       clearFeedbackTimer();
+      pendingNextHeartsRef.current = nextHeartsValue;
       feedbackTimerRef.current = setTimeout(() => {
-        if (nextHeartsValue <= 0) {
-          setStatus('lost');
-          return;
-        }
-        if (questionIndex < questions.length - 1) {
-          setQuestionIndex((prev) => prev + 1);
-          setSelectedOptionId(null);
-          setIsAnswered(false);
-          setTimeLeft(15);
-        } else {
-          setStatus('won');
-        }
+        advanceBossTurnNow(nextHeartsValue);
       }, delayMs);
     },
-    [clearFeedbackTimer, questionIndex, questions.length]
+    [clearFeedbackTimer, advanceBossTurnNow]
   );
+
+  useEffect(() => {
+    if (isInspectingExample) {
+      clearFeedbackTimer();
+    }
+  }, [isInspectingExample, clearFeedbackTimer]);
 
   useEffect(() => {
     if (status !== 'playing' || isAnswered) return;
@@ -1997,9 +2220,10 @@ export function BossChallengeModal({
     setBossHp(questions.length);
     setCombo(0);
     setBonusXp(0);
-    setTimeLeft(15);
+    setTimeLeft(turnDurationSeconds);
     setSelectedOptionId(null);
     setIsAnswered(false);
+    setShowPinyinHint(false);
     setCorrectWordIds([]);
     setStatus('playing');
   };
@@ -2008,14 +2232,26 @@ export function BossChallengeModal({
   const selectedWasCorrect = currentQuestion?.options?.find(
     (o) => o.id === selectedOptionId
   )?.isCorrect;
+  const hideBossFocusPinyin =
+    !isAnswered &&
+    !currentQuestion?.optionsHavePinyin &&
+    (isMasteryTrial || (isRun2OrHigher && !showPinyinHint));
 
   return (
     <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex justify-center">
       <div className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto">
         <div>
           <SessionGameTopHud
-            title={isPracticeMode ? 'Practice Arena Quiz' : 'Stage 4 • Boss Battle'}
-            subtitle={`Turn ${questionIndex + 1} of ${questions.length}`}
+            title={
+              isPracticeMode
+                ? 'Practice Arena Quiz'
+                : isMasteryTrial
+                ? 'Boss Battle • Trial 3/3'
+                : isRun2OrHigher
+                ? 'Boss Battle • Run 2/3'
+                : 'Stage 4 • Boss Battle'
+            }
+            subtitle={`Turn ${questionIndex + 1} of ${questions.length} • ${turnDurationSeconds}s Clock`}
             totalSegments={questions.length}
             completedSegments={questionIndex + (isAnswered ? 1 : 0)}
             combo={combo}
@@ -2126,23 +2362,48 @@ export function BossChallengeModal({
                     </span>
                   )}
                 </div>
-                <MandarinAudioControls
-                  text={currentQuestion.speechText}
-                  isSlowMode={isSlowMode}
-                  onSetSlowMode={onSetSlowMode}
-                  speakMandarin={speakMandarin}
-                  speakingState={speakingState}
-                  size="sm"
-                />
+                {allowBossAudioBeforeAnswer && (
+                  <MandarinAudioControls
+                    text={currentQuestion.speechText}
+                    isSlowMode={isSlowMode}
+                    onSetSlowMode={onSetSlowMode}
+                    speakMandarin={speakMandarin}
+                    speakingState={speakingState}
+                    size="sm"
+                  />
+                )}
               </div>
 
               <p className="font-clarity text-[15px] font-bold text-slate-200 pt-1">{currentQuestion.prompt}</p>
               <div className="text-3xl font-black text-white py-1 font-hanzi">
                 {currentQuestion.focusHanzi}
               </div>
-              <div className="font-pinyin text-rose-300">
-                {currentQuestion.focusPinyin}
-              </div>
+              {hideBossFocusPinyin ? (
+                <div className="py-1 space-y-1.5">
+                  <p className="text-[11px] font-bold text-slate-400">
+                    {isMasteryTrial
+                      ? 'Mastery Trial 3/3 • Pinyin hidden before answering'
+                      : 'Run 2/3 • Pinyin hidden by default'}
+                  </p>
+                  {!isMasteryTrial && (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        soundFX.playPop();
+                        setShowPinyinHint(true);
+                      }}
+                      className="px-3 py-1 rounded-xl bg-slate-900 hover:bg-slate-800 border border-amber-500/40 text-amber-300 text-xs font-bold inline-flex items-center gap-1"
+                    >
+                      <Eye className="w-3.5 h-3.5" />
+                      <span>Show Pinyin Hint</span>
+                    </button>
+                  )}
+                </div>
+              ) : (
+                <div className="font-pinyin text-rose-300">
+                  {currentQuestion.focusPinyin}
+                </div>
+              )}
             </div>
 
             <div className="space-y-2.5">
@@ -2185,20 +2446,44 @@ export function BossChallengeModal({
 
             {isAnswered && (
               <div
-                className={`rounded-2xl p-3 text-xs border ${
+                className={`rounded-2xl p-3 text-xs border space-y-2 ${
                   selectedWasCorrect
                     ? 'bg-emerald-500/15 border-emerald-400/50 text-emerald-200'
                     : 'bg-rose-500/15 border-rose-400/50 text-rose-200'
                 }`}
               >
-                <p className="font-extrabold">
-                  {selectedOptionId === 'timeout'
-                    ? `⏰ Time ran out! — Correct answer: ${correctOptionObj?.text}`
-                    : selectedWasCorrect
-                    ? '✓ Correct! Direct hit on the Boss (-1 HP)'
-                    : `✗ Incorrect — Correct answer: ${correctOptionObj?.text}`}
-                </p>
-                <p className="text-[11px] opacity-90 mt-0.5">{currentQuestion.explanation}</p>
+                <div className="flex items-center justify-between gap-2">
+                  <div className="min-w-0 flex-1">
+                    <p className="font-extrabold">
+                      {selectedOptionId === 'timeout'
+                        ? `⏰ Time ran out! — Correct answer: ${correctOptionObj?.text}`
+                        : selectedWasCorrect
+                        ? '✓ Correct! Direct hit on the Boss (-1 HP)'
+                        : `✗ Incorrect — Correct answer: ${correctOptionObj?.text}`}
+                    </p>
+                    <p className="text-[11px] opacity-90 mt-0.5">{currentQuestion.explanation}</p>
+                  </div>
+                  <MandarinAudioControls
+                    text={currentQuestion.speechText}
+                    isSlowMode={isSlowMode}
+                    onSetSlowMode={onSetSlowMode}
+                    speakMandarin={speakMandarin}
+                    speakingState={speakingState}
+                    size="sm"
+                  />
+                </div>
+                {bossPostAnswerExample && (
+                  <div className="pt-1.5 border-t border-white/10">
+                    <InteractiveExampleText
+                      sentence={bossPostAnswerExample}
+                      speakMandarin={speakMandarin}
+                      masteryMap={progress?.mastery}
+                      courseWords={Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : words}
+                      charClassName="text-sm font-bold text-white"
+                      onInspectOpenChange={setIsInspectingExample}
+                    />
+                  </div>
+                )}
               </div>
             )}
           </div>
@@ -2258,9 +2543,23 @@ export function BossChallengeModal({
 
         {status === 'playing' && (
           <div className="pt-1 text-center text-[11px] font-bold text-slate-400">
-            {isAnswered
-              ? 'Auto-advancing to next turn...'
-              : 'Select an answer before the 15s timer expires!'}
+            {isAnswered && isInspectingExample ? (
+              <button
+                type="button"
+                onClick={() =>
+                  advanceBossTurnNow(
+                    pendingNextHeartsRef.current !== null ? pendingNextHeartsRef.current : hearts
+                  )
+                }
+                className="game-btn-3d w-full py-2.5 rounded-[2px] bg-emerald-600 hover:bg-emerald-500 border-2 border-emerald-300 text-white font-pixel-header text-[9px] uppercase tracking-wider"
+              >
+                Next Turn →
+              </button>
+            ) : isAnswered ? (
+              'Auto-advancing to next turn...'
+            ) : (
+              `Select an answer before the ${turnDurationSeconds}s timer expires!`
+            )}
           </div>
         )}
       </div>

@@ -19,7 +19,8 @@ import {
   parsePinyinSyllablesWithTones,
   loadHanziWriterScript,
   getMasteryTierMeta,
-  formatSessionClock
+  formatSessionClock,
+  resolveCharacterInspectorInfo
 } from '../utils/mandarinHelpers.js';
 
 // ============================================================================
@@ -888,4 +889,183 @@ export function ScrollingText({
     </div>
   );
 }
+
+// ============================================================================
+// POST-ANSWER INTERACTIVE CHARACTER INSPECTOR (<InteractiveExampleText />)
+// STRICT ANTI-SPOILER: Render ONLY on flashcard backs or post-answer feedback!
+// ============================================================================
+export function InteractiveExampleText({
+  sentence = '',
+  speakMandarin,
+  masteryMap = {},
+  courseWords = [],
+  className = '',
+  charClassName = '',
+  stopPropagation = true,
+  hintLabel = 'Tap any character to inspect',
+  showHint = true,
+  onInspectOpenChange = null
+}) {
+  const [selectedIndex, setSelectedIndex] = useState(null);
+
+  const tokens = useMemo(() => {
+    return Array.from(String(sentence || '')).map((ch, idx) => ({
+      ch,
+      idx,
+      isHanzi: /^[\u4e00-\u9fff]$/.test(ch)
+    }));
+  }, [sentence]);
+
+  // Reset popover whenever the sentence changes
+  useEffect(() => {
+    setSelectedIndex(null);
+  }, [sentence]);
+
+  // Notify parent modal when inspector opens/closes (e.g. to pause auto-advance)
+  useEffect(() => {
+    if (typeof onInspectOpenChange === 'function') {
+      onInspectOpenChange(selectedIndex !== null);
+    }
+  }, [selectedIndex, onInspectOpenChange]);
+
+  const selectedToken =
+    selectedIndex !== null && tokens[selectedIndex]?.isHanzi ? tokens[selectedIndex] : null;
+
+  const inspectedInfo = useMemo(() => {
+    if (!selectedToken) return null;
+    return resolveCharacterInspectorInfo(selectedToken.ch, {
+      courseWords,
+      masteryMap
+    });
+  }, [selectedToken, courseWords, masteryMap]);
+
+  if (!sentence) return null;
+
+  const handleToggleChar = (e, idx) => {
+    if (stopPropagation && e) e.stopPropagation();
+    soundFX.playPop();
+    setSelectedIndex((prev) => (prev === idx ? null : idx));
+  };
+
+  return (
+    <div
+      className={`w-full ${className}`}
+      onClick={(e) => {
+        if (stopPropagation) e.stopPropagation();
+      }}
+    >
+      <div className="flex flex-wrap items-baseline gap-y-1 leading-relaxed">
+        {tokens.map((tok) => {
+          if (!tok.isHanzi) {
+            return (
+              <span key={tok.idx} className="font-hanzi select-text">
+                {tok.ch}
+              </span>
+            );
+          }
+          const isActive = selectedIndex === tok.idx;
+          return (
+            <button
+              key={tok.idx}
+              type="button"
+              onClick={(e) => handleToggleChar(e, tok.idx)}
+              title={`Inspect ${tok.ch}`}
+              className={`font-hanzi inline-flex items-center justify-center px-0.5 rounded-[2px] border-b-2 transition-colors cursor-pointer ${
+                isActive
+                  ? 'bg-amber-400/25 border-amber-400 text-amber-200'
+                  : 'border-dotted border-amber-400/50 hover:bg-slate-800/90 hover:border-amber-300'
+              } ${charClassName}`}
+            >
+              {tok.ch}
+            </button>
+          );
+        })}
+      </div>
+
+      {showHint && !inspectedInfo && (
+        <div className="mt-1 text-[10px] font-clarity font-semibold text-amber-300/75">
+          {hintLabel}
+        </div>
+      )}
+
+      {inspectedInfo && (
+        <div
+          onClick={(e) => {
+            if (stopPropagation) e.stopPropagation();
+          }}
+          className="mt-2 rounded-[2px] bg-slate-950 border-2 border-amber-400 p-2.5 shadow-[0_3px_0_#020617] text-left space-y-1.5"
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <div className="w-10 h-10 rounded-[2px] bg-slate-900 border-2 border-amber-500/70 flex items-center justify-center shrink-0">
+                <span className="font-hanzi text-2xl font-black text-white leading-none">
+                  {inspectedInfo.char}
+                </span>
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-center flex-wrap gap-1.5">
+                  <span className="font-clarity text-sm font-black text-amber-300 leading-tight">
+                    {inspectedInfo.pinyin}
+                  </span>
+                  <span
+                    className={`inline-flex items-center px-1.5 py-0.5 rounded-[2px] border text-[9px] font-black uppercase leading-none ${inspectedInfo.badgeClass}`}
+                  >
+                    Lv.{inspectedInfo.masteryLevel}/10 • {inspectedInfo.tierTitle}
+                  </span>
+                </div>
+                <p className="font-clarity text-xs font-semibold text-slate-200 leading-snug mt-0.5 break-words">
+                  {inspectedInfo.meaning}
+                </p>
+              </div>
+            </div>
+
+            <button
+              type="button"
+              onClick={(e) => {
+                if (stopPropagation) e.stopPropagation();
+                soundFX.playPop();
+                setSelectedIndex(null);
+              }}
+              aria-label="Close character inspector"
+              className="p-1 rounded-[2px] bg-slate-900 border border-slate-700 text-slate-400 hover:text-white shrink-0"
+            >
+              <X className="w-3.5 h-3.5" />
+            </button>
+          </div>
+
+          {inspectedInfo.compoundHint && (
+            <div className="font-clarity text-[10px] text-sky-300 bg-slate-900/90 border border-slate-800 rounded-[2px] px-2 py-1">
+              In vocabulary: <span className="font-hanzi font-bold text-white">{inspectedInfo.compoundHint}</span>
+            </div>
+          )}
+
+          <div className="flex items-center justify-between gap-2 pt-0.5">
+            {inspectedInfo.radical ? (
+              <span className="font-clarity text-[10px] text-slate-400 truncate">
+                Radical: <span className="font-hanzi font-bold text-rose-300">{inspectedInfo.radical}</span>
+              </span>
+            ) : (
+              <span className="font-clarity text-[10px] text-slate-500">
+                Character Inspector
+              </span>
+            )}
+
+            <button
+              type="button"
+              onClick={(e) => {
+                if (stopPropagation) e.stopPropagation();
+                if (speakMandarin) speakMandarin(inspectedInfo.char);
+              }}
+              className="game-btn-3d inline-flex items-center gap-1.5 px-2.5 py-1 rounded-[2px] bg-emerald-600 hover:bg-emerald-500 border-2 border-emerald-400 text-white font-pixel-header text-[8px] uppercase tracking-wider shrink-0"
+            >
+              <Volume2 className="w-3 h-3" />
+              Listen
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 
