@@ -1,58 +1,85 @@
 import React, { useEffect, useState } from 'react';
 import { Download, X, WifiOff } from 'lucide-react';
 
+// Module-level PWA install prompt store so beforeinstallprompt survives Title Screen -> App transitions
+const pwaInstallStore = {
+  deferredPrompt: null,
+  isInstalled: false,
+  isIOS: false,
+  initialized: false,
+  listeners: new Set()
+};
+
+function notifyPwaInstallListeners() {
+  pwaInstallStore.listeners.forEach((fn) => {
+    try {
+      fn();
+    } catch {
+      // Ignore subscriber errors
+    }
+  });
+}
+
+function initPwaInstallStore() {
+  if (pwaInstallStore.initialized || typeof window === 'undefined') return;
+  pwaInstallStore.initialized = true;
+
+  pwaInstallStore.isInstalled =
+    window.matchMedia?.('(display-mode: standalone)')?.matches ||
+    window.navigator['standalone'] === true;
+
+  const userAgent = window.navigator.userAgent.toLowerCase();
+  pwaInstallStore.isIOS = /iphone|ipad|ipod/.test(userAgent);
+
+  window.addEventListener('beforeinstallprompt', (e) => {
+    e.preventDefault();
+    pwaInstallStore.deferredPrompt = e;
+    notifyPwaInstallListeners();
+  });
+
+  window.addEventListener('appinstalled', () => {
+    pwaInstallStore.isInstalled = true;
+    pwaInstallStore.deferredPrompt = null;
+    notifyPwaInstallListeners();
+  });
+}
+
+if (typeof window !== 'undefined') {
+  initPwaInstallStore();
+}
+
 export function usePWAInstall() {
-  const [deferredPrompt, setDeferredPrompt] = useState(null);
-  const [isInstalled, setIsInstalled] = useState(false);
-  const [isIOS, setIsIOS] = useState(false);
+  initPwaInstallStore();
+
+  const [, setVersion] = useState(0);
 
   useEffect(() => {
-    if (typeof window === 'undefined') return;
-
-    const isStandalone =
-      window.matchMedia('(display-mode: standalone)').matches ||
-      window.navigator['standalone'] === true;
-    setIsInstalled(isStandalone);
-
-    const userAgent = window.navigator.userAgent.toLowerCase();
-    const isIOSDevice = /iphone|ipad|ipod/.test(userAgent);
-    setIsIOS(isIOSDevice);
-
-    const handleBeforeInstallPrompt = (e) => {
-      e.preventDefault();
-      setDeferredPrompt(e);
-    };
-
-    const handleAppInstalled = () => {
-      setIsInstalled(true);
-      setDeferredPrompt(null);
-    };
-
-    window.addEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-    window.addEventListener('appinstalled', handleAppInstalled);
-
+    const sync = () => setVersion((v) => v + 1);
+    pwaInstallStore.listeners.add(sync);
+    sync();
     return () => {
-      window.removeEventListener('beforeinstallprompt', handleBeforeInstallPrompt);
-      window.removeEventListener('appinstalled', handleAppInstalled);
+      pwaInstallStore.listeners.delete(sync);
     };
   }, []);
 
   const install = async () => {
-    if (!deferredPrompt) return false;
-    await deferredPrompt.prompt();
-    const { outcome } = await deferredPrompt.userChoice;
+    const promptEvent = pwaInstallStore.deferredPrompt;
+    if (!promptEvent) return false;
+    await promptEvent.prompt();
+    const { outcome } = await promptEvent.userChoice;
     if (outcome === 'accepted') {
-      setIsInstalled(true);
-      setDeferredPrompt(null);
+      pwaInstallStore.isInstalled = true;
+      pwaInstallStore.deferredPrompt = null;
+      notifyPwaInstallListeners();
       return true;
     }
     return false;
   };
 
   return {
-    isInstallable: Boolean(deferredPrompt),
-    isInstalled,
-    isIOS,
+    isInstallable: Boolean(pwaInstallStore.deferredPrompt),
+    isInstalled: pwaInstallStore.isInstalled,
+    isIOS: pwaInstallStore.isIOS,
     install
   };
 }
@@ -150,7 +177,7 @@ export function OfflineIndicator() {
   if (isOnline) return null;
 
   return (
-    <div className="fixed top-24 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1.5 rounded-full bg-amber-500/95 border border-amber-200 px-3 py-1 text-[11px] font-black text-slate-950 shadow-lg">
+    <div className="fixed top-32 left-1/2 -translate-x-1/2 z-40 flex items-center gap-1.5 rounded-full bg-amber-500/95 border border-amber-200 px-3 py-1 text-[11px] font-black text-slate-950 shadow-lg">
       <WifiOff className="w-3.5 h-3.5 shrink-0" />
       <span>Offline Mode — Study data cached locally</span>
     </div>

@@ -32,8 +32,17 @@ const MANDARIN_FINAL_REGEX =
 
 const MANDARIN_INITIAL_REGEX = /^(zh|ch|sh|[bpmfdtnlgkhjqxrzcsyw])/i;
 
+function splitPinyinVariants(pinyin = '') {
+  return String(pinyin || '')
+    .split('/')
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
 export function segmentMandarinPinyin(pinyin = '') {
-  const rawChunks = String(pinyin || '')
+  // For slash-separated variants (e.g. "shéi / shuí", "biān / bian"), segment the primary variant before '/'
+  const primaryVariant = String(pinyin || '').split('/')[0];
+  const rawChunks = primaryVariant
     .trim()
     .replace(/u:/gi, 'ü')
     .split(/[\s'’]+/)
@@ -84,8 +93,24 @@ export function segmentMandarinPinyin(pinyin = '') {
           }
         }
 
+        // Attach trailing retroflex erhua 'r' when followed by end-of-word, tone digit, or consonant (NOT a vowel)
+        const canAttachErhuaR = (idx) => {
+          if (idx >= remainingBase.length || remainingBase[idx] !== 'r') return false;
+          const afterR = remainingBase[idx + 1];
+          return afterR === undefined || !/[aoeiuü]/i.test(afterR);
+        };
+
+        if (canAttachErhuaR(sylLen)) {
+          sylLen += 1;
+        }
+
         // Consume optional trailing tone number [0-5]
         if (sylLen < remainingBase.length && /[0-5]/.test(remainingBase[sylLen])) {
+          sylLen += 1;
+        }
+
+        // Also support erhua 'r' placed after tone digit (e.g. yi1dian3r, na3r, zhe4r)
+        if (canAttachErhuaR(sylLen)) {
           sylLen += 1;
         }
 
@@ -114,11 +139,11 @@ export function convertPinyinToNumeric(pinyin = '') {
   return tokens
     .map((rawTok) => {
       const tok = rawTok.toLowerCase().replace(/u:/g, 'ü').replace(/v/g, 'ü');
-      const trailingDigit = tok.match(/([0-5])$/);
-      if (trailingDigit) {
-        const toneNum = trailingDigit[1] === '0' ? '5' : trailingDigit[1];
+      const digitMatch = tok.match(/([0-5])/);
+      if (digitMatch) {
+        const toneNum = digitMatch[1] === '0' ? '5' : digitMatch[1];
         const basePart = tok
-          .slice(0, -1)
+          .replace(/[0-5]/g, '')
           .split('')
           .map((ch) => (TONE_VOWEL_MAP[ch] ? TONE_VOWEL_MAP[ch].base : ch))
           .join('');
@@ -304,14 +329,17 @@ function isPhonologicallyEquivalentPinyin(userSyls, targetSyls, hanziChars = [])
       }
     }
 
-    // 不 (bù) sandhi flexibility: accept citation tone 4 and sandhi tone 2
-    if (s.base === 'bu' || ch === '不') {
+    // 不 (bù) sandhi flexibility: check character identity first (fallback to base only when hanzi is empty)
+    if (ch === '不' || (hanziChars.length === 0 && s.base === 'bu')) {
       set.add(4);
       set.add(2);
     }
 
-    // 一 (yī) sandhi flexibility: accept citation tone 1 and sandhi tones 2 and 4
-    if (s.base === 'yi' || ch === '一') {
+    // 一 (yī) sandhi flexibility: check character identity first (fallback to base only when hanzi is empty)
+    if (
+      (ch === '一' && hanziChars[idx - 1] !== '第') ||
+      (hanziChars.length === 0 && s.base === 'yi')
+    ) {
       set.add(1);
       set.add(2);
       set.add(4);
@@ -336,6 +364,8 @@ function isPhonologicallyEquivalentPinyin(userSyls, targetSyls, hanziChars = [])
 
   return true;
 }
+
+const NEUTRAL_TONE_PARTICLE_CHARS = new Set(['的', '吗', '呢', '了', '吧', '么']);
 
 export function validateDictationInput(
   userInput = '',
@@ -370,14 +400,33 @@ export function validateDictationInput(
     };
   }
 
-  // Mandatory Tones Check in Pinyin mode: require either diacritic tone marks or numeric tone digits
+  // Expand slash-separated pronunciation variants (e.g. "shéi / shuí", "biān / bian")
+  const pinyinVariants = splitPinyinVariants(targetWord.pinyin);
+  const rawCandidates = [
+    targetWord.pinyin,
+    targetWord.pinyinNum,
+    ...(targetWord.pinyinNumeric || [])
+  ].filter(Boolean);
+  const candidateVariants = Array.from(
+    new Set(rawCandidates.flatMap((c) => splitPinyinVariants(c)))
+  );
+
+  const hanziChars = Array.from(cleanTargetHanzi);
+  const isNeutralOnlyParticle =
+    hanziChars.length > 0 && hanziChars.every((ch) => NEUTRAL_TONE_PARTICLE_CHARS.has(ch));
+  const hasAllNeutralTargetVariant = candidateVariants.some((cand) => {
+    const syls = parsePinyinToBaseAndToneList(cand);
+    return syls.length > 0 && syls.every((s) => s.tone === 5);
+  });
+
+  // Mandatory Tones Check in Pinyin mode: require tone marks or tone numbers UNLESS every target syllable is neutral (tone 5)
   const hasToneMark = Array.from(raw).some((ch) => {
     const entry = TONE_VOWEL_MAP[ch.toLowerCase()];
     return Boolean(entry && entry.tone !== 5);
   });
   const hasToneNumber = /[0-5]/.test(raw);
 
-  if (!hasToneMark && !hasToneNumber) {
+  if (!hasToneMark && !hasToneNumber && !hasAllNeutralTargetVariant && !isNeutralOnlyParticle) {
     return {
       isValid: false,
       matchType: 'Tones Required',
@@ -394,39 +443,41 @@ export function validateDictationInput(
       .replace(/['’\s\p{P}]/gu, '');
 
   const userToneMarked = normalizeKeepTones(raw);
-  const targetToneMarked = normalizeKeepTones(targetWord.pinyin);
+  const matchesDirectToneMarked = pinyinVariants.some(
+    (variant) => normalizeKeepTones(variant) === userToneMarked
+  );
 
-  if (userToneMarked === targetToneMarked) {
+  if (matchesDirectToneMarked) {
     return {
       isValid: true,
-      matchType: 'Tone-Marked Pinyin',
+      matchType: hasToneMark ? 'Tone-Marked Pinyin' : 'Neutral-Tone Pinyin',
       feedback: `Spot on! ${targetWord.hanzi} (${targetWord.pinyin}) — ${targetWord.meaning}`
     };
   }
 
   const userSyls = parsePinyinToBaseAndToneList(raw);
-  const hanziChars = Array.from(cleanTargetHanzi);
-  const candidateStrings = [
-    targetWord.pinyin,
-    targetWord.pinyinNum,
-    ...(targetWord.pinyinNumeric || [])
-  ].filter(Boolean);
 
-  for (const cand of candidateStrings) {
+  for (const cand of candidateVariants) {
     const targetSyls = parsePinyinToBaseAndToneList(cand);
     if (isPhonologicallyEquivalentPinyin(userSyls, targetSyls, hanziChars)) {
       return {
         isValid: true,
-        matchType: hasToneMark ? 'Tone-Marked Pinyin' : 'Numbered Pinyin',
+        matchType: hasToneMark
+          ? 'Tone-Marked Pinyin'
+          : hasToneNumber
+          ? 'Numbered Pinyin'
+          : 'Neutral-Tone Pinyin',
         feedback: `Correct tones! ${targetWord.hanzi} (${targetWord.pinyin}) — ${targetWord.meaning}`
       };
     }
   }
 
   const userToneless = stripToneMarks(raw);
-  const targetToneless = stripToneMarks(targetWord.pinyin);
+  const matchesAnyTonelessVariant = pinyinVariants.some(
+    (variant) => stripToneMarks(variant) === userToneless
+  );
 
-  if (userToneless && userToneless === targetToneless) {
+  if (userToneless && matchesAnyTonelessVariant) {
     return {
       isValid: false,
       matchType: 'Tone Mismatch',
@@ -502,31 +553,89 @@ export function computeSpeechSimilarity(transcript = '', targetWord = UNIT_1_WOR
   };
 }
 
-export function buildSentenceBuilderPuzzle(word = UNIT_1_WORDS[0]) {
-  const norm = normalizeWordEntry(word);
+function hasRealMultiWordExample(normWord) {
+  const norm = normWord?.hanzi ? normWord : normalizeWordEntry(normWord || {});
   const rawHanzi = String(
     norm.example?.includes('—')
       ? norm.example.split('—')[0].trim()
-      : norm.exampleHanzi || `${norm.hanzi}！`
+      : norm.exampleHanzi || ''
   ).trim();
-
   const cleanSentence = rawHanzi.replace(/[，。！？、；：“”‘’!?,.\s]/g, '');
+  const cleanTarget = String(norm.hanzi || '').replace(/[\s\p{P}]/gu, '');
+  return Boolean(
+    cleanSentence &&
+      cleanTarget &&
+      cleanSentence !== cleanTarget &&
+      cleanSentence.length > cleanTarget.length
+  );
+}
 
-  const tokens = [];
-  let cursor = 0;
-  while (cursor < cleanSentence.length) {
-    if (cleanSentence.slice(cursor).startsWith(norm.hanzi)) {
-      tokens.push(norm.hanzi);
-      cursor += norm.hanzi.length;
-    } else {
-      const remaining = cleanSentence.length - cursor;
-      const nextTargetIdx = cleanSentence.indexOf(norm.hanzi, cursor);
-      const maxStep =
-        nextTargetIdx > cursor ? Math.min(2, nextTargetIdx - cursor) : Math.min(2, remaining);
-      const step = remaining === 3 && nextTargetIdx === -1 ? 1 : maxStep;
-      tokens.push(cleanSentence.slice(cursor, cursor + step));
-      cursor += step;
+function buildSynthesizedContextExample(norm, seed = 0) {
+  const shortMeaning = String(norm.meaning || norm.english || norm.hanzi)
+    .split(/[;/]/)[0]
+    .trim();
+  const primaryPinyin = splitPinyinVariants(norm.pinyin)[0] || norm.pinyin;
+  const charSeed = (norm.hanzi?.charCodeAt(0) || 0) + (Number(seed) || 0);
+  if (charSeed % 2 === 0) {
+    return {
+      mandarinSentence: `我学习${norm.hanzi}。`,
+      cleanSentence: `我学习${norm.hanzi}`,
+      tokens: ['我', '学习', norm.hanzi],
+      pinyinSentence: `Wǒ xuéxí ${primaryPinyin}.`,
+      englishSentence: `I study "${shortMeaning}".`
+    };
+  }
+  return {
+    mandarinSentence: `这是${norm.hanzi}。`,
+    cleanSentence: `这是${norm.hanzi}`,
+    tokens: ['这', '是', norm.hanzi],
+    pinyinSentence: `Zhè shì ${primaryPinyin}.`,
+    englishSentence: `This is "${shortMeaning}".`
+  };
+}
+
+export function buildSentenceBuilderPuzzle(word = UNIT_1_WORDS[0]) {
+  const norm = normalizeWordEntry(word);
+  const hasRealExample = hasRealMultiWordExample(norm);
+  let rawHanzi = '';
+  let cleanSentence = '';
+  let englishTranslation = norm.exampleEnglish || norm.meaning;
+  let pinyinHint = norm.examplePinyin || norm.pinyin;
+  let tokens = [];
+
+  if (hasRealExample) {
+    rawHanzi = String(
+      norm.example?.includes('—')
+        ? norm.example.split('—')[0].trim()
+        : norm.exampleHanzi || ''
+    ).trim();
+    cleanSentence = rawHanzi.replace(/[，。！？、；：“”‘’!?,.\s]/g, '');
+
+    let cursor = 0;
+    while (cursor < cleanSentence.length) {
+      if (cleanSentence.slice(cursor).startsWith(norm.hanzi)) {
+        tokens.push(norm.hanzi);
+        cursor += norm.hanzi.length;
+      } else {
+        const remaining = cleanSentence.length - cursor;
+        const nextTargetIdx = cleanSentence.indexOf(norm.hanzi, cursor);
+        const maxStep =
+          nextTargetIdx > cursor ? Math.min(2, nextTargetIdx - cursor) : Math.min(2, remaining);
+        const step = remaining === 3 && nextTargetIdx === -1 ? 1 : maxStep;
+        tokens.push(cleanSentence.slice(cursor, cursor + step));
+        cursor += step;
+      }
     }
+  }
+
+  // Guardrail: never produce a 1-tile sentence puzzle when a word lacks a multi-word example
+  if (!hasRealExample || tokens.length < 2) {
+    const synth = buildSynthesizedContextExample(norm, 0);
+    rawHanzi = synth.mandarinSentence;
+    cleanSentence = synth.cleanSentence;
+    tokens = synth.tokens;
+    englishTranslation = synth.englishSentence;
+    pinyinHint = synth.pinyinSentence;
   }
 
   const deriveTilePinyin = (tileText) => {
@@ -561,8 +670,8 @@ export function buildSentenceBuilderPuzzle(word = UNIT_1_WORDS[0]) {
   return {
     targetHanziSentence: rawHanzi,
     cleanSentence,
-    englishTranslation: norm.exampleEnglish || norm.meaning,
-    pinyinHint: norm.examplePinyin || norm.pinyin,
+    englishTranslation,
+    pinyinHint,
     correctTokens: tokens,
     shuffledTiles
   };
@@ -605,13 +714,23 @@ export function buildClozeExerciseData(targetWord = UNIT_1_WORDS[0], lessonPool 
   const normTarget = normalizeWordEntry(targetWord, seed);
 
   const rawExample = String(normTarget.example || '').trim();
-  const mandarinPart = rawExample.includes('—')
+  let mandarinPart = rawExample.includes('—')
     ? rawExample.split('—')[0].trim()
     : normTarget.exampleHanzi || `${normTarget.hanzi}！`;
 
-  const englishPart = rawExample.includes('—')
+  let englishPart = rawExample.includes('—')
     ? rawExample.split('—').slice(1).join(' — ').trim()
     : normTarget.exampleEnglish || normTarget.meaning;
+
+  let pinyinPart = normTarget.examplePinyin || normTarget.pinyin;
+
+  // Guardrail: synthesize a minimal contextual sentence when a word has no real multi-word example (avoid "[ ___ ]！")
+  if (!hasRealMultiWordExample(normTarget)) {
+    const synth = buildSynthesizedContextExample(normTarget, seed);
+    mandarinPart = synth.mandarinSentence;
+    englishPart = synth.englishSentence;
+    pinyinPart = synth.pinyinSentence;
+  }
 
   const blankSentence = mandarinPart.includes(normTarget.hanzi)
     ? mandarinPart.replace(normTarget.hanzi, '[ ___ ]')
@@ -653,7 +772,7 @@ export function buildClozeExerciseData(targetWord = UNIT_1_WORDS[0], lessonPool 
     mandarinSentence: mandarinPart,
     blankSentence,
     englishSentence: englishPart,
-    pinyinSentence: normTarget.examplePinyin || normTarget.pinyin,
+    pinyinSentence: pinyinPart,
     targetWord: normTarget,
     options
   };
@@ -673,8 +792,10 @@ export function deriveWordTonePattern(word = UNIT_1_WORDS[0]) {
   const tokens = segmentMandarinPinyin(numSource);
 
   let tones = tokens.map((tok) => {
-    const m = tok.match(/[1-5]/);
-    return m ? Number(m[0]) : 5;
+    const m = tok.match(/[0-5]/);
+    if (!m) return 5;
+    const parsed = Number(m[0]);
+    return parsed === 0 ? 5 : parsed;
   });
 
   if (tones.length === 0) {
@@ -682,43 +803,68 @@ export function deriveWordTonePattern(word = UNIT_1_WORDS[0]) {
     tones = parsed.map((s) => s.tone || 5);
   }
 
-  let has33Sandhi = false;
-  for (let i = 0; i < tones.length - 1; i++) {
-    if (tones[i] === 3 && tones[i + 1] === 3) {
-      has33Sandhi = true;
-      break;
-    }
-  }
-
-  let hasBuSandhi = false;
-  let hasYiSandhi = false;
   const syllables = parsePinyinSyllablesWithTones(norm.pinyin, norm.hanzi);
-  for (let i = 0; i < syllables.length - 1; i++) {
-    const cleanSyl = stripToneMarks(syllables[i].syllable);
-    if ((norm.hanzi.includes('不') || cleanSyl === 'bu') && tones[i + 1] === 4) {
+  const rawHanziChars = Array.from(String(norm.hanzi || '').replace(/[\s\p{P}]/gu, ''));
+  // Align erhua trailing 儿 so hanziChars aligns with syllable indices (e.g. 一点儿 -> ['一', '点'])
+  const alignedHanziChars =
+    rawHanziChars.length > tones.length && rawHanziChars[rawHanziChars.length - 1] === '儿'
+      ? rawHanziChars.slice(0, rawHanziChars.length - 1)
+      : rawHanziChars;
+  const hasHanzi = alignedHanziChars.length > 0;
+
+  let has33Sandhi = false;
+  let hasBuSandhi = false;
+  let hasYiTo2Sandhi = false;
+  let hasYiTo4Sandhi = false;
+  let yiNextToneFor4 = null;
+
+  const spokenTones = [...tones];
+
+  for (let i = 0; i < tones.length - 1; i++) {
+    const ch = alignedHanziChars[i] || '';
+    const prevCh = alignedHanziChars[i - 1] || '';
+    const cleanSyl = stripToneMarks(syllables[i]?.syllable || tokens[i] || '');
+    const nextTone = tones[i + 1];
+
+    const isBuChar = hasHanzi ? ch === '不' : cleanSyl === 'bu';
+    // Ordinal 第一 does not undergo 一 tone sandhi
+    const isYiChar = hasHanzi ? ch === '一' && prevCh !== '第' : cleanSyl === 'yi';
+
+    if (isBuChar && nextTone === 4) {
       hasBuSandhi = true;
-    }
-    if ((norm.hanzi.includes('一') || cleanSyl === 'yi') && tones[i + 1] === 4) {
-      hasYiSandhi = true;
+      spokenTones[i] = 2;
+    } else if (isYiChar && nextTone === 4) {
+      hasYiTo2Sandhi = true;
+      spokenTones[i] = 2;
+    } else if (isYiChar && (nextTone === 1 || nextTone === 2 || nextTone === 3)) {
+      hasYiTo4Sandhi = true;
+      yiNextToneFor4 = nextTone;
+      spokenTones[i] = 4;
+    } else if (tones[i] === 3 && nextTone === 3) {
+      has33Sandhi = true;
+      spokenTones[i] = 2;
     }
   }
 
+  const spokenLabelBase = spokenTones.map(formatToneName).join(' + ');
   let label = '';
   let detailNote = '';
 
-  if (has33Sandhi && tones.length === 2) {
+  if (has33Sandhi && tones.length === 2 && !hasBuSandhi && !hasYiTo2Sandhi && !hasYiTo4Sandhi) {
     label = '2nd + 3rd (Sandhi from 3+3)';
     detailNote = '3rd + 3rd tone sandhi: first syllable rises like a 2nd tone (3+3 → 2+3).';
   } else if (has33Sandhi) {
-    const spokenTones = tones.map((t, idx) => (t === 3 && tones[idx + 1] === 3 ? 2 : t));
-    label = `${spokenTones.map(formatToneName).join(' + ')} (Sandhi from ${tones.join('+')})`;
+    label = `${spokenLabelBase} (Sandhi from ${tones.join('+')})`;
     detailNote = 'Consecutive 3rd tones trigger 3+3 → 2+3 tone sandhi.';
   } else if (hasBuSandhi) {
-    label = '2nd + 4th (不 Sandhi: 4+4 → 2+4)';
+    label = `${spokenLabelBase} (不 Sandhi: 4+4 → 2+4)`;
     detailNote = '不 (bù) shifts to 2nd tone (bú) before a 4th-tone syllable.';
-  } else if (hasYiSandhi) {
-    label = '2nd + 4th (一 Sandhi: 1+4 → 2+4)';
+  } else if (hasYiTo2Sandhi) {
+    label = `${spokenLabelBase} (一 Sandhi: 1+4 → 2+4)`;
     detailNote = '一 (yī) shifts to 2nd tone (yí) before a 4th-tone syllable.';
+  } else if (hasYiTo4Sandhi) {
+    label = `${spokenLabelBase} (一 Sandhi: 1+${yiNextToneFor4} → 4+${yiNextToneFor4})`;
+    detailNote = '一 (yī) shifts to 4th tone (yì) before a 1st-, 2nd-, or 3rd-tone syllable.';
   } else {
     label = tones.map(formatToneName).join(' + ');
     detailNote = `Standard citation tones (${norm.pinyinNum || norm.pinyin}) with no sandhi shift.`;
@@ -726,33 +872,89 @@ export function deriveWordTonePattern(word = UNIT_1_WORDS[0]) {
 
   return {
     tones,
+    spokenTones,
     label,
     detailNote,
-    isSandhi: has33Sandhi || hasBuSandhi || hasYiSandhi
+    isSandhi: has33Sandhi || hasBuSandhi || hasYiTo2Sandhi || hasYiTo4Sandhi
   };
 }
 
 export function buildToneSandhiOptions(word = UNIT_1_WORDS[0], seed = 0) {
   const correctPattern = deriveWordTonePattern(word);
-  const distractorLabels = [
-    '2nd + 3rd (Sandhi from 3+3)',
-    '4th + Neutral',
-    '4th + 4th',
-    '1st + 4th',
-    '2nd + 1st',
-    '3rd + 4th',
-    '1st + 2nd',
-    '2nd + 4th (不 Sandhi: 4+4 → 2+4)',
-    '1st + Neutral'
-  ].filter((lbl) => lbl !== correctPattern.label);
+  const syllableCount = Math.max(1, correctPattern.tones.length);
+  const baseTones = correctPattern.tones.length > 0 ? correctPattern.tones : [1];
+  const candidateLabels = [];
 
-  const chosenDistractors = [];
-  for (let i = 0; i < distractorLabels.length && chosenDistractors.length < 3; i++) {
-    const pick = distractorLabels[(i + seed) % distractorLabels.length];
-    if (!chosenDistractors.includes(pick)) {
-      chosenDistractors.push(pick);
+  const addCandidate = (lbl) => {
+    if (lbl && lbl !== correctPattern.label && !candidateLabels.includes(lbl)) {
+      candidateLabels.push(lbl);
+    }
+  };
+
+  // If the correct answer uses tone sandhi, include its un-sandhied citation tones as a strong distractor of identical length
+  if (correctPattern.isSandhi) {
+    addCandidate(baseTones.map(formatToneName).join(' + '));
+  }
+
+  if (syllableCount === 1) {
+    const oneSyllablePool = [1, 2, 3, 4, 5].map(formatToneName);
+    for (let i = 0; i < oneSyllablePool.length; i++) {
+      addCandidate(oneSyllablePool[(i + seed) % oneSyllablePool.length]);
+    }
+  } else if (syllableCount === 2) {
+    const twoSyllablePool = [
+      '2nd + 3rd (Sandhi from 3+3)',
+      '4th + Neutral',
+      '4th + 4th',
+      '1st + 4th',
+      '2nd + 1st',
+      '3rd + 4th',
+      '1st + 2nd',
+      '2nd + 4th (不 Sandhi: 4+4 → 2+4)',
+      '2nd + 4th (一 Sandhi: 1+4 → 2+4)',
+      '4th + 2nd (一 Sandhi: 1+2 → 4+2)',
+      '1st + Neutral',
+      '3rd + 2nd',
+      '2nd + 4th',
+      '3rd + 1st'
+    ];
+    for (let i = 0; i < twoSyllablePool.length; i++) {
+      addCandidate(twoSyllablePool[(i + seed) % twoSyllablePool.length]);
+    }
+  } else {
+    // Dynamically synthesize distractors with the EXACT same syllableCount (>= 3)
+    const activeTones = correctPattern.spokenTones || baseTones;
+    const toneCycle = [1, 2, 3, 4];
+
+    // Variant family 1: mutate a single syllable position
+    for (let pos = 0; pos < syllableCount; pos++) {
+      for (let step = 1; step <= 3; step++) {
+        const mutated = [...activeTones];
+        const origTone = mutated[pos];
+        const nextTone =
+          origTone === 5
+            ? toneCycle[(pos + step + seed) % 4]
+            : ((origTone - 1 + step + seed) % 4) + 1;
+        if (nextTone !== origTone) {
+          mutated[pos] = nextTone;
+          addCandidate(mutated.map(formatToneName).join(' + '));
+        }
+      }
+    }
+
+    // Variant family 2: mutate two syllable positions for extra diversity
+    for (let attempt = 0; attempt < 12 && candidateLabels.length < 6; attempt++) {
+      const mutated = activeTones.map((t, idx) => {
+        if ((idx + attempt) % 2 === 0) {
+          return ((Math.max(1, t) - 1 + attempt + idx + seed + 1) % 4) + 1;
+        }
+        return t;
+      });
+      addCandidate(mutated.map(formatToneName).join(' + '));
     }
   }
+
+  const chosenDistractors = candidateLabels.slice(0, 3);
 
   const rawChoices = [
     { id: 'tone_correct', label: correctPattern.label, isCorrect: true },
@@ -1196,7 +1398,17 @@ export function getWordSkillTelemetry(telemetryMap = {}, word = {}) {
 }
 
 export function computeUnlockedWordsPool(courses = [], activeCourse = null, activeLesson = null, progress = {}) {
-  const wordMap = new window.Map();
+  const wordMap = new Map();
+
+  const isLessonBossCompleted = (lessonObj, lpEntry) => {
+    if (!lessonObj || !lpEntry) return false;
+    const bossStageId = buildProportionalUnitNodes(lessonObj.words).length;
+    const bossNodeLevel = Number(lpEntry.nodeLevels?.[String(bossStageId)] || 0);
+    return (
+      bossNodeLevel >= 1 ||
+      (Array.isArray(lpEntry.completedStages) && lpEntry.completedStages.includes(bossStageId))
+    );
+  };
 
   courses.forEach((course) => {
     const lessons = course.lessons || [];
@@ -1206,9 +1418,8 @@ export function computeUnlockedWordsPool(courses = [], activeCourse = null, acti
 
       const prevLesson = lIdx > 0 ? lessons[lIdx - 1] : null;
       const prevLessonKey = prevLesson ? `${course.id}__${prevLesson.id}` : null;
-      const prevLessonCompleted =
-        prevLessonKey &&
-        progress.lessonProgress?.[prevLessonKey]?.completedStages?.includes(4);
+      const prevLp = prevLessonKey ? progress.lessonProgress?.[prevLessonKey] : null;
+      const prevLessonCompleted = Boolean(prevLesson && isLessonBossCompleted(prevLesson, prevLp));
 
       const isDefaultUnit1 =
         course.id === 'course_default_unit1' && lesson.id === 'lesson_unit_1';
@@ -1224,7 +1435,8 @@ export function computeUnlockedWordsPool(courses = [], activeCourse = null, acti
         Boolean(
           lp &&
             ((lp.unlockedStage || 1) > 1 ||
-              (Array.isArray(lp.completedStages) && lp.completedStages.length > 0))
+              (Array.isArray(lp.completedStages) && lp.completedStages.length > 0) ||
+              Object.values(lp.nodeLevels || {}).some((lv) => Number(lv) >= 1))
         );
 
       if (isUnlockedOrStarted) {
@@ -1250,9 +1462,15 @@ export function computeUnlockedWordsPool(courses = [], activeCourse = null, acti
   });
 
   const defaultUnitKey = 'course_default_unit1__lesson_unit_1';
+  const defaultCourse = courses.find((c) => c.id === 'course_default_unit1');
+  const defaultLesson =
+    defaultCourse?.lessons?.find((l) => l.id === 'lesson_unit_1') || { words: UNIT_1_WORDS };
+  const defaultBossStageId = buildProportionalUnitNodes(defaultLesson.words).length;
+  const defaultLp = progress.lessonProgress?.[defaultUnitKey];
   const defaultUnitDone =
-    (progress.completedStages || []).includes(4) ||
-    (progress.lessonProgress?.[defaultUnitKey]?.completedStages || []).includes(4);
+    isLessonBossCompleted(defaultLesson, defaultLp) ||
+    (Array.isArray(progress.completedStages) &&
+      progress.completedStages.includes(defaultBossStageId));
 
   const wordsArray = Array.from(wordMap.values());
   const effectiveCount = defaultUnitDone
@@ -1636,6 +1854,9 @@ export function buildDynamicModalityQueue(
 ) {
   const safeWords =
     Array.isArray(words) && words.length > 0 ? words : UNIT_1_WORDS;
+  const normalizedSafeWords = safeWords.map((w, idx) => normalizeWordEntry(w, idx));
+  const safeWordHanziSet = new Set(normalizedSafeWords.map((w) => w.hanzi).filter(Boolean));
+
   const baseModes =
     Array.isArray(allowedModalities) && allowedModalities.length > 0
       ? [...allowedModalities]
@@ -1644,7 +1865,7 @@ export function buildDynamicModalityQueue(
   const effectiveUnlockedPool =
     Array.isArray(unlockedWordsPool) && unlockedWordsPool.length > 0
       ? unlockedWordsPool
-      : [...safeWords, ...(Array.isArray(pastLessonWords) ? pastLessonWords : [])];
+      : [...normalizedSafeWords, ...(Array.isArray(pastLessonWords) ? pastLessonWords : [])];
 
   const classifierGate = getClassifierDrillUnlockStatus(effectiveUnlockedPool);
   const dialogueGate = getDialogueQaUnlockStatus(effectiveUnlockedPool);
@@ -1663,50 +1884,112 @@ export function buildDynamicModalityQueue(
   const isMixedMultiSkillNode =
     modes.length > 1 && !modes.every((m) => m === 'writing');
 
-  // Inject strictly-gated Measure Words (量词) & Conversational Q&A (问答) into mixed nodes
-  if (isMixedMultiSkillNode && classifierGate.unlocked && !modes.includes('classifier_drill')) {
-    modes.push('classifier_drill');
-  }
-  if (isMixedMultiSkillNode && dialogueGate.unlocked && !modes.includes('dialogue_qa')) {
-    modes.push('dialogue_qa');
-  }
+  const classifierMatchesWord = (item, w) => {
+    if (!item || !w?.hanzi) return false;
+    if (item.sourceWord?.hanzi === w.hanzi) return true;
+    return (item.matchTriggers || []).some(
+      (trig) => trig === w.hanzi || (trig.length >= 2 && w.hanzi.includes(trig))
+    );
+  };
+
+  const dialogueMatchesWord = (pair, w) => {
+    if (!pair || !w?.hanzi) return false;
+    if (pair.sourceWord?.hanzi === w.hanzi) return true;
+    return (pair.requiredWordGroups || []).some((grp) =>
+      grp.some((tok) => tok === w.hanzi || (tok.length >= 2 && w.hanzi.includes(tok)))
+    );
+  };
+
+  // Core modes stay bound to safeWords; never displace a target micro-group word with an unrelated global item
+  const coreModes = modes.filter((m) => m !== 'classifier_drill' && m !== 'dialogue_qa');
+  const activeCoreModes = coreModes.length > 0 ? coreModes : modes;
 
   // Guarantee thorough per-word practice: at least 2 passes across a 3-word group (6 items)
-  const targetSteps = Math.max(safeWords.length * 2, Math.min(8, safeWords.length * 2));
+  const targetSteps = Math.max(
+    normalizedSafeWords.length * 2,
+    Math.min(8, normalizedSafeWords.length * 2)
+  );
   const coreQueue = [];
-  let classifierCursor = 0;
-  let dialogueCursor = 0;
+  const usedClassifierIds = new Set();
+  const usedDialogueIds = new Set();
+  let injectedCoreClassifier = false;
+  let injectedCoreDialogue = false;
 
   for (let i = 0; i < targetSteps; i++) {
-    const word = normalizeWordEntry(safeWords[i % safeWords.length], i);
+    const word = normalizedSafeWords[i % normalizedSafeWords.length];
     const prev1 = coreQueue.length >= 1 ? coreQueue[coreQueue.length - 1].modality : null;
     const prev2 = coreQueue.length >= 2 ? coreQueue[coreQueue.length - 2].modality : null;
 
-    const candidates = modes.filter((m) => !(m === prev1 && m === prev2));
-    const poolToPick = candidates.length > 0 ? candidates : modes;
+    const candidates = activeCoreModes.filter((m) => !(m === prev1 && m === prev2));
+    const poolToPick = candidates.length > 0 ? candidates : activeCoreModes;
     let chosenModality = poolToPick[i % poolToPick.length];
     let classifierItem = null;
     let dialoguePair = null;
-    let stepWord = word;
+    const stepWord = word;
 
-    if (chosenModality === 'classifier_drill') {
-      if (classifierGate.unlocked && classifierGate.items.length > 0) {
-        classifierItem =
-          classifierGate.items[classifierCursor % classifierGate.items.length];
-        classifierCursor += 1;
-        stepWord = classifierItem.sourceWord || word;
+    // On second pass of mixed nodes, inject classifier_drill / dialogue_qa in-place ONLY when it matches this exact micro-group word
+    if (isMixedMultiSkillNode && i >= normalizedSafeWords.length) {
+      if (classifierGate.unlocked && !injectedCoreClassifier) {
+        const matchClf = classifierGate.items.find(
+          (it) => !usedClassifierIds.has(it.id) && classifierMatchesWord(it, word)
+        );
+        if (matchClf) {
+          chosenModality = 'classifier_drill';
+          classifierItem = { ...matchClf, sourceWord: word };
+          usedClassifierIds.add(matchClf.id);
+          injectedCoreClassifier = true;
+        }
+      }
+      if (
+        chosenModality !== 'classifier_drill' &&
+        dialogueGate.unlocked &&
+        !injectedCoreDialogue
+      ) {
+        const matchQa = dialogueGate.pairs.find(
+          (p) => !usedDialogueIds.has(p.id) && dialogueMatchesWord(p, word)
+        );
+        if (matchQa) {
+          chosenModality = 'dialogue_qa';
+          dialoguePair = { ...matchQa, sourceWord: word };
+          usedDialogueIds.add(matchQa.id);
+          injectedCoreDialogue = true;
+        }
+      }
+    }
+
+    // Handle explicit single-mode classifier_drill / dialogue_qa requests without displacing unrelated words
+    if (chosenModality === 'classifier_drill' && !classifierItem) {
+      const matchClf = classifierGate.items.find(
+        (it) =>
+          !usedClassifierIds.has(it.id) &&
+          (classifierMatchesWord(it, word) || safeWordHanziSet.has(it.sourceWord?.hanzi))
+      );
+      if (matchClf) {
+        classifierItem = matchClf;
+        usedClassifierIds.add(matchClf.id);
       } else {
         chosenModality = 'meaning_mc';
       }
-    } else if (chosenModality === 'dialogue_qa') {
-      if (dialogueGate.unlocked && dialogueGate.pairs.length > 0) {
-        dialoguePair =
-          dialogueGate.pairs[dialogueCursor % dialogueGate.pairs.length];
-        dialogueCursor += 1;
-        stepWord = dialoguePair.sourceWord || word;
+    } else if (chosenModality === 'dialogue_qa' && !dialoguePair) {
+      const matchQa = dialogueGate.pairs.find(
+        (p) =>
+          !usedDialogueIds.has(p.id) &&
+          (dialogueMatchesWord(p, word) || safeWordHanziSet.has(p.sourceWord?.hanzi))
+      );
+      if (matchQa) {
+        dialoguePair = matchQa;
+        usedDialogueIds.add(matchQa.id);
       } else {
         chosenModality = 'meaning_mc';
       }
+    }
+
+    // Short-example guardrail: never schedule cloze/sentence_builder on a word with no real multi-word example
+    if (
+      (chosenModality === 'cloze' || chosenModality === 'sentence_builder') &&
+      !hasRealMultiWordExample(stepWord)
+    ) {
+      chosenModality = i % 2 === 0 ? 'meaning_mc' : 'listening';
     }
 
     coreQueue.push({
@@ -1720,6 +2003,42 @@ export function buildDynamicModalityQueue(
     });
   }
 
+  // Append up to 1-2 supplemental classifier_drill / dialogue_qa steps on mixed nodes without displacing the target micro-group words
+  if (isMixedMultiSkillNode && classifierGate.unlocked && !injectedCoreClassifier && classifierGate.items.length > 0) {
+    const suppClf =
+      classifierGate.items.find((it) => !usedClassifierIds.has(it.id)) || classifierGate.items[0];
+    if (suppClf) {
+      usedClassifierIds.add(suppClf.id);
+      const suppWord = suppClf.sourceWord || normalizedSafeWords[0];
+      coreQueue.push({
+        stepId: `supp_${suppWord.id}_classifier_drill_${coreQueue.length}`,
+        word: suppWord,
+        modality: 'classifier_drill',
+        classifierItem: suppClf,
+        dialoguePair: null,
+        isPastLessonReview: false,
+        reason: `${badgeText} • ${MODALITY_META.classifier_drill?.label || 'classifier_drill'}`
+      });
+    }
+  }
+  if (isMixedMultiSkillNode && dialogueGate.unlocked && !injectedCoreDialogue && dialogueGate.pairs.length > 0) {
+    const suppQa =
+      dialogueGate.pairs.find((p) => !usedDialogueIds.has(p.id)) || dialogueGate.pairs[0];
+    if (suppQa) {
+      usedDialogueIds.add(suppQa.id);
+      const suppWord = suppQa.sourceWord || normalizedSafeWords[0];
+      coreQueue.push({
+        stepId: `supp_${suppWord.id}_dialogue_qa_${coreQueue.length}`,
+        word: suppWord,
+        modality: 'dialogue_qa',
+        classifierItem: null,
+        dialoguePair: suppQa,
+        isPastLessonReview: false,
+        reason: `${badgeText} • ${MODALITY_META.dialogue_qa?.label || 'dialogue_qa'}`
+      });
+    }
+  }
+
   // Sporadic Spiral Review of Past Lessons (Strictly Excluding Writing)
   // Run 2+ (nodeLevel >= 1) adds +1 past-lesson review item (strictly excluding writing)
   const hasOnlyWriting = modes.every((m) => m === 'writing');
@@ -1729,31 +2048,47 @@ export function buildDynamicModalityQueue(
     Array.isArray(pastLessonWords) &&
     pastLessonWords.length > 0
   ) {
-    // Strictly exclude 'writing' from allowed review modalities; include dialogue_qa when unlocked
+    const normalizedPastWords = pastLessonWords.map((w, idx) => normalizeWordEntry(w, 100 + idx));
+    const pastWordHanziSet = new Set(normalizedPastWords.map((w) => w.hanzi).filter(Boolean));
+    const pastMatchingClassifiers = classifierGate.unlocked
+      ? classifierGate.items.filter(
+          (it) => it.sourceWord?.hanzi && pastWordHanziSet.has(it.sourceWord.hanzi)
+        )
+      : [];
+    const pastMatchingDialogues = dialogueGate.unlocked
+      ? dialogueGate.pairs.filter(
+          (p) => p.sourceWord?.hanzi && pastWordHanziSet.has(p.sourceWord.hanzi)
+        )
+      : [];
+
+    // Strictly exclude 'writing' from allowed review modalities
     const validReviewModes = modes
       .map((m) => (m === 'recognition' ? 'meaning_mc' : m))
       .filter((m) => m !== 'writing' && NON_WRITING_REVIEW_MODALITIES.includes(m));
-    if (dialogueGate.unlocked && !validReviewModes.includes('dialogue_qa')) {
+    if (pastMatchingDialogues.length > 0 && !validReviewModes.includes('dialogue_qa')) {
       validReviewModes.push('dialogue_qa');
+    }
+    if (pastMatchingClassifiers.length > 0 && !validReviewModes.includes('classifier_drill')) {
+      validReviewModes.push('classifier_drill');
     }
     const reviewModePool =
       validReviewModes.length > 0 ? validReviewModes : ['meaning_mc', 'listening', 'cloze'];
+    const fallbackPastModes = ['meaning_mc', 'listening', 'speaking', 'cloze'];
 
     // ~20% of the node's question queue (1 to 2 review items) + 1 extra item on Run 2/3 (nodeLevel >= 1)
     const baseReviewCount = coreQueue.length >= 6 ? 2 : 1;
     const extraNodeLevelReview = nodeLevel >= 1 ? 1 : 0;
     const reviewCount = Math.min(
-      pastLessonWords.length,
+      normalizedPastWords.length,
       baseReviewCount + extraNodeLevelReview
     );
 
     // Pick distinct past-lesson words
-    const shuffledPast = [...pastLessonWords].sort(() => Math.random() - 0.5);
+    const shuffledPast = [...normalizedPastWords].sort(() => Math.random() - 0.5);
     const selectedReviewWords = shuffledPast.slice(0, reviewCount);
     const insertSlots = [2, 5, 7];
 
-    selectedReviewWords.forEach((revWord, rIdx) => {
-      const normalizedRev = normalizeWordEntry(revWord, 100 + rIdx);
+    selectedReviewWords.forEach((normalizedRev, rIdx) => {
       // Strictly never 'writing'
       const chosenReviewModality =
         reviewModePool[(rIdx + Math.floor(Math.random() * reviewModePool.length)) % reviewModePool.length];
@@ -1764,21 +2099,38 @@ export function buildDynamicModalityQueue(
       let revStepWord = normalizedRev;
 
       if (safeReviewModality === 'dialogue_qa') {
-        if (dialogueGate.unlocked && dialogueGate.pairs.length > 0) {
-          revDialoguePair =
-            dialogueGate.pairs[(dialogueCursor + rIdx) % dialogueGate.pairs.length];
-          revStepWord = revDialoguePair.sourceWord || normalizedRev;
+        const matchedPastQa =
+          pastMatchingDialogues.find(
+            (p) => !usedDialogueIds.has(p.id) && p.sourceWord?.hanzi === normalizedRev.hanzi
+          ) ||
+          pastMatchingDialogues.find((p) => !usedDialogueIds.has(p.id));
+        if (matchedPastQa && pastWordHanziSet.has(matchedPastQa.sourceWord?.hanzi)) {
+          revDialoguePair = matchedPastQa;
+          usedDialogueIds.add(matchedPastQa.id);
+          revStepWord = matchedPastQa.sourceWord;
         } else {
-          safeReviewModality = 'meaning_mc';
+          safeReviewModality = fallbackPastModes[rIdx % fallbackPastModes.length];
         }
       } else if (safeReviewModality === 'classifier_drill') {
-        if (classifierGate.unlocked && classifierGate.items.length > 0) {
-          revClassifierItem =
-            classifierGate.items[(classifierCursor + rIdx) % classifierGate.items.length];
-          revStepWord = revClassifierItem.sourceWord || normalizedRev;
+        const matchedPastClf =
+          pastMatchingClassifiers.find(
+            (it) => !usedClassifierIds.has(it.id) && it.sourceWord?.hanzi === normalizedRev.hanzi
+          ) ||
+          pastMatchingClassifiers.find((it) => !usedClassifierIds.has(it.id));
+        if (matchedPastClf && pastWordHanziSet.has(matchedPastClf.sourceWord?.hanzi)) {
+          revClassifierItem = matchedPastClf;
+          usedClassifierIds.add(matchedPastClf.id);
+          revStepWord = matchedPastClf.sourceWord;
         } else {
-          safeReviewModality = 'meaning_mc';
+          safeReviewModality = fallbackPastModes[rIdx % fallbackPastModes.length];
         }
+      }
+
+      if (
+        (safeReviewModality === 'cloze' || safeReviewModality === 'sentence_builder') &&
+        !hasRealMultiWordExample(revStepWord)
+      ) {
+        safeReviewModality = rIdx % 2 === 0 ? 'meaning_mc' : 'listening';
       }
 
       const reviewItem = {
@@ -2334,24 +2686,12 @@ export const ATTESTED_CLASSIFIER_PHRASES = [
     grammarNote: '条 (tiáo) measures long, slender, or sinuous nouns including fish, rivers, and roads.'
   },
   {
-    id: 'clf_tiao_gou_alt',
-    numberHanzi: '两',
-    classifier: '条',
-    acceptedClassifiers: ['条', '只'],
-    nounHanzi: '狗',
-    matchTriggers: ['狗', '小狗'],
-    fullPhraseHanzi: '两条狗',
-    fullPhrasePinyin: 'liǎng tiáo gǒu',
-    englishMeaning: 'two dogs',
-    grammarNote: '条 (tiáo) and 只 (zhī) are both attested classifiers for dogs.'
-  },
-  {
     id: 'clf_tiao_kuzi',
     numberHanzi: '一',
     classifier: '条',
     acceptedClassifiers: ['条'],
     nounHanzi: '裤子',
-    matchTriggers: ['裤子', '裙子', '路'],
+    matchTriggers: ['裤子', '裙子'],
     fullPhraseHanzi: '一条裤子',
     fullPhrasePinyin: 'yī tiáo kùzi',
     englishMeaning: 'a pair of pants',
@@ -2450,7 +2790,7 @@ export const ATTESTED_CLASSIFIER_PHRASES = [
     classifier: '位',
     acceptedClassifiers: ['位'],
     nounHanzi: '先生',
-    matchTriggers: ['先生', '小姐'],
+    matchTriggers: ['先生'],
     fullPhraseHanzi: '一位先生',
     fullPhrasePinyin: 'yī wèi xiānsheng',
     englishMeaning: 'a gentleman / Mr. (polite)',
@@ -2487,7 +2827,7 @@ export const ATTESTED_CLASSIFIER_PHRASES = [
     classifier: '张',
     acceptedClassifiers: ['张'],
     nounHanzi: '照片',
-    matchTriggers: ['照片', '票', '床'],
+    matchTriggers: ['照片', '票'],
     fullPhraseHanzi: '一张照片',
     fullPhrasePinyin: 'yī zhāng zhàopiàn',
     englishMeaning: 'a photograph',
@@ -2561,7 +2901,7 @@ export const ATTESTED_CLASSIFIER_PHRASES = [
     classifier: '个',
     acceptedClassifiers: ['个'],
     nounHanzi: '杯子',
-    matchTriggers: ['杯子', '东西', '电脑', '名字', '人'],
+    matchTriggers: ['杯子', '东西', '电脑', '名字'],
     fullPhraseHanzi: '一个杯子',
     fullPhrasePinyin: 'yī gè bēizi',
     englishMeaning: 'a cup / mug (the object itself)',

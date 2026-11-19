@@ -101,6 +101,20 @@
   box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.08), 0 1px 0 #020617 !important;
 }
 
+/* Ensure Pinyin & clarity badges inside .game-btn-3d buttons inherit Plus Jakarta Sans so tone diacritics (ā á ǎ à ǖ) stay crisp */
+.game-btn-3d.font-clarity,
+.game-btn-3d .font-clarity,
+.game-btn-3d.font-pinyin,
+.game-btn-3d .font-pinyin,
+.game-btn-3d.font-pinyin-inline,
+.game-btn-3d .font-pinyin-inline,
+.game-btn-3d .font-hanzi + span,
+.game-btn-3d .text-rose-300,
+.game-btn-3d .text-rose-400 {
+  font-family: var(--font-sans) !important;
+  letter-spacing: 0.01em !important;
+}
+
 /* Generous top and bottom mobile safe-area margins so buttons never touch Android screen edges */
 .pb-safe {
   padding-bottom: max(18px, env(safe-area-inset-bottom, 18px));
@@ -158,8 +172,18 @@
   animation: floatBob 1.6s steps(4, end) infinite;
 }
 
+@keyframes marqueeGlide {
+  0%, 18% { transform: translate3d(0, 0, 0); }
+  66%, 84% { transform: translate3d(var(--marquee-shift, 0px), 0, 0); }
+  100% { transform: translate3d(0, 0, 0); }
+}
+
 .animate-node-ring {
   animation: nodeRingPulse 1.8s steps(4, end) infinite;
+}
+
+.animate-marquee-glide {
+  animation: marqueeGlide var(--marquee-duration, 6s) cubic-bezier(0.37, 0, 0.63, 1) infinite;
 }
 
 /* Custom subtle pixel scrollbars for mobile drawers and lists */

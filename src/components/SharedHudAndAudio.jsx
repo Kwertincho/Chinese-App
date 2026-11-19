@@ -11,6 +11,7 @@ import {
   NORMAL_SPEECH_RATE,
   SLOW_SPEECH_RATE,
   getGlobalIsSlowMode,
+  setGlobalIsSlowMode,
   soundFX
 } from '../audio/soundEngine.js';
 import { KNOWN_CHARACTER_INFO } from '../data/curriculumData.js';
@@ -362,16 +363,39 @@ export function ChaoToneVisualizer({ pinyin = '', hanzi = '', compact = false })
   );
 
   const sandhiNote = useMemo(() => {
+    const cleanHanziChars = Array.from(String(hanzi || '').replace(/[^\u4e00-\u9fff]/g, ''));
+    const alignedHanzi = [];
+    for (let k = 0; k < cleanHanziChars.length; k++) {
+      if (cleanHanziChars[k] === '儿' && alignedHanzi.length > 0 && k > 0) {
+        const prevIdx = alignedHanzi.length - 1;
+        if (syllables[prevIdx] && /r$/i.test(stripToneMarks(syllables[prevIdx].syllable))) {
+          alignedHanzi[prevIdx] += '儿';
+          continue;
+        }
+      }
+      alignedHanzi.push(cleanHanziChars[k]);
+    }
+    const hasHanzi = alignedHanzi.length > 0;
+
     for (let i = 0; i < syllables.length - 1; i++) {
-      if (syllables[i].tone === 3 && syllables[i + 1].tone === 3) {
+      const ch = alignedHanzi[i] || '';
+      const prevCh = i > 0 ? alignedHanzi[i - 1] || '' : '';
+      const cleanBase = stripToneMarks(syllables[i].syllable);
+      const nextTone = syllables[i + 1].tone;
+
+      if (syllables[i].tone === 3 && nextTone === 3) {
         return 'Tone Sandhi: 3rd + 3rd spoken as 2nd + 3rd (2 + 3)';
       }
-      const cleanBase = stripToneMarks(syllables[i].syllable);
-      if ((hanzi[i] === '不' || cleanBase === 'bu') && syllables[i + 1].tone === 4) {
+      const isBuChar = hasHanzi ? ch === '不' : cleanBase === 'bu';
+      if (isBuChar && nextTone === 4) {
         return 'Tone Sandhi: 不 (bù) shifts to 2nd tone (bú) before 4th tone';
       }
-      if ((hanzi[i] === '一' || cleanBase === 'yi') && syllables[i + 1].tone === 4) {
+      const isYiChar = hasHanzi ? ch === '一' && prevCh !== '第' : cleanBase === 'yi';
+      if (isYiChar && nextTone === 4) {
         return 'Tone Sandhi: 一 (yī) shifts to 2nd tone (yí) before 4th tone';
+      }
+      if (isYiChar && (nextTone === 1 || nextTone === 2 || nextTone === 3)) {
+        return 'Tone Sandhi: 一 (yī) shifts to 4th tone (yì) before 1st, 2nd, or 3rd tone';
       }
     }
     return null;
@@ -789,83 +813,38 @@ export function ScrollingText({
   const containerRef = useRef(null);
   const contentRef = useRef(null);
   const [overflowPx, setOverflowPx] = useState(0);
-  const [offsetPx, setOffsetPx] = useState(0);
-  const [transitionDurationMs, setTransitionDurationMs] = useState(0);
 
   const measureOverflow = useCallback(() => {
     const container = containerRef.current;
     const content = contentRef.current;
     if (!container || !content) return;
     const diff = Math.ceil(content.scrollWidth - container.clientWidth);
-    setOverflowPx(diff > 3 ? diff : 0);
+    const nextOverflow = diff > 3 ? diff : 0;
+    setOverflowPx((prev) => (prev === nextOverflow ? prev : nextOverflow));
   }, []);
 
   useEffect(() => {
     measureOverflow();
-    const container = containerRef.current;
-    if (!container) return;
-    let ro = null;
-    if (typeof window !== 'undefined' && window.ResizeObserver) {
-      ro = new window.ResizeObserver(() => {
-        measureOverflow();
-      });
-      ro.observe(container);
-      if (contentRef.current) ro.observe(contentRef.current);
-    }
+    const rafId =
+      typeof window !== 'undefined' && window.requestAnimationFrame
+        ? window.requestAnimationFrame(measureOverflow)
+        : null;
     window.addEventListener('resize', measureOverflow);
     return () => {
-      if (ro) ro.disconnect();
+      if (rafId !== null && window.cancelAnimationFrame) {
+        window.cancelAnimationFrame(rafId);
+      }
       window.removeEventListener('resize', measureOverflow);
     };
-  }, [text, children, measureOverflow]);
+  }, [text, measureOverflow]);
 
-  useEffect(() => {
-    if (overflowPx <= 0) {
-      setTransitionDurationMs(0);
-      setOffsetPx(0);
-      return;
-    }
-
-    let cancelled = false;
-    let timer1 = null;
-    let timer2 = null;
-    let timer3 = null;
-
-    const glideDurationMs = Math.max(1400, Math.round((overflowPx / pixelsPerSecond) * 1000));
-    const resetDurationMs = 550;
-
-    const runCycle = () => {
-      if (cancelled) return;
-      setTransitionDurationMs(0);
-      setOffsetPx(0);
-
-      timer1 = setTimeout(() => {
-        if (cancelled) return;
-        setTransitionDurationMs(glideDurationMs);
-        setOffsetPx(-overflowPx);
-
-        timer2 = setTimeout(() => {
-          if (cancelled) return;
-          setTransitionDurationMs(resetDurationMs);
-          setOffsetPx(0);
-
-          timer3 = setTimeout(() => {
-            if (cancelled) return;
-            runCycle();
-          }, resetDurationMs + 250);
-        }, glideDurationMs + pauseMs);
-      }, pauseMs);
-    };
-
-    runCycle();
-
-    return () => {
-      cancelled = true;
-      if (timer1) clearTimeout(timer1);
-      if (timer2) clearTimeout(timer2);
-      if (timer3) clearTimeout(timer3);
-    };
-  }, [overflowPx, pauseMs, pixelsPerSecond, text]);
+  const totalDurationMs =
+    overflowPx > 0
+      ? Math.max(
+          2600,
+          Math.round((overflowPx / Math.max(10, pixelsPerSecond)) * 1000) + pauseMs * 2 + 550
+        )
+      : 0;
 
   return (
     <div
@@ -875,14 +854,17 @@ export function ScrollingText({
     >
       <div
         ref={contentRef}
-        style={{
-          transform: `translate3d(${offsetPx}px, 0, 0)`,
-          transition:
-            transitionDurationMs > 0
-              ? `transform ${transitionDurationMs}ms cubic-bezier(0.37, 0, 0.63, 1)`
-              : 'none'
-        }}
-        className="inline-block whitespace-nowrap will-change-transform"
+        style={
+          overflowPx > 0
+            ? {
+                '--marquee-shift': `-${overflowPx}px`,
+                '--marquee-duration': `${totalDurationMs}ms`
+              }
+            : undefined
+        }
+        className={`inline-block whitespace-nowrap ${
+          overflowPx > 0 ? 'will-change-transform animate-marquee-glide' : ''
+        }`}
       >
         {children !== null && children !== undefined ? children : text}
       </div>

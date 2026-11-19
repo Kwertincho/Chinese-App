@@ -30,7 +30,6 @@ import {
   UNIT_1_WORDS,
   DEFAULT_COURSES,
   DEFAULT_CUSTOM_DECKS,
-  HETEROGENEOUS_PATTERNS,
   STORAGE_KEY_PROGRESS,
   STORAGE_KEY_COURSES,
   STORAGE_KEY_DECKS,
@@ -73,6 +72,19 @@ import {
 import { PWAInstallButton, OfflineIndicator } from './components/PWAInstallPrompt.jsx';
 
 export { speakMandarinGlobal };
+
+const STORAGE_KEY_ACTIVE_SELECTION = 'hanziapp_active_selection';
+
+function getLocalIsoDate(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function getLocalYesterdayIsoDate(now = new Date()) {
+  return getLocalIsoDate(new Date(now.getFullYear(), now.getMonth(), now.getDate() - 1));
+}
 
 export default function App() {
   const [showTitleScreen, setShowTitleScreen] = useState(true);
@@ -154,9 +166,41 @@ export default function App() {
     return DEFAULT_CUSTOM_DECKS;
   });
 
-  const [activeCourseId, setActiveCourseId] = useState(DEFAULT_COURSES[0].id);
-  const [activeLessonId, setActiveLessonId] = useState(DEFAULT_COURSES[0].lessons[0].id);
-  const [patternPreviewOverride, setPatternPreviewOverride] = useState<string | null>(null);
+  const [activeCourseId, setActiveCourseId] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_ACTIVE_SELECTION);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        if (parsed?.courseId && courses.some((c: any) => c.id === parsed.courseId)) {
+          return parsed.courseId;
+        }
+      }
+    } catch (e) {
+      // Ignore storage errors
+    }
+    return courses[0]?.id || DEFAULT_COURSES[0].id;
+  });
+
+  const [activeLessonId, setActiveLessonId] = useState(() => {
+    try {
+      const saved = localStorage.getItem(STORAGE_KEY_ACTIVE_SELECTION);
+      if (saved) {
+        const parsed = JSON.parse(saved);
+        const matchedCourse =
+          courses.find((c: any) => c.id === parsed?.courseId) || courses[0] || DEFAULT_COURSES[0];
+        if (
+          parsed?.lessonId &&
+          (matchedCourse.lessons || []).some((l: any) => l.id === parsed.lessonId)
+        ) {
+          return parsed.lessonId;
+        }
+        return matchedCourse.lessons?.[0]?.id || DEFAULT_COURSES[0].lessons[0].id;
+      }
+    } catch (e) {
+      // Ignore storage errors
+    }
+    return courses[0]?.lessons?.[0]?.id || DEFAULT_COURSES[0].lessons[0].id;
+  });
 
   // Active Study / Game Modal State
   const [activeModal, setActiveModal] = useState<any>(null);
@@ -258,7 +302,7 @@ export default function App() {
     });
   };
 
-  // Resolve Active Course, Active Lesson, and Active Pattern Blueprint
+  // Resolve Active Course and Active Lesson
   const activeCourse = useMemo(() => {
     return courses.find((c: any) => c.id === activeCourseId) || courses[0] || DEFAULT_COURSES[0];
   }, [courses, activeCourseId]);
@@ -276,25 +320,31 @@ export default function App() {
     );
   }, [activeCourse, activeLessonIndex]);
 
+  useEffect(() => {
+    try {
+      localStorage.setItem(
+        STORAGE_KEY_ACTIVE_SELECTION,
+        JSON.stringify({
+          courseId: activeCourse.id,
+          lessonId: activeLesson.id
+        })
+      );
+    } catch (e) {
+      // Ignore storage errors
+    }
+  }, [activeCourse.id, activeLesson.id]);
+
   const activeWords = useMemo(() => {
     const raw = activeLesson?.words || UNIT_1_WORDS;
     return raw.map((w: any, idx: number) => normalizeWordEntry(w, idx));
   }, [activeLesson]);
-
-  const activePattern = useMemo(() => {
-    if (patternPreviewOverride) {
-      const found = HETEROGENEOUS_PATTERNS.find((p) => p.id === patternPreviewOverride);
-      if (found) return found;
-    }
-    return HETEROGENEOUS_PATTERNS[activeLessonIndex % HETEROGENEOUS_PATTERNS.length];
-  }, [activeLessonIndex, patternPreviewOverride]);
 
   const { unlockedWords, unlockedWordsCount } = useMemo(
     () => computeUnlockedWordsPool(courses, activeCourse, activeLesson, progress),
     [courses, activeCourse, activeLesson, progress]
   );
 
-  const todayCalendarDate = new Date().toISOString().slice(0, 10);
+  const todayCalendarDate = getLocalIsoDate();
   const dailyQuests = useMemo(
     () => generateDeterministicDailyQuests(todayCalendarDate, unlockedWordsCount),
     [todayCalendarDate, unlockedWordsCount]
@@ -347,7 +397,7 @@ export default function App() {
   const handleRecordStudySeconds = useCallback((secondsDelta: number) => {
     const cleanDelta = Math.max(0, Math.round(Number(secondsDelta) || 0));
     if (cleanDelta <= 0) return;
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getLocalIsoDate();
     setProgress((prev: any) => {
       const prevTotal = Math.max(0, Number(prev.totalStudySeconds) || 0);
       const prevDailySecs =
@@ -369,7 +419,7 @@ export default function App() {
     (quest: any) => {
       if (!quest) return;
       soundFX.playVictory();
-      const today = new Date().toISOString().slice(0, 10);
+      const today = getLocalIsoDate();
 
       setProgress((prev: any) => {
         const dq =
@@ -380,9 +430,7 @@ export default function App() {
         if ((dq.claimedIds || []).includes(quest.id)) return prev;
 
         const nextClaimed = [...(dq.claimedIds || []), quest.id];
-        const allThreeDone = (dq.completedIds || []).length >= 3;
-        const autoAwardChest = allThreeDone && !dq.bonusChestClaimed && nextClaimed.length >= 3;
-        const xpGain = (Number(quest.xpReward) || 25) + (autoAwardChest ? 25 : 0);
+        const xpGain = Number(quest.xpReward) || 25;
         const nextTotalXp = (prev.xp || 0) + xpGain;
         const prevTodayXp =
           prev.dailyXpDate === today
@@ -400,7 +448,7 @@ export default function App() {
             date: today,
             completedIds: dq.completedIds || [],
             claimedIds: nextClaimed,
-            bonusChestClaimed: Boolean(dq.bonusChestClaimed || autoAwardChest)
+            bonusChestClaimed: Boolean(dq.bonusChestClaimed)
           }
         };
       });
@@ -415,7 +463,7 @@ export default function App() {
 
   const handleClaimDailyChest = useCallback(() => {
     soundFX.playVictory();
-    const today = new Date().toISOString().slice(0, 10);
+    const today = getLocalIsoDate();
     setProgress((prev: any) => {
       const dq =
         prev.dailyQuests?.date === today
@@ -633,7 +681,9 @@ export default function App() {
       completedModeKeys = []
     }: any) => {
       soundFX.playVictory();
-      const today = new Date().toISOString().slice(0, 10);
+      const now = new Date();
+      const today = getLocalIsoDate(now);
+      const yesterday = getLocalYesterdayIsoDate(now);
       const lessonKey = `${activeCourse.id}__${activeLesson.id}`;
       const isDefaultUnit1 =
         activeCourse.id === 'course_default_unit1' && activeLesson.id === 'lesson_unit_1';
@@ -657,7 +707,12 @@ export default function App() {
         const nextSrsData = { ...(prev.srsData || {}) };
         const masteryStep = isBossWin ? 2 : 1;
         const reviewTimestamp = Date.now();
-        wordsPracticed.forEach((w: any) => {
+        const seenWordKeys = new Set<string>();
+        (Array.isArray(wordsPracticed) ? wordsPracticed : []).forEach((w: any) => {
+          if (!w) return;
+          const dedupeKey = String(w.hanzi || w.id || '').trim();
+          if (!dedupeKey || seenWordKeys.has(dedupeKey)) return;
+          seenWordKeys.add(dedupeKey);
           const curLv = getWordMasteryLevel(nextMastery, w);
           const nextLv = Math.max(0, Math.min(10, curLv + masteryStep));
           if (w.id) nextMastery[w.id] = nextLv;
@@ -708,8 +763,12 @@ export default function App() {
           }
         }
 
-        const isNewDay = prev.lastStudyDate !== today;
-        const nextStreak = isNewDay ? (prev.streak || 0) + 1 : Math.max(1, prev.streak || 0);
+        const nextStreak =
+          prev.lastStudyDate === today
+            ? Math.max(1, prev.streak || 0)
+            : prev.lastStudyDate === yesterday
+            ? (prev.streak || 0) + 1
+            : 1;
         const prevTodayXp =
           prev.dailyXpDate === today
             ? Number(prev.dailyXpEarned ?? prev.dailyXp ?? 0)
@@ -730,26 +789,24 @@ export default function App() {
           }
         });
 
-        const justReachedAllThreeQuests =
-          nextCompletedQuestIds.length >= 3 && !prevDq.bonusChestClaimed;
-        const chestBonusXp = justReachedAllThreeQuests ? 25 : 0;
-        const totalGainWithChest = appliedXpEarned + chestBonusXp;
-        const nextTotalXp = (prev.xp || 0) + totalGainWithChest;
+        const nextTotalXp = (prev.xp || 0) + appliedXpEarned;
+        const completedWriting =
+          Array.isArray(completedModeKeys) && completedModeKeys.includes('writing');
 
         return {
           ...prev,
           xp: nextTotalXp,
           playerLevel: computePlayerLevelProgress(nextTotalXp).level,
           dailyXpDate: today,
-          dailyXp: prevTodayXp + totalGainWithChest,
-          dailyXpEarned: prevTodayXp + totalGainWithChest,
+          dailyXp: prevTodayXp + appliedXpEarned,
+          dailyXpEarned: prevTodayXp + appliedXpEarned,
           streak: nextStreak,
           lastStudyDate: today,
           dailyQuests: {
             date: today,
             completedIds: nextCompletedQuestIds,
             claimedIds: prevDq.claimedIds || [],
-            bonusChestClaimed: Boolean(prevDq.bonusChestClaimed || justReachedAllThreeQuests)
+            bonusChestClaimed: Boolean(prevDq.bonusChestClaimed)
           },
           unlockedStage: isDefaultUnit1 ? nextUnlocked : prev.unlockedStage,
           completedStages: isDefaultUnit1 ? nextCompleted : prev.completedStages,
@@ -766,7 +823,7 @@ export default function App() {
           stats: {
             ...(prev.stats || {}),
             writingStagesCompleted:
-              (prev.stats?.writingStagesCompleted || 0) + (stageId === 2 ? 1 : 0),
+              (prev.stats?.writingStagesCompleted || 0) + (completedWriting ? 1 : 0),
             perfectBossWins:
               (prev.stats?.perfectBossWins || 0) + (isBossWin && heartsRemaining === 3 ? 1 : 0),
             highestCombo: Math.max(prev.stats?.highestCombo || 0, maxCombo)
@@ -996,7 +1053,13 @@ export default function App() {
     xpIntoLevel,
     xpForNextLevel
   } = computePlayerLevelProgress(progress.xp);
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const nowForDates = new Date();
+  const todayIso = getLocalIsoDate(nowForDates);
+  const yesterdayIso = getLocalYesterdayIsoDate(nowForDates);
+  const rawStreak = Math.max(0, Number(progress.streak) || 0);
+  const studiedToday = progress.lastStudyDate === todayIso && rawStreak > 0;
+  const streakAtRisk = progress.lastStudyDate === yesterdayIso && rawStreak > 0;
+  const effectiveStreak = studiedToday || streakAtRisk ? rawStreak : 0;
   const dailyGoalXp = Number(progress.dailyGoalXp) > 0 ? Number(progress.dailyGoalXp) : 30;
   const todayXpEarned = progress.dailyXpDate === todayIso ? Number(progress.dailyXpEarned || 0) : 0;
   const completedDailyQuestsCount = dailyQuests.filter((q: any) =>
@@ -1072,27 +1135,31 @@ export default function App() {
               <div className="flex items-center justify-between gap-2 pb-3 border-b-2 border-slate-800">
                 <div className="flex items-center gap-2.5 min-w-0">
                   <div className="w-10 h-10 rounded-[2px] bg-slate-900 border-2 border-amber-500/80 flex items-center justify-center shrink-0">
-                    <PixelFlameSprite active={progress.streak > 0} className="w-5 h-5" />
+                    <PixelFlameSprite active={effectiveStreak > 0} className="w-5 h-5" />
                   </div>
                   <div className="min-w-0">
                     <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 block">
                       Daily Streak
                     </span>
                     <div className="font-pixel-header text-sm text-white mt-0.5">
-                      {progress.streak} {progress.streak === 1 ? 'Day' : 'Days'}
+                      {effectiveStreak} {effectiveStreak === 1 ? 'Day' : 'Days'}
                     </div>
                   </div>
                 </div>
 
                 <span
                   className={`px-2.5 py-1 rounded-[2px] border-2 text-[10px] font-black uppercase tracking-wide shrink-0 ${
-                    progress.streak > 0
+                    studiedToday
                       ? 'bg-emerald-950/80 border-emerald-400 text-emerald-300'
-                      : 'bg-amber-950/70 border-amber-400 text-amber-300'
+                      : streakAtRisk
+                      ? 'bg-amber-950/80 border-amber-400 text-amber-300'
+                      : 'bg-slate-900 border-slate-600 text-slate-300'
                   }`}
                 >
-                  {progress.streak > 0
-                    ? `${progress.streak} ${progress.streak === 1 ? 'Day' : 'Days'} Active`
+                  {studiedToday
+                    ? 'Studied Today ✓'
+                    : streakAtRisk
+                    ? 'Study Today to Keep Streak'
                     : '0 Days — Start Today'}
                 </span>
               </div>
@@ -1242,11 +1309,17 @@ export default function App() {
 
               {/* Daily Streak Counter with Pixel Flame Sprite */}
               <div
-                title="Daily Streak"
+                title={
+                  studiedToday
+                    ? 'Daily Streak (Studied Today)'
+                    : streakAtRisk
+                    ? 'Daily Streak (Study Today to Keep Streak)'
+                    : 'Daily Streak'
+                }
                 className="px-2 py-1 rounded-[2px] bg-slate-950 border-2 border-amber-500 text-amber-300 text-xs font-black flex items-center gap-1"
               >
-                <PixelFlameSprite active={progress.streak > 0} className="w-3.5 h-3.5" />
-                <span className="font-pixel-header text-[10px]">{progress.streak}</span>
+                <PixelFlameSprite active={effectiveStreak > 0} className="w-3.5 h-3.5" />
+                <span className="font-pixel-header text-[10px]">{effectiveStreak}</span>
               </div>
 
               {/* Total XP Counter with Pixel Gold Coin Sprite */}
@@ -1651,7 +1724,7 @@ export default function App() {
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `macalaoshi-backup-${new Date().toISOString().slice(0, 10)}.json`;
+                a.download = `hanziapp-backup-${getLocalIsoDate()}.json`;
                 a.click();
                 URL.revokeObjectURL(url);
                 triggerToast('Backup Exported!', 'Saved JSON snapshot of courses, decks & mastery.');
@@ -1696,7 +1769,7 @@ export default function App() {
                 triggerToast('Backup Restored!', 'Courses, custom decks, and mastery levels loaded.');
               }}
               onCompleteStrokeRuleDojo={(completedRule: any) => {
-                const today = new Date().toISOString().slice(0, 10);
+                const today = getLocalIsoDate();
                 setProgress((prev: any) => {
                   const prevRules = Array.isArray(prev.completedStrokeRules)
                     ? prev.completedStrokeRules
@@ -1745,9 +1818,6 @@ export default function App() {
               courses={courses}
               customDecks={customDecks}
               currentLevel={currentLevel}
-              dailyGoalXp={dailyGoalXp}
-              todayXpEarned={todayXpEarned}
-              onSetDailyGoalXp={handleSetDailyGoalXp}
               onToggleSpeed={handleToggleSpeed}
               speakMandarin={speakMandarin}
               onExportAllData={() => {
@@ -1766,7 +1836,7 @@ export default function App() {
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = `macalaoshi-backup-${new Date().toISOString().slice(0, 10)}.json`;
+                a.download = `hanziapp-backup-${getLocalIsoDate()}.json`;
                 a.click();
                 URL.revokeObjectURL(url);
                 triggerToast('Backup Exported!', 'Downloaded full study backup JSON.');
@@ -1809,7 +1879,7 @@ export default function App() {
               confirmResetOpen={confirmResetOpen}
               setConfirmResetOpen={setConfirmResetOpen}
               onConfirmReset={() => {
-                const todayDate = new Date().toISOString().slice(0, 10);
+                const todayDate = getLocalIsoDate();
                 const freshZeroState = {
                   ...INITIAL_PROGRESS_STATE,
                   totalStudySeconds: 0,
@@ -1856,10 +1926,18 @@ export default function App() {
               onLaunchWeakWordsReview={(weakPool: any[]) => {
                 const wordsToUse =
                   Array.isArray(weakPool) && weakPool.length > 0 ? weakPool : activeWords;
+                const weakModalities =
+                  unlockedWordsCount >= 12
+                    ? ['recognition', 'writing', 'listening', 'sentence_builder']
+                    : ['recognition', 'writing', 'listening'];
                 const queue = buildDynamicModalityQueue(
                   wordsToUse,
-                  ['recognition', 'writing', 'listening', 'sentence_builder'],
-                  'Weakest Words Booster'
+                  weakModalities,
+                  'Weakest Words Booster',
+                  activeLessonIndex,
+                  [],
+                  0,
+                  unlockedWords
                 );
                 setActiveModal({
                   type: 'mixed_session',
@@ -1975,19 +2053,21 @@ export default function App() {
             onRecordSkillEvent={handleRecordSkillEvent}
             onRecordStudySeconds={handleRecordStudySeconds}
             onClose={() => setActiveModal(null)}
-            onComplete={(bonusXp = 0, maxCombo = 1) =>
+            onComplete={(bonusXp = 0, maxCombo = 1) => {
+              const focusMode = activeModal.focusMode || 'combined';
+              const audioModeKeys = [
+                focusMode === 'dictation' || focusMode === 'combined' ? 'dictation' : null,
+                focusMode === 'speaking' || focusMode === 'combined' ? 'speaking' : null,
+                activeModal.questModeKey
+              ].filter(Boolean);
               handleCompleteStageSession({
                 stageId: activeModal.stageId,
                 wordsPracticed: activeModal.words || activeWords,
                 xpEarned: 25 + bonusXp,
                 maxCombo,
-                completedModeKeys: [
-                  'dictation',
-                  activeModal.focusMode === 'dictation' ? 'dictation' : 'speaking',
-                  activeModal.questModeKey
-                ].filter(Boolean)
-              })
-            }
+                completedModeKeys: audioModeKeys
+              });
+            }}
           />
         )}
 
@@ -2006,17 +2086,25 @@ export default function App() {
             onRecordSkillEvent={handleRecordSkillEvent}
             onRecordStudySeconds={handleRecordStudySeconds}
             onClose={() => setActiveModal(null)}
-            onComplete={(correctWordIds: any, heartsRemaining: number, bonusXp = 0, maxCombo = 1) =>
+            onComplete={(correctWordIds: any, heartsRemaining: number, bonusXp = 0, maxCombo = 1) => {
+              const correctIdSet = new Set(Array.isArray(correctWordIds) ? correctWordIds : []);
+              const bossCandidateWords = [
+                ...(activeModal.words || activeWords),
+                ...(activeModal.pastLessonWords || [])
+              ];
+              const correctlyAnsweredWords = bossCandidateWords.filter(
+                (w: any) => correctIdSet.has(w.id) || correctIdSet.has(w.hanzi)
+              );
               handleCompleteStageSession({
-                stageId: activeModal.stageId || 4,
-                wordsPracticed: activeModal.words || activeWords,
+                stageId: activeModal.stageId,
+                wordsPracticed: correctlyAnsweredWords,
                 xpEarned: 45 + bonusXp,
                 maxCombo,
                 isBossWin: true,
                 heartsRemaining,
                 completedModeKeys: ['boss', activeModal.questModeKey].filter(Boolean)
-              })
-            }
+              });
+            }}
           />
         )}
 
@@ -2131,8 +2219,7 @@ export default function App() {
             onComplete={(practicedWords: any[], totalXp = 25, maxCombo = 1) =>
               handleCompleteStageSession({
                 stageId: null,
-                wordsPracticed:
-                  practicedWords && practicedWords.length > 0 ? practicedWords : activeWords,
+                wordsPracticed: Array.isArray(practicedWords) ? practicedWords : [],
                 xpEarned: totalXp,
                 maxCombo,
                 completedModeKeys: ['numbers_time_lab', activeModal.questModeKey].filter(Boolean)

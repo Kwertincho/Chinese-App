@@ -690,6 +690,7 @@ export function ToneSandhiDrillModal({
       setCardAnim('wrong');
       setTimeout(() => setCardAnim('idle'), 450);
       onRecordSkillEvent?.(currentWord, 'listening', { mistakesDelta: 1, completionsDelta: 0 });
+      speakMandarin(currentWord.hanzi);
     }
 
     const delayMs = choice.isCorrect ? 1400 : 1800;
@@ -857,12 +858,15 @@ export function HskMockExamModal({
   onClose,
   onComplete
 }) {
-  const { elapsedSeconds, flushSessionTime } = useSessionTimer(true, onRecordStudySeconds);
+  const [submitted, setSubmitted] = useState(false);
+  const { elapsedSeconds, flushSessionTime } = useSessionTimer(
+    !submitted,
+    onRecordStudySeconds
+  );
   const questions = useMemo(() => buildHskMockExamQuestions(words), [words]);
   const [currentIdx, setCurrentIdx] = useState(0);
   const [answersMap, setAnswersMap] = useState({});
   const [timeLeftSec, setTimeLeftSec] = useState(15 * 60);
-  const [submitted, setSubmitted] = useState(false);
   const [confirmEarlySubmit, setConfirmEarlySubmit] = useState(false);
   const [isAutoAdvancing, setIsAutoAdvancing] = useState(false);
 
@@ -1368,7 +1372,11 @@ export function AdaptiveMixedSessionModal({
 
   // Sub-state for 'writing' modality
   const [charIndex, setCharIndex] = useState(0);
-  const [charStage, setCharStage] = useState(1);
+  const [charStage, setCharStage] = useState(() =>
+    getAdaptiveWritingConfig(
+      getWordMasteryLevel(progress?.mastery, queue[0]?.word || UNIT_1_WORDS[0])
+    ).initialStage
+  );
   const [scriptStatus, setScriptStatus] = useState('loading');
   const [writerModeStatus, setWriterModeStatus] = useState('quiz');
   const [strokeStats, setStrokeStats] = useState({
@@ -1465,6 +1473,18 @@ export function AdaptiveMixedSessionModal({
     return Array.from(map.values());
   }, [queue]);
 
+  const fallbackClassifierItems = useMemo(() => {
+    const sourcePool =
+      Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : lessonWordPool;
+    return getUnlockedClassifierItems(sourcePool);
+  }, [courseWords, lessonWordPool]);
+
+  const fallbackDialoguePairs = useMemo(() => {
+    const sourcePool =
+      Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : lessonWordPool;
+    return getUnlockedDialoguePairs(sourcePool);
+  }, [courseWords, lessonWordPool]);
+
   const liveSessionRef = useRef({
     queue,
     onComplete,
@@ -1541,11 +1561,18 @@ export function AdaptiveMixedSessionModal({
       maxCombo: liveMax
     } = liveSessionRef.current;
     if (stepIdx < liveQueue.length - 1) {
-      setStepIdx((s) => s + 1);
+      const nextStepIdx = stepIdx + 1;
+      const nextItem = liveQueue[nextStepIdx];
+      const nextWordLv = nextItem?.word
+        ? getWordMasteryLevel(progress?.mastery, nextItem.word)
+        : 0;
+      setCharIndex(0);
+      setCharStage(getAdaptiveWritingConfig(nextWordLv).initialStage);
+      setStepIdx(nextStepIdx);
     } else {
       finishMixedSession(liveBonus, liveMax);
     }
-  }, [stepIdx, finishMixedSession]);
+  }, [stepIdx, finishMixedSession, progress?.mastery]);
 
   // Dedicated auto-advance effect strictly tied to [stepCompleted, stepIdx, isInspectingExample]
   // Pauses cleanly if the learner taps a character in the post-answer Character Inspector.
@@ -1597,9 +1624,27 @@ export function AdaptiveMixedSessionModal({
   }, []);
 
   const recognitionOptions = useMemo(() => {
-    const pool = [...queue.map((q) => q.word), ...UNIT_1_WORDS];
-    const uniqueDistractors = [];
-    pool.forEach((w) => {
+    const courseDistractors = [];
+    if (Array.isArray(courseWords) && courseWords.length > 0) {
+      courseWords.forEach((w) => {
+        if (
+          w &&
+          w.hanzi !== currentWord.hanzi &&
+          !courseDistractors.some((d) => d.hanzi === w.hanzi)
+        ) {
+          courseDistractors.push(w);
+        }
+      });
+    }
+    const rotatedCourse =
+      courseDistractors.length > 0
+        ? courseDistractors.map(
+            (_, i) => courseDistractors[(i + stepIdx * 3) % courseDistractors.length]
+          )
+        : [];
+    const fallbackPool = [...queue.map((q) => q.word), ...UNIT_1_WORDS];
+    const uniqueDistractors = [...rotatedCourse];
+    fallbackPool.forEach((w) => {
       if (
         w &&
         w.hanzi !== currentWord.hanzi &&
@@ -1638,7 +1683,7 @@ export function AdaptiveMixedSessionModal({
     ];
     const shift = stepIdx % rawOpts.length;
     return rawOpts.map((_, idx) => rawOpts[(idx + shift) % rawOpts.length]);
-  }, [currentWord, isPinyinMeaningComboStep, queue, stepIdx]);
+  }, [courseWords, currentWord, isPinyinMeaningComboStep, queue, stepIdx]);
 
   // Reset step state ONLY when advancing to a new stepIdx
   useEffect(() => {
@@ -1692,9 +1737,12 @@ export function AdaptiveMixedSessionModal({
 
     // FUTURE-PROOF ANTI-SPOILER GUARDRAIL:
     // Always check canExposeAudioBeforeAnswer(...) before auto-playing audio on mount.
-    // Only pure listening/speaking exercises auto-play; reading, meaning_mc, recognition,
-    // cloze, and sentence_builder MUST remain silent until after the user submits an answer.
-    if (canExposeAudioBeforeAnswer(liveModality, liveOptionsHavePinyin)) {
+    // Writing also plays word audio on mount (essential for Lv. 7+ Blind Recall).
+    // Reading, meaning_mc, recognition, cloze, and sentence_builder MUST remain silent until answered.
+    if (
+      liveModality === 'writing' ||
+      canExposeAudioBeforeAnswer(liveModality, liveOptionsHavePinyin)
+    ) {
       speakFn(liveWord.hanzi);
     }
 
@@ -1723,36 +1771,6 @@ export function AdaptiveMixedSessionModal({
       clearAllSessionTimers();
     };
   }, [clearAllSessionTimers]);
-
-  useEffect(() => {
-    if (
-      currentModality !== 'writing' ||
-      scriptStatus !== 'ready' ||
-      !window.HanziWriter?.loadCharacterData ||
-      !currentChar
-    ) {
-      return;
-    }
-    let active = true;
-    window.HanziWriter.loadCharacterData(currentChar)
-      .then((charData) => {
-        if (!active || !charData) return;
-        const radStrokes = Array.isArray(charData.radStrokes) ? charData.radStrokes : [];
-        setMixedCharStrokeMeta({
-          strokeCount: Array.isArray(charData.strokes) ? charData.strokes.length : null,
-          radStrokes
-        });
-        if (writerTargetRef.current && (charStage === 1 || charStage === 2)) {
-          highlightRadicalOutlineStrokes(writerTargetRef.current, radStrokes, true);
-        }
-      })
-      .catch(() => {
-        if (active) setMixedCharStrokeMeta({ strokeCount: null, radStrokes: [] });
-      });
-    return () => {
-      active = false;
-    };
-  }, [currentModality, scriptStatus, currentChar, charStage]);
 
   const startWriterQuiz = useCallback(
     (writer, targetStage) => {
@@ -1802,11 +1820,14 @@ export function AdaptiveMixedSessionModal({
             return;
           }
 
-          // 3rd+ miss on this character registers as a real mistake and flashes the stroke hint
+          // 3rd miss on this character registers telemetry/mastery penalty ONCE per character;
+          // subsequent misses still flash the stroke hint without repeatedly decrementing mastery.
           setTouchNudgeMessage('');
           registerMistakeFeedback();
-          const { currentWord: liveWord, onRecordSkillEvent: recordEvt } = liveSessionRef.current;
-          recordEvt?.(liveWord, 'writing', { mistakesDelta: 1, completionsDelta: 0 });
+          if (nextCharMiss === 3) {
+            const { currentWord: liveWord, onRecordSkillEvent: recordEvt } = liveSessionRef.current;
+            recordEvt?.(liveWord, 'writing', { mistakesDelta: 1, completionsDelta: 0 });
+          }
           setStrokeStats((prev) => ({
             ...prev,
             mistakesOnCurrent: strokeData.mistakesOnStroke,
@@ -2377,7 +2398,7 @@ export function AdaptiveMixedSessionModal({
 
               {isCardFlipped && recogAnswered && (
                 <div
-                  className="rounded-2xl bg-slate-950/80 border border-slate-800 p-3.5 text-left space-y-1.5 mt-2"
+                  className="rounded-2xl bg-slate-950/80 border border-slate-800 p-3.5 text-left space-y-2 mt-2"
                   onClick={(e) => e.stopPropagation()}
                 >
                   <InteractiveExampleText
@@ -2392,6 +2413,25 @@ export function AdaptiveMixedSessionModal({
                   <p className="font-clarity text-sm text-slate-300 italic">
                     "{currentWord.exampleEnglish}"
                   </p>
+                  {onSaveWordNote && (
+                    <div className="pt-2 border-t border-slate-800 space-y-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="text-[10px] font-extrabold uppercase tracking-wider text-sky-300">
+                          Personal Note / Mnemonic
+                        </span>
+                        <span className="text-[9px] font-bold text-slate-500">Auto-saved</span>
+                      </div>
+                      <input
+                        type="text"
+                        value={wordNotes[currentWord.hanzi] ?? wordNotes[currentWord.id] ?? ''}
+                        onFocus={() => setIsInspectingExample(true)}
+                        onChange={(e) => onSaveWordNote(currentWord, e.target.value)}
+                        onClick={(e) => e.stopPropagation()}
+                        placeholder="Add a personal memory hook..."
+                        className="w-full bg-slate-900 border border-slate-700 focus:border-sky-400 rounded-lg px-2.5 py-1.5 text-xs font-clarity font-medium text-white placeholder:text-slate-500 outline-none"
+                      />
+                    </div>
+                  )}
                 </div>
               )}
             </div>
@@ -2584,12 +2624,15 @@ export function AdaptiveMixedSessionModal({
                   const isCompletedStage =
                     isCurrentWritingCharDone || charStage > st.stage || isSkippedStage;
                   const isCurrentStage = charStage === st.stage && !isCurrentWritingCharDone;
+                  const canSelectStage =
+                    st.stage >= writingConfig.minStage && st.stage <= charStage;
                   return (
                     <button
                       key={st.stage}
                       type="button"
+                      disabled={!canSelectStage}
                       onClick={() => {
-                        if (st.stage <= charStage || isCurrentWritingCharDone) {
+                        if (canSelectStage) {
                           soundFX.playPop();
                           setCharStage(st.stage);
                         }
@@ -2600,7 +2643,7 @@ export function AdaptiveMixedSessionModal({
                           : isCompletedStage
                           ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
                           : 'bg-slate-900/70 border-transparent text-slate-500'
-                      }`}
+                      } ${!canSelectStage ? 'cursor-not-allowed' : ''}`}
                     >
                       {isCompletedStage && <Check className="w-2.5 h-2.5 stroke-[3px] shrink-0" />}
                       <span className="truncate">{st.shortLabel}</span>
@@ -3256,11 +3299,9 @@ export function AdaptiveMixedSessionModal({
           <ClassifierExerciseCard
             item={
               currentItem?.classifierItem ||
-              getUnlockedClassifierItems(
-                Array.isArray(courseWords) && courseWords.length > 0
-                  ? courseWords
-                  : lessonWordPool
-              )[stepIdx % Math.max(1, getUnlockedClassifierItems(Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : lessonWordPool).length)]
+              fallbackClassifierItems[
+                stepIdx % Math.max(1, fallbackClassifierItems.length)
+              ]
             }
             masteryMap={progress?.mastery}
             courseWords={
@@ -3309,11 +3350,9 @@ export function AdaptiveMixedSessionModal({
           <DialogueQaExerciseCard
             pair={
               currentItem?.dialoguePair ||
-              getUnlockedDialoguePairs(
-                Array.isArray(courseWords) && courseWords.length > 0
-                  ? courseWords
-                  : lessonWordPool
-              )[stepIdx % Math.max(1, getUnlockedDialoguePairs(Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : lessonWordPool).length)]
+              fallbackDialoguePairs[
+                stepIdx % Math.max(1, fallbackDialoguePairs.length)
+              ]
             }
             masteryLv={masteryLv}
             masteryMap={progress?.mastery}
@@ -3399,7 +3438,11 @@ export function BlitzMatchModal({
   onClose,
   onComplete
 }) {
-  const { elapsedSeconds, flushSessionTime } = useSessionTimer(true, onRecordStudySeconds);
+  const [gameEnded, setGameEnded] = useState(false);
+  const { elapsedSeconds, flushSessionTime } = useSessionTimer(
+    !gameEnded,
+    onRecordStudySeconds
+  );
   const [timeLeft, setTimeLeft] = useState(60);
   const [timeDeltaBanner, setTimeDeltaBanner] = useState(null);
   const [combo, setCombo] = useState(0);
@@ -3407,7 +3450,6 @@ export function BlitzMatchModal({
   const [scoreXp, setScoreXp] = useState(0);
   const [totalPairsMatched, setTotalPairsMatched] = useState(0);
   const [matchedWordsHistory, setMatchedWordsHistory] = useState([]);
-  const [gameEnded, setGameEnded] = useState(false);
 
   const [leftCards, setLeftCards] = useState([]);
   const [rightCards, setRightCards] = useState([]);
@@ -3415,6 +3457,29 @@ export function BlitzMatchModal({
   const [selectedLeftId, setSelectedLeftId] = useState(null);
   const [selectedRightId, setSelectedRightId] = useState(null);
   const [mismatchPair, setMismatchPair] = useState(null);
+  const redealTimerRef = useRef(null);
+  const mismatchTimerRef = useRef(null);
+
+  const clearBlitzTimers = useCallback(() => {
+    if (redealTimerRef.current) {
+      clearTimeout(redealTimerRef.current);
+      redealTimerRef.current = null;
+    }
+    if (mismatchTimerRef.current) {
+      clearTimeout(mismatchTimerRef.current);
+      mismatchTimerRef.current = null;
+    }
+  }, []);
+
+  useEffect(() => {
+    return () => clearBlitzTimers();
+  }, [clearBlitzTimers]);
+
+  useEffect(() => {
+    if (gameEnded) {
+      clearBlitzTimers();
+    }
+  }, [gameEnded, clearBlitzTimers]);
 
   const fullPool = useMemo(() => {
     const map = new window.Map();
@@ -3463,6 +3528,7 @@ export function BlitzMatchModal({
   useEffect(() => {
     if (gameEnded) return;
     if (timeLeft <= 0) {
+      clearBlitzTimers();
       setGameEnded(true);
       soundFX.playVictory();
       return;
@@ -3471,7 +3537,7 @@ export function BlitzMatchModal({
       setTimeLeft((prev) => Math.max(0, prev - 1));
     }, 1000);
     return () => clearTimeout(timer);
-  }, [timeLeft, gameEnded]);
+  }, [timeLeft, gameEnded, clearBlitzTimers]);
 
   const evaluateSelection = useCallback(
     (leftId, rightId) => {
@@ -3506,7 +3572,9 @@ export function BlitzMatchModal({
         setSelectedRightId(null);
 
         if (nextCleared.length >= leftCards.length) {
-          setTimeout(() => {
+          if (redealTimerRef.current) clearTimeout(redealTimerRef.current);
+          redealTimerRef.current = setTimeout(() => {
+            redealTimerRef.current = null;
             dealFourPairsBoard();
           }, 320);
         }
@@ -3517,7 +3585,9 @@ export function BlitzMatchModal({
         setTimeDeltaBanner({ id: Date.now(), text: '-2s', positive: false });
         setMismatchPair({ leftId, rightId });
 
-        setTimeout(() => {
+        if (mismatchTimerRef.current) clearTimeout(mismatchTimerRef.current);
+        mismatchTimerRef.current = setTimeout(() => {
+          mismatchTimerRef.current = null;
           setMismatchPair(null);
           setSelectedLeftId(null);
           setSelectedRightId(null);
@@ -3530,8 +3600,8 @@ export function BlitzMatchModal({
   const handleSelectLeft = (pairId) => {
     if (gameEnded || clearedPairIds.includes(pairId) || mismatchPair) return;
     soundFX.playPop();
-    const card = leftCards.find((c) => c.pairId === pairId);
-    if (card) speakMandarin(card.hanzi);
+    // Anti-Spoiler Rule: Keep left Hanzi cards silent on tap since right column shows Pinyin.
+    // Audio plays only after confirming a correct pair match.
     setSelectedLeftId(pairId);
     if (selectedRightId) {
       evaluateSelection(pairId, selectedRightId);
@@ -3555,6 +3625,7 @@ export function BlitzMatchModal({
             <button
               type="button"
               onClick={() => {
+                clearBlitzTimers();
                 flushSessionTime();
                 onClose();
               }}
@@ -3709,6 +3780,7 @@ export function BlitzMatchModal({
               <button
                 type="button"
                 onClick={() => {
+                  clearBlitzTimers();
                   setTimeLeft(60);
                   setCombo(0);
                   setScoreXp(0);
@@ -3723,6 +3795,7 @@ export function BlitzMatchModal({
               <button
                 type="button"
                 onClick={() => {
+                  clearBlitzTimers();
                   flushSessionTime();
                   onComplete(matchedWordsHistory, Math.max(25, scoreXp), maxCombo);
                 }}
@@ -3737,7 +3810,10 @@ export function BlitzMatchModal({
         {!gameEnded && (
           <button
             type="button"
-            onClick={() => setGameEnded(true)}
+            onClick={() => {
+              clearBlitzTimers();
+              setGameEnded(true);
+            }}
             className="game-btn-3d w-full py-3 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-xs font-bold text-slate-300"
           >
             Finish Blitz & Claim XP ({scoreXp} XP)
@@ -4552,8 +4628,8 @@ export function NumbersTimeLabModal({
     flushSessionTime();
     const baseXp = answeredCount >= ROUND_BATCH_SIZE ? 25 : Math.max(10, correctCount * 3);
     const totalXp = baseXp + bonusXp;
-    const safeWords = Array.isArray(words) && words.length > 0 ? words : UNIT_1_WORDS;
-    onComplete(safeWords.slice(0, 6), totalXp, Math.max(1, maxCombo));
+    // Pass [] so procedural number/time/price drills never inflate mastery or SRS of unrelated lesson words
+    onComplete([], totalXp, Math.max(1, maxCombo));
   };
 
   const handleContinueEndless = () => {

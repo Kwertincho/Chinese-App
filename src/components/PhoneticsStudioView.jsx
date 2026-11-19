@@ -109,9 +109,19 @@ export function PhoneticsStudioView({
     if (activeCourse?.words && Array.isArray(activeCourse.words)) {
       list.push(...activeCourse.words);
     }
-    if (customDecks && typeof customDecks === 'object') {
-      Object.values(customDecks).forEach((deckWords) => {
-        if (Array.isArray(deckWords)) list.push(...deckWords);
+    if (Array.isArray(customDecks)) {
+      customDecks.forEach((deck) => {
+        if (Array.isArray(deck?.words)) {
+          list.push(...deck.words);
+        }
+      });
+    } else if (customDecks && typeof customDecks === 'object') {
+      Object.values(customDecks).forEach((entry) => {
+        if (Array.isArray(entry)) {
+          list.push(...entry);
+        } else if (Array.isArray(entry?.words)) {
+          list.push(...entry.words);
+        }
       });
     }
     return list;

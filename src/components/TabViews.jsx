@@ -51,7 +51,6 @@ import {
   SEMANTIC_RADICALS_25,
   STROKE_ORDER_RULES_7,
   SAMPLE_RAW_HSK_JSON,
-  HETEROGENEOUS_PATTERNS,
   MODALITY_META,
   ADVANCED_MODE_UNLOCK_THRESHOLDS,
   getPlayerTitle
@@ -97,6 +96,13 @@ import {
 } from './PracticeAndExamModals.jsx';
 import { PhoneticsStudioView } from './PhoneticsStudioView.jsx';
 
+function getLocalIsoDate(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, '0');
+  const day = String(date.getDate()).padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
 // ============================================================================
 // TAB 1: GAMIFIED WINDING PROGRESSION MAP VIEW (UNIFIED PROPORTIONAL PATH)
 // ============================================================================
@@ -119,6 +125,10 @@ export function ProgressionMapView({
   const safeDailyQuests = Array.isArray(dailyQuests) ? dailyQuests : [];
   const [selectedStagePreview, setSelectedStagePreview] = useState(null);
   const [questsExpanded, setQuestsExpanded] = useState(true);
+
+  useEffect(() => {
+    setSelectedStagePreview(null);
+  }, [activeCourse.id, activeLesson.id]);
 
   const lessonKey = `${activeCourse.id}__${activeLesson.id}`;
   const isDefaultUnit1 =
@@ -485,7 +495,7 @@ export function ProgressionMapView({
         </div>
         <div className="mt-0.5 relative z-10">
           <ScrollingText
-            text={`Discovery → Calligraphy → Audio & Oral Mix${
+            text={`Discovery → Meaning Quiz → Calligraphy → Skill Mix${
               activeWords.length >= 6 ? ' → Context Gauntlet' : ''
             } → Unit Boss Battle`}
             className="text-[11px] text-rose-100/95 font-semibold"
@@ -1157,10 +1167,12 @@ export function SmartReviewArenaView({
       const candidateModes = Array.from(
         new Set([
           ...allowedModes,
-          ...(candidate.mastery >= 7 && reviewFilter !== 'writing_audio'
-            ? ['sentence_builder', 'cloze', 'writing']
-            : candidate.mastery >= 7
-            ? ['writing', 'cloze', 'sentence_builder']
+          ...(candidate.mastery >= 7
+            ? [
+                'writing',
+                ...(isClozeUnlocked ? ['cloze'] : []),
+                ...(isSentenceBuilderUnlocked ? ['sentence_builder'] : [])
+              ]
             : [])
         ])
       );
@@ -1979,7 +1991,12 @@ export function LibraryView({
   const [confirmDeleteCourseId, setConfirmDeleteCourseId] = useState(null);
   const [studioToolMode, setStudioToolMode] = useState('none');
   const [searchQuery, setSearchQuery] = useState('');
+  const [vocabVisibleCount, setVocabVisibleCount] = useState(25);
   const [selectedCharEntry, setSelectedCharEntry] = useState(null);
+
+  useEffect(() => {
+    setVocabVisibleCount(25);
+  }, [searchQuery]);
 
   const [radicalFilterMode, setRadicalFilterMode] = useState('all');
   const [radicalSearch, setRadicalSearch] = useState('');
@@ -2148,14 +2165,20 @@ export function LibraryView({
       return;
     }
 
-    if (Array.isArray(parsedJson) && parsedJson.length > 0 && parsedJson[0]?.simplified) {
+    const getHskSimplified = (entry) => entry?.simplified || entry?.s || '';
+    const getHskLevels = (entry) =>
+      Array.isArray(entry?.level) ? entry.level : Array.isArray(entry?.l) ? entry.l : [];
+
+    if (
+      Array.isArray(parsedJson) &&
+      parsedJson.length > 0 &&
+      Boolean(getHskSimplified(parsedJson[0]))
+    ) {
       const levelCounts = {};
       parsedJson.forEach((entry) => {
-        if (Array.isArray(entry.level)) {
-          entry.level.forEach((tag) => {
-            levelCounts[tag] = (levelCounts[tag] || 0) + 1;
-          });
-        }
+        getHskLevels(entry).forEach((tag) => {
+          levelCounts[tag] = (levelCounts[tag] || 0) + 1;
+        });
       });
 
       const priorityOrder = [
@@ -2205,12 +2228,13 @@ export function LibraryView({
   const handleConfirmHskLevelExtraction = () => {
     if (!Array.isArray(rawHskDataPending) || rawHskDataPending.length === 0) return;
 
+    const getHskLevels = (item) =>
+      Array.isArray(item?.level) ? item.level : Array.isArray(item?.l) ? item.l : [];
+
     const filteredEntries =
       selectedHskTag === 'all'
         ? rawHskDataPending
-        : rawHskDataPending.filter(
-            (item) => Array.isArray(item.level) && item.level.includes(selectedHskTag)
-          );
+        : rawHskDataPending.filter((item) => getHskLevels(item).includes(selectedHskTag));
 
     if (filteredEntries.length === 0) {
       triggerToast('No Matching Words', `No entries matched level tag "${selectedHskTag}".`);
@@ -2218,13 +2242,26 @@ export function LibraryView({
     }
 
     const mappedWords = filteredEntries.map((item, idx) => {
-      const firstForm = (Array.isArray(item.forms) && item.forms[0]) || {};
-      const transcriptions = firstForm.transcriptions || {};
-      const rawMeanings = Array.isArray(firstForm.meanings) ? firstForm.meanings : [];
-      const joinedMeaning = rawMeanings.slice(0, 3).join('; ');
-      const classifiers = Array.isArray(firstForm.classifiers)
-        ? firstForm.classifiers.filter(Boolean)
+      const formsList = Array.isArray(item.forms)
+        ? item.forms
+        : Array.isArray(item.f)
+        ? item.f
         : [];
+      const firstForm = formsList[0] || {};
+      const transcriptions = firstForm.transcriptions || {};
+      const minifiedTrans = firstForm.i || {};
+      const rawMeanings = Array.isArray(firstForm.meanings)
+        ? firstForm.meanings
+        : Array.isArray(firstForm.m)
+        ? firstForm.m
+        : [];
+      const joinedMeaning = rawMeanings.slice(0, 3).join('; ');
+      const rawClassifiers = Array.isArray(firstForm.classifiers)
+        ? firstForm.classifiers
+        : Array.isArray(firstForm.c)
+        ? firstForm.c
+        : [];
+      const classifiers = rawClassifiers.filter(Boolean);
       const meaningWithClassifiers =
         classifiers.length > 0
           ? `${joinedMeaning} (CL: ${classifiers.join(', ')})`
@@ -2232,9 +2269,9 @@ export function LibraryView({
 
       return normalizeWordEntry(
         {
-          hanzi: item.simplified,
-          pinyin: transcriptions.pinyin || '',
-          pinyinNum: transcriptions.numeric || '',
+          hanzi: item.simplified || item.s || '',
+          pinyin: transcriptions.pinyin || minifiedTrans.y || '',
+          pinyinNum: transcriptions.numeric || minifiedTrans.n || '',
           meaning: meaningWithClassifiers || 'HSK vocabulary',
           classifiers
         },
@@ -2927,23 +2964,37 @@ export function LibraryView({
                     </div>
 
                     <div className="rounded-2xl bg-slate-950/80 border border-slate-800 p-2.5 space-y-1.5">
-                      <span className="text-[9px] font-black uppercase tracking-wider text-amber-400 block">
-                        Unseen Challenge
+                      <span className="text-[9px] font-black uppercase tracking-wider text-amber-400 flex items-center gap-1">
+                        <span>Unseen Challenge</span>
+                        {!isMasteredRule && <Lock className="w-2.5 h-2.5 text-amber-400/80" />}
                       </span>
                       <div className="flex items-center gap-1.5 flex-wrap">
-                        {rule.unseenChars.map((item) => (
-                          <button
-                            key={item.char}
-                            type="button"
-                            onClick={() => handleInspectCharacter(item)}
-                            className="px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-slate-800 border border-amber-500/30 text-xs font-black text-white flex items-center gap-1"
-                          >
-                            <span className="font-hanzi">{item.char}</span>
-                            <span className="text-[10px] text-amber-300 font-bold">
-                              {item.pinyin}
+                        {rule.unseenChars.map((item) =>
+                          isMasteredRule ? (
+                            <button
+                              key={item.char}
+                              type="button"
+                              onClick={() => handleInspectCharacter(item)}
+                              className="px-2.5 py-1 rounded-xl bg-slate-900 hover:bg-slate-800 border border-amber-500/30 text-xs font-black text-white flex items-center gap-1"
+                            >
+                              <span className="font-hanzi">{item.char}</span>
+                              <span className="text-[10px] text-amber-300 font-bold">
+                                {item.pinyin}
+                              </span>
+                            </button>
+                          ) : (
+                            <span
+                              key={item.char}
+                              title="Complete Test Intuition first to unlock stroke animation"
+                              className="px-2.5 py-1 rounded-xl bg-slate-900/70 border border-amber-500/20 text-xs font-black text-slate-200 flex items-center gap-1 cursor-not-allowed select-none"
+                            >
+                              <span className="font-hanzi">{item.char}</span>
+                              <span className="text-[10px] text-amber-300/80 font-bold">
+                                {item.pinyin}
+                              </span>
                             </span>
-                          </button>
-                        ))}
+                          )
+                        )}
                       </div>
                     </div>
                   </div>
@@ -3196,7 +3247,7 @@ export function LibraryView({
             <h2 className="text-xs font-extrabold uppercase tracking-wider text-slate-300">
               Vocabulary Reference ({filteredWordsList.length})
             </h2>
-            {filteredWordsList.slice(0, 25).map((word, idx) => {
+            {filteredWordsList.slice(0, vocabVisibleCount).map((word, idx) => {
               const masteryLv = getWordMasteryLevel(progress.mastery, word);
               const tierTitle = getMasteryTierMeta(masteryLv).tier;
               return (
@@ -3249,6 +3300,19 @@ export function LibraryView({
                 </div>
               );
             })}
+            {filteredWordsList.length > vocabVisibleCount && (
+              <button
+                type="button"
+                onClick={() => {
+                  soundFX.playPop();
+                  setVocabVisibleCount((prev) => prev + 25);
+                }}
+                className="game-btn-3d w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border-2 border-slate-700 text-xs font-extrabold text-amber-300"
+              >
+                Show More (+{Math.min(25, filteredWordsList.length - vocabVisibleCount)} of{' '}
+                {filteredWordsList.length - vocabVisibleCount} remaining)
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -3762,9 +3826,6 @@ export function ProfileView({
   courses,
   customDecks,
   currentLevel,
-  dailyGoalXp = 30,
-  todayXpEarned = 0,
-  onSetDailyGoalXp,
   onToggleSpeed,
   speakMandarin,
   onExportAllData,
@@ -3775,6 +3836,7 @@ export function ProfileView({
   onLaunchWeakWordsReview
 }) {
   const profileBackupInputRef = useRef(null);
+  const [masteryVisibleCount, setMasteryVisibleCount] = useState(20);
   const [availableVoices, setAvailableVoices] = useState(() => getAvailableMandarinVoices());
   const [preferredVoiceURI, setPreferredVoiceURIState] = useState(() =>
     getGlobalPreferredVoiceURI()
@@ -3787,12 +3849,12 @@ export function ProfileView({
     };
     refreshVoices();
     const synth = window.speechSynthesis;
-    if (synth) {
-      synth.onvoiceschanged = refreshVoices;
+    if (synth && typeof synth.addEventListener === 'function') {
+      synth.addEventListener('voiceschanged', refreshVoices);
     }
     return () => {
-      if (synth && synth.onvoiceschanged === refreshVoices) {
-        synth.onvoiceschanged = null;
+      if (synth && typeof synth.removeEventListener === 'function') {
+        synth.removeEventListener('voiceschanged', refreshVoices);
       }
     };
   }, []);
@@ -3829,7 +3891,7 @@ export function ProfileView({
     return list;
   }, [trackedWordsArray, progress.mastery]);
 
-  const todayIso = new Date().toISOString().slice(0, 10);
+  const todayIso = getLocalIsoDate();
   const todayStudySeconds =
     progress.dailyStudySeconds?.date === todayIso
       ? Math.max(0, Number(progress.dailyStudySeconds?.seconds) || 0)
@@ -3844,13 +3906,8 @@ export function ProfileView({
         0
       );
 
-    const hasWrittenStage =
-      (progress.stats?.writingStagesCompleted || 0) > 0 ||
-      (progress.completedStages || []).includes(2);
-
-    const hasPerfectBoss =
-      (progress.stats?.perfectBossWins || 0) > 0 ||
-      (progress.completedStages || []).includes(4);
+    const hasWrittenStage = (progress.stats?.writingStagesCompleted || 0) > 0;
+    const hasPerfectBoss = (progress.stats?.perfectBossWins || 0) > 0;
 
     const grandmasterCount = globalStats.grandmasterWordsCount || 0;
     const lv10Count = globalStats.level10WordsCount || 0;
@@ -4111,8 +4168,8 @@ export function ProfileView({
           </div>
         </div>
 
-        <div className="space-y-2.5 pt-2 max-h-56 overflow-y-auto pr-1">
-          {trackedWordsArray.slice(0, 20).map((word) => {
+        <div className="space-y-2.5 pt-2 max-h-64 overflow-y-auto pr-1">
+          {trackedWordsArray.slice(0, masteryVisibleCount).map((word) => {
             const lv = getWordMasteryLevel(progress.mastery, word);
             const tierMeta = getMasteryTierMeta(lv);
             return (
@@ -4130,6 +4187,19 @@ export function ProfileView({
               </div>
             );
           })}
+          {trackedWordsArray.length > masteryVisibleCount && (
+            <button
+              type="button"
+              onClick={() => {
+                soundFX.playPop();
+                setMasteryVisibleCount((prev) => prev + 20);
+              }}
+              className="game-btn-3d w-full py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border-2 border-slate-700 text-xs font-extrabold text-amber-300"
+            >
+              Show More (+{Math.min(20, trackedWordsArray.length - masteryVisibleCount)} of{' '}
+              {trackedWordsArray.length - masteryVisibleCount} remaining)
+            </button>
+          )}
         </div>
       </div>
 

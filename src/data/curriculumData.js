@@ -314,207 +314,6 @@ export const MODALITY_META = {
   }
 };
 
-export const HETEROGENEOUS_PATTERNS = [
-  {
-    id: 'pattern_a',
-    code: 'Pattern A',
-    name: 'Foundational Split',
-    tagline: 'Discovery → Progressive Calligraphy → Audio & Oral Mix → Unit Boss',
-    stages: [
-      {
-        id: 1,
-        title: 'Stage 1 • Discovery',
-        shortTitle: '1. Discovery',
-        subtitle: '3D Flippable Flashcards & Tone Contours',
-        description: 'Explore Hanzi, Pinyin pitch contours, and context sentences.',
-        iconName: 'Layers',
-        accentColor: 'from-rose-500 to-red-600',
-        nodeCategory: 'single',
-        badgeText: 'Single-Skill • Cards',
-        xpReward: 15,
-        launchType: 'flashcards',
-        allowedModalities: ['recognition']
-      },
-      {
-        id: 2,
-        title: 'Stage 2 • Calligraphy',
-        shortTitle: '2. Calligraphy',
-        subtitle: '3-Stage Progressive Stroke Order (Guided → Trace → Memory)',
-        description: 'Master every character through Guided, Ghost Trace, and Blind Memory stages.',
-        iconName: 'PenTool',
-        accentColor: 'from-amber-500 to-orange-600',
-        nodeCategory: 'single',
-        badgeText: 'Single-Skill • 3-Stage Write',
-        xpReward: 25,
-        launchType: 'writing',
-        allowedModalities: ['writing']
-      },
-      {
-        id: 3,
-        title: 'Stage 3 • Audio & Oral Mix',
-        shortTitle: '3. Audio & Oral Mix',
-        subtitle: 'Dynamic Listening Dictation + Speaking + Sentence Puzzle',
-        description: 'Interleaves native listening dictation, oral pronunciation, and word order.',
-        iconName: 'Headphones',
-        accentColor: 'from-emerald-500 to-teal-600',
-        nodeCategory: 'mix',
-        badgeText: 'Multi-Skill Mix',
-        xpReward: 25,
-        launchType: 'mixed',
-        allowedModalities: ['listening', 'speaking', 'sentence_builder']
-      },
-      {
-        id: 4,
-        title: 'Stage 4 • Unit Boss',
-        shortTitle: '4. Unit Boss',
-        subtitle: 'Jade Dragon Guardian Battle (15s Timer • 3 Hearts)',
-        description: 'Deplete the Boss HP bar before your 3 hearts or 15-second turn clock run out!',
-        iconName: 'Trophy',
-        accentColor: 'from-purple-600 to-indigo-700',
-        nodeCategory: 'boss',
-        badgeText: 'Boss Battle',
-        xpReward: 45,
-        launchType: 'boss',
-        allowedModalities: ['recognition']
-      }
-    ]
-  },
-  {
-    id: 'pattern_b',
-    code: 'Pattern B',
-    name: 'Ear-First Flow',
-    tagline: 'Ear Training → Script & Meaning Mix → Oral Check → Unit Boss',
-    stages: [
-      {
-        id: 1,
-        title: 'Stage 1 • Ear Training',
-        shortTitle: '1. Ear Training',
-        subtitle: 'Native zh-CN Audio Dictation (Pinyin & Hanzi)',
-        description: 'Train your ear first with 1.0x Normal and 0.5x Slow dictation.',
-        iconName: 'Headphones',
-        accentColor: 'from-emerald-500 to-teal-600',
-        nodeCategory: 'single',
-        badgeText: 'Single-Skill • Audio',
-        xpReward: 15,
-        launchType: 'dictation_only',
-        allowedModalities: ['listening']
-      },
-      {
-        id: 2,
-        title: 'Stage 2 • Script & Meaning Mix',
-        shortTitle: '2. Script & Meaning Mix',
-        subtitle: 'Recognition + 3-Stage Stroke Writing + Sentence Builder',
-        description: 'Dynamically mixes character recognition, 3-stage calligraphy, and sentence order.',
-        iconName: 'Sparkles',
-        accentColor: 'from-amber-500 to-rose-600',
-        nodeCategory: 'mix',
-        badgeText: '3-Skill Mix',
-        xpReward: 25,
-        launchType: 'mixed',
-        allowedModalities: ['recognition', 'writing', 'sentence_builder']
-      },
-      {
-        id: 3,
-        title: 'Stage 3 • Oral Check',
-        shortTitle: '3. Oral Check',
-        subtitle: 'Mandarin Speech Recognition & Tone Accuracy',
-        description: 'Speak each word aloud in Mandarin for instant similarity scoring.',
-        iconName: 'Mic',
-        accentColor: 'from-sky-500 to-blue-600',
-        nodeCategory: 'single',
-        badgeText: 'Single-Skill • Voice',
-        xpReward: 25,
-        launchType: 'speaking_only',
-        allowedModalities: ['speaking']
-      },
-      {
-        id: 4,
-        title: 'Stage 4 • Unit Boss',
-        shortTitle: '4. Unit Boss',
-        subtitle: 'Jade Dragon Guardian Battle (15s Timer • 3 Hearts)',
-        description: 'Defeat the Unit Boss under time pressure to master this unit!',
-        iconName: 'Trophy',
-        accentColor: 'from-purple-600 to-indigo-700',
-        nodeCategory: 'boss',
-        badgeText: 'Boss Battle',
-        xpReward: 45,
-        launchType: 'boss',
-        allowedModalities: ['recognition']
-      }
-    ]
-  },
-  {
-    id: 'pattern_c',
-    code: 'Pattern C',
-    name: 'Interleaved Gauntlet',
-    tagline: 'Recognition & Voice Mix → Writing & Dictation Mix → Full Gauntlet → Boss',
-    stages: [
-      {
-        id: 1,
-        title: 'Stage 1 • Recognition & Voice Mix',
-        shortTitle: '1. Recog & Voice Mix',
-        subtitle: 'Interleaved Flashcard Checks & Speaking Prompts',
-        description: 'Alternates between visual meaning checks and spoken pronunciation.',
-        iconName: 'Sparkles',
-        accentColor: 'from-rose-500 to-sky-600',
-        nodeCategory: 'mix',
-        badgeText: '2-Skill Mix',
-        xpReward: 15,
-        launchType: 'mixed',
-        allowedModalities: ['recognition', 'speaking']
-      },
-      {
-        id: 2,
-        title: 'Stage 2 • Writing & Dictation Mix',
-        shortTitle: '2. Write & Dictation Mix',
-        subtitle: '3-Stage Calligraphy + Pinyin/Hanzi Audio Dictation',
-        description: 'Pairs 3-stage character stroke writing with audio transcription.',
-        iconName: 'PenTool',
-        accentColor: 'from-amber-500 to-emerald-600',
-        nodeCategory: 'mix',
-        badgeText: '2-Skill Mix',
-        xpReward: 25,
-        launchType: 'mixed',
-        allowedModalities: ['writing', 'listening']
-      },
-      {
-        id: 3,
-        title: 'Stage 3 • Full-Skill Gauntlet',
-        shortTitle: '3. Full-Skill Gauntlet',
-        subtitle: 'All 5 Modalities Randomized Across Words',
-        description: 'Unpredictable gauntlet combining Recognition, Writing, Listening, Speaking & Sentences!',
-        iconName: 'Flame',
-        accentColor: 'from-fuchsia-600 to-rose-600',
-        nodeCategory: 'gauntlet',
-        badgeText: '5-Skill Gauntlet',
-        xpReward: 25,
-        launchType: 'mixed',
-        allowedModalities: [
-          'recognition',
-          'writing',
-          'listening',
-          'speaking',
-          'sentence_builder'
-        ]
-      },
-      {
-        id: 4,
-        title: 'Stage 4 • Unit Boss',
-        shortTitle: '4. Unit Boss',
-        subtitle: 'Jade Dragon Guardian Battle (15s Timer • 3 Hearts)',
-        description: 'Prove complete unit mastery against the Jade Dragon Guardian!',
-        iconName: 'Trophy',
-        accentColor: 'from-purple-600 to-indigo-700',
-        nodeCategory: 'boss',
-        badgeText: 'Boss Battle',
-        xpReward: 45,
-        launchType: 'boss',
-        allowedModalities: ['recognition']
-      }
-    ]
-  }
-];
-
 export const HANZI_WRITER_CDN = 'https://cdn.jsdelivr.net/npm/hanzi-writer@3.5/dist/hanzi-writer.min.js';
 
 export const KNOWN_CHARACTER_INFO = {
@@ -752,7 +551,7 @@ export const SEMANTIC_RADICALS_25 = [
     variants: ['口'],
     pinyinName: 'kǒuzìpáng',
     meaning: 'mouth / speech / eating / call',
-    commonChars: ['口', '叫', '吃', '喝', '吗', '呢', '吧', '听', '唱', '号', '同', '名', '问', '回', '国', '喜', '欢', '和', '哥', '哪', '喂', '咖啡'],
+    commonChars: ['口', '叫', '吃', '喝', '吗', '呢', '吧', '听', '唱', '号', '同', '名', '问', '回', '国', '喜', '欢', '和', '哥', '哪', '喂', '咖', '啡'],
     exampleChars: [
       { char: '吃', pinyin: 'chī', meaning: 'to eat' },
       { char: '喝', pinyin: 'hē', meaning: 'to drink' },
@@ -843,7 +642,7 @@ export const SEMANTIC_RADICALS_25 = [
     variants: ['艹'],
     pinyinName: 'cǎozìtóu',
     meaning: 'grass / plants / herbs / flowers',
-    commonChars: ['茶', '菜', '花', '草', '苹', '药', '蓝', '节', '英', '苦', '落', '葡萄'],
+    commonChars: ['茶', '菜', '花', '草', '苹', '药', '蓝', '节', '英', '苦', '落', '葡', '萄'],
     exampleChars: [
       { char: '茶', pinyin: 'chá', meaning: 'tea' },
       { char: '花', pinyin: 'huā', meaning: 'flower' },

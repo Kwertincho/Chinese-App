@@ -8,7 +8,7 @@
 
 export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, string]> = {
   // Standalone Zero-Initial Vowels
-  a: ['阿', '啊', '', '啊'],
+  a: ['阿', '嗄', '', '啊'],
   o: ['喔', '哦', '', ''],
   e: ['婀', '鹅', '', '饿'],
   ai: ['哀', '挨', '矮', '爱'],
@@ -49,7 +49,7 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
 
   // Bilabial: b
   ba: ['八', '拔', '把', '爸'],
-  bo: ['波', '伯', '跛', '播'],
+  bo: ['波', '伯', '跛', '簸'],
   bai: ['掰', '白', '百', '拜'],
   bei: ['杯', '', '北', '倍'],
   bao: ['包', '雹', '饱', '报'],
@@ -68,7 +68,7 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
   // Bilabial: p
   pa: ['趴', '爬', '', '怕'],
   po: ['坡', '婆', '叵', '破'],
-  pai: ['拍', '排', '迫', '派'],
+  pai: ['拍', '排', '', '派'],
   pei: ['胚', '陪', '', '配'],
   pao: ['抛', '袍', '跑', '泡'],
   pou: ['剖', '抔', '掊', ''],
@@ -243,7 +243,7 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
 
   // Velar: k
   ka: ['咖', '', '卡', '喀'],
-  ke: ['科', '壳', '可', '课'],
+  ke: ['科', '咳', '可', '课'],
   kai: ['开', '', '凯', '忾'],
   kei: ['剋', '', '', ''],
   kao: ['尻', '', '考', '靠'],
@@ -301,7 +301,7 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
 
   // Alveolopalatal: q
   qi: ['七', '齐', '起', '气'],
-  qia: ['掐', '', '卡', '恰'],
+  qia: ['掐', '', '', '恰'],
   qie: ['切', '茄', '且', '窃'],
   qiao: ['敲', '桥', '巧', '俏'],
   qiu: ['秋', '球', '', ''],
@@ -343,7 +343,7 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
   zhen: ['真', '', '枕', '阵'],
   zhang: ['张', '', '掌', '丈'],
   zheng: ['争', '', '整', '正'],
-  zhong: ['中', '', '种', '众'],
+  zhong: ['中', '', '肿', '众'],
   zhu: ['猪', '竹', '主', '住'],
   zhua: ['抓', '', '爪', ''],
   zhuo: ['桌', '浊', '', ''],
@@ -378,7 +378,7 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
   sha: ['沙', '啥', '傻', '厦'],
   she: ['奢', '舌', '舍', '社'],
   shi: ['诗', '十', '史', '是'],
-  shai: ['筛', '', '色', '晒'],
+  shai: ['筛', '', '', '晒'],
   shei: ['', '谁', '', ''],
   shao: ['烧', '勺', '少', '绍'],
   shou: ['收', '熟', '手', '受'],
@@ -390,7 +390,7 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
   shua: ['刷', '', '耍', '唰'],
   shuo: ['说', '', '', '硕'],
   shuai: ['摔', '', '甩', '帅'],
-  shui: ['', '谁', '水', '睡'],
+  shui: ['', '', '水', '睡'],
   shuan: ['拴', '', '', '涮'],
   shun: ['', '', '吮', '顺'],
   shuang: ['双', '', '爽', ''],
@@ -413,7 +413,7 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
   run: ['', '', '', '润'],
 
   // Dental Sibilant: z
-  za: ['扎', '杂', '咋', ''],
+  za: ['匝', '杂', '咋', ''],
   ze: ['', '则', '', '仄'],
   zi: ['资', '', '子', '字'],
   zai: ['灾', '', '宰', '在'],
@@ -426,7 +426,7 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
   zeng: ['增', '', '', '赠'],
   zong: ['宗', '', '总', '纵'],
   zu: ['租', '足', '组', ''],
-  zuo: ['作', '昨', '左', '坐'],
+  zuo: ['', '昨', '左', '坐'],
   zui: ['咀', '', '嘴', '最'],
   zuan: ['钻', '', '纂', '攥'],
   zun: ['尊', '', '撙', ''],
@@ -439,14 +439,14 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
   cao: ['操', '槽', '草', ''],
   cou: ['', '', '', '凑'],
   can: ['餐', '残', '惨', '灿'],
-  cen: ['参', '岑', '', ''],
+  cen: ['', '岑', '', ''],
   cang: ['苍', '藏', '', ''],
   ceng: ['噌', '层', '', '蹭'],
   cong: ['聪', '从', '', ''],
   cu: ['粗', '徂', '', '醋'],
   cuo: ['搓', '痤', '脞', '错'],
   cui: ['催', '', '璀', '脆'],
-  cuan: ['蹿', '攒', '', '窜'],
+  cuan: ['蹿', '', '', '窜'],
   cun: ['村', '存', '忖', '寸'],
 
   // Dental Sibilant: s
@@ -683,14 +683,12 @@ export function findHanziInCourseWords(
     const rawNum = String(w.pinyinNum || '').toLowerCase().trim();
     if (!rawNum) continue;
 
-    const tokens = rawNum
-      .replace(/ü/g, 'v')
-      .split(/[\s,;/·-]+/)
-      .filter(Boolean);
+    const matches = rawNum.match(/[a-züv]+[0-5]/gi) || [];
+    const tokens = matches.map((m) => m.toLowerCase().replace(/ü/g, 'v'));
 
     for (let i = 0; i < Math.min(tokens.length, hanziChars.length); i++) {
       const tok = tokens[i];
-      if (tok === target1 || ( !normSyl.startsWith('n') && !normSyl.startsWith('l') && tok === target2 )) {
+      if (tok === target1 || (!normSyl.startsWith('n') && !normSyl.startsWith('l') && tok === target2)) {
         return hanziChars[i] || '';
       }
     }

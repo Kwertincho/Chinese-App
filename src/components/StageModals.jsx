@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { motion, useReducedMotion } from 'motion/react';
 import {
   RefreshCw,
   PenTool,
@@ -49,6 +50,33 @@ import {
   PixelBlockGauge,
   InteractiveExampleText
 } from './SharedHudAndAudio.jsx';
+
+// Shared subtle Framer Motion modal backdrop & sheet entry animation
+function StageModalMotionShell({ children }) {
+  const prefersReducedMotion = useReducedMotion();
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }}
+      animate={{ opacity: 1 }}
+      transition={{ duration: prefersReducedMotion ? 0.12 : 0.2, ease: 'easeOut' }}
+      className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex justify-center"
+    >
+      <motion.div
+        initial={prefersReducedMotion ? { opacity: 0 } : { opacity: 0, y: 16, scale: 0.985 }}
+        animate={prefersReducedMotion ? { opacity: 1 } : { opacity: 1, y: 0, scale: 1 }}
+        transition={
+          prefersReducedMotion
+            ? { duration: 0.14, ease: 'easeOut' }
+            : { duration: 0.26, ease: [0.22, 1, 0.36, 1] }
+        }
+        className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto"
+      >
+        {children}
+      </motion.div>
+    </motion.div>
+  );
+}
 
 // ============================================================================
 // STAGE 1 MODAL: 3D FLIPPABLE FLASHCARDS WITH CHAO TONE VISUALIZER, COMBO & FLOATING XP
@@ -164,8 +192,7 @@ export function FlashcardStageModal({
   };
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex justify-center">
-      <div className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto">
+    <StageModalMotionShell>
         <SessionGameTopHud
           title={
             isMasteryTrial
@@ -188,7 +215,14 @@ export function FlashcardStageModal({
         />
 
         {/* Smooth 3D Perspective Card Flip Container (1st Tap Flips, 2nd Tap Advances) */}
-        <div className="flex-1 flex flex-col justify-center my-2" style={{ perspective: '1200px' }}>
+        <motion.div
+          key={`flashcard-${cardIndex}`}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          className="flex-1 flex flex-col justify-center my-2"
+          style={{ perspective: '1200px' }}
+        >
           <div
             onClick={handleCardTap}
             style={{
@@ -308,8 +342,8 @@ export function FlashcardStageModal({
                 />
               </div>
 
-              <div className="my-auto space-y-5 py-3">
-                <div className="text-center border-b border-slate-800 pb-4 space-y-1.5">
+              <div className="my-auto space-y-3.5 py-2 overflow-y-auto">
+                <div className="text-center border-b border-slate-800 pb-3 space-y-1">
                   <div className="flex items-center justify-center gap-2.5">
                     <span className="text-4xl font-black text-white font-hanzi">{currentWord.hanzi}</span>
                     <span className="font-pinyin text-rose-400">({currentWord.pinyin})</span>
@@ -320,7 +354,7 @@ export function FlashcardStageModal({
                   <p className="font-clarity text-sm text-slate-300">{currentWord.literal}</p>
                 </div>
 
-                <div className="rounded-2xl bg-slate-950/80 border border-slate-800 p-4 space-y-2">
+                <div className="rounded-2xl bg-slate-950/80 border border-slate-800 p-3.5 space-y-2">
                   <div className="flex items-center justify-between gap-1">
                     <span className="text-[10px] font-bold uppercase text-amber-400">
                       Example Sentence
@@ -353,6 +387,28 @@ export function FlashcardStageModal({
                     {currentWord.usageTip}
                   </p>
                 )}
+
+                {onSaveWordNote && (
+                  <div
+                    onClick={(e) => e.stopPropagation()}
+                    className="rounded-xl bg-slate-950/85 border border-slate-700/90 px-3 py-2 space-y-1 text-left"
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="text-[10px] font-extrabold uppercase tracking-wider text-sky-300">
+                        Personal Note / Mnemonic
+                      </span>
+                      <span className="text-[9px] font-bold text-slate-500">Auto-saved</span>
+                    </div>
+                    <input
+                      type="text"
+                      value={wordNotes[currentWord.hanzi] ?? wordNotes[currentWord.id] ?? ''}
+                      onChange={(e) => onSaveWordNote(currentWord, e.target.value)}
+                      onClick={(e) => e.stopPropagation()}
+                      placeholder="Add a personal memory hook or mnemonic..."
+                      className="w-full bg-slate-900 border border-slate-700 focus:border-sky-400 rounded-lg px-2.5 py-1.5 text-xs font-clarity font-medium text-white placeholder:text-slate-500 outline-none"
+                    />
+                  </div>
+                )}
               </div>
 
               <div className="text-center pt-3 border-t border-slate-800/80">
@@ -367,33 +423,27 @@ export function FlashcardStageModal({
               </div>
             </div>
           </div>
-        </div>
+        </motion.div>
 
-        <div className="flex items-center gap-2.5">
+        <div className="flex items-center justify-between gap-2.5 pt-1">
           <button
             type="button"
             disabled={cardIndex === 0}
             onClick={handlePrevCard}
-            className="game-btn-3d px-4 py-3.5 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-xs font-bold text-slate-200 border-b-4 border-slate-950"
+            className="game-btn-3d px-4 py-3 rounded-xl bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-xs font-bold text-slate-200 border-b-4 border-slate-950 shrink-0"
           >
             Previous
           </button>
 
-          <button
-            type="button"
-            onClick={handleNextCard}
-            className="game-btn-3d flex-1 py-3.5 rounded-xl bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-400 hover:to-red-500 text-white font-extrabold text-xs shadow-lg border-b-4 border-rose-800 flex items-center justify-center gap-1.5"
-          >
-            <span>
-              {cardIndex === words.length - 1
-                ? `Finish Flashcards (+${15 + bonusXp} XP)`
-                : 'Next Flashcard'}
-            </span>
-            <ChevronRight className="w-4 h-4" />
-          </button>
+          <div className="flex-1 text-right font-clarity text-[11px] font-semibold text-slate-400 leading-snug">
+            {isFlipped
+              ? cardIndex === words.length - 1
+                ? 'Tap back face to finish stage'
+                : 'Tap back face to advance to next card'
+              : '2-Tap Flow: Tap card to flip, tap back to advance'}
+          </div>
         </div>
-      </div>
-    </div>
+    </StageModalMotionShell>
   );
 }
 
@@ -534,37 +584,6 @@ export function WritingStageModal({
     setTouchNudgeMessage('');
   }, [charIndex]);
 
-  // Preload character stroke count & radical stroke indices via HanziWriter.loadCharacterData(char)
-  useEffect(() => {
-    if (scriptStatus !== 'ready' || !window.HanziWriter?.loadCharacterData || !currentChar) {
-      return;
-    }
-    let active = true;
-    setCharStrokeMeta((prev) => ({ ...prev, loading: true }));
-    window.HanziWriter.loadCharacterData(currentChar)
-      .then((charData) => {
-        if (!active || !charData) return;
-        const radStrokes = Array.isArray(charData.radStrokes) ? charData.radStrokes : [];
-        setCharStrokeMeta({
-          strokeCount: Array.isArray(charData.strokes) ? charData.strokes.length : null,
-          radStrokes,
-          loading: false
-        });
-        if (writerTargetRef.current && (charStage === 1 || charStage === 2)) {
-          highlightRadicalOutlineStrokes(writerTargetRef.current, radStrokes, true);
-        }
-      })
-      .catch(() => {
-        if (active) {
-          setCharStrokeMeta({ strokeCount: null, radStrokes: [], loading: false });
-        }
-      });
-
-    return () => {
-      active = false;
-    };
-  }, [scriptStatus, currentChar, charStage]);
-
   const triggerBoardFeedback = useCallback((type) => {
     setBoardFeedback(type);
     setTimeout(() => setBoardFeedback('idle'), 500);
@@ -649,14 +668,17 @@ export function WritingStageModal({
             return;
           }
 
-          // 3rd+ miss on this character registers as a real mistake and flashes the stroke hint
+          // 3rd miss on this character registers the telemetry/mastery penalty ONCE per character;
+          // subsequent misses still flash the stroke hint without repeatedly decrementing mastery.
           setTouchNudgeMessage('');
           soundFX.playMistake();
           liveStateRef.current.combo = 0;
           setCombo(0);
           triggerBoardFeedback('wrong');
-          const { currentWord: liveWord, onRecordSkillEvent: recordEvt } = liveStateRef.current;
-          recordEvt?.(liveWord, 'writing', { mistakesDelta: 1, completionsDelta: 0 });
+          if (nextCharMiss === 3) {
+            const { currentWord: liveWord, onRecordSkillEvent: recordEvt } = liveStateRef.current;
+            recordEvt?.(liveWord, 'writing', { mistakesDelta: 1, completionsDelta: 0 });
+          }
           setStrokeStats((prev) => ({
             ...prev,
             mistakesOnCurrent: strokeData.mistakesOnStroke,
@@ -947,8 +969,7 @@ export function WritingStageModal({
   const hideHanziScaffolding = writingConfig.hideHanzi && !isCharComplete && !showPinyinHint;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex justify-center">
-      <div className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto">
+    <StageModalMotionShell>
         <div>
           <SessionGameTopHud
             title={
@@ -1078,32 +1099,35 @@ export function WritingStageModal({
           <div className="w-full max-w-[244px] mb-2.5">
             <div className="grid grid-cols-3 gap-1 p-1 rounded-2xl bg-slate-950 border border-slate-800">
               {WRITING_MASTERY_STAGES.map((st) => {
-                const isSkippedStage = st.stage < writingConfig.minStage;
-                const isCompletedStage =
-                  isCharComplete || charStage > st.stage || isSkippedStage;
-                const isCurrentStage = charStage === st.stage && !isCharComplete;
-                return (
-                  <button
-                    key={st.stage}
-                    type="button"
-                    onClick={() => {
-                      if (st.stage <= charStage || isCharComplete) {
-                        soundFX.playPop();
-                        setCharStage(st.stage);
-                      }
-                    }}
-                    className={`py-1.5 px-2 rounded-xl text-[11px] font-black flex items-center justify-center gap-1 transition-all border ${
-                      isCurrentStage
-                        ? 'bg-gradient-to-r from-amber-500 to-rose-500 text-slate-950 border-amber-300 shadow'
-                        : isCompletedStage
-                        ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
-                        : 'bg-slate-900/70 border-transparent text-slate-500'
-                    }`}
-                  >
-                    {isCompletedStage && <Check className="w-3 h-3 stroke-[3px] shrink-0" />}
-                    <span className="truncate">{st.shortLabel}</span>
-                  </button>
-                );
+                  const isSkippedStage = st.stage < writingConfig.minStage;
+                  const isCompletedStage =
+                    isCharComplete || charStage > st.stage || isSkippedStage;
+                  const isCurrentStage = charStage === st.stage && !isCharComplete;
+                  const canSelectStage =
+                    st.stage >= writingConfig.minStage && st.stage <= charStage;
+                  return (
+                    <button
+                      key={st.stage}
+                      type="button"
+                      disabled={!canSelectStage}
+                      onClick={() => {
+                        if (canSelectStage) {
+                          soundFX.playPop();
+                          setCharStage(st.stage);
+                        }
+                      }}
+                      className={`py-1.5 px-2 rounded-xl text-[11px] font-black flex items-center justify-center gap-1 transition-all border ${
+                        isCurrentStage
+                          ? 'bg-gradient-to-r from-amber-500 to-rose-500 text-slate-950 border-amber-300 shadow'
+                          : isCompletedStage
+                          ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-300'
+                          : 'bg-slate-900/70 border-transparent text-slate-500'
+                      } ${!canSelectStage ? 'cursor-not-allowed' : ''}`}
+                    >
+                      {isCompletedStage && <Check className="w-3 h-3 stroke-[3px] shrink-0" />}
+                      <span className="truncate">{st.shortLabel}</span>
+                    </button>
+                  );
               })}
             </div>
           </div>
@@ -1364,8 +1388,7 @@ export function WritingStageModal({
             ? 'Completed! Advancing automatically...'
             : `Draw strokes in order to complete ${stageMeta.shortLabel}`}
         </div>
-      </div>
-    </div>
+    </StageModalMotionShell>
   );
 }
 
@@ -1477,7 +1500,7 @@ export function AudioSpeechStageModal({
       if (!nextDictationDone || !nextSpeakingDone) return;
       clearFeedbackTimer();
       const delayMs = wasCorrectAnswer ? 1400 : 1800;
-      pendingAdvancePayloadRef.current = { updatedBonusXp, updatedMaxCombo };
+      pendingAdvancePayloadRef.current = { updatedBonusXp, updatedMaxCombo, delayMs };
       feedbackTimerRef.current = setTimeout(() => {
         advanceAudioSpeechNow(updatedBonusXp, updatedMaxCombo);
       }, delayMs);
@@ -1488,8 +1511,15 @@ export function AudioSpeechStageModal({
   useEffect(() => {
     if (isInspectingExample) {
       clearFeedbackTimer();
+      return;
     }
-  }, [isInspectingExample, clearFeedbackTimer]);
+    if (pendingAdvancePayloadRef.current && !feedbackTimerRef.current) {
+      const { updatedBonusXp, updatedMaxCombo, delayMs } = pendingAdvancePayloadRef.current;
+      feedbackTimerRef.current = setTimeout(() => {
+        advanceAudioSpeechNow(updatedBonusXp, updatedMaxCombo);
+      }, delayMs || 1400);
+    }
+  }, [isInspectingExample, clearFeedbackTimer, advanceAudioSpeechNow]);
 
   const handleCheckDictation = (e) => {
     if (e) e.preventDefault();
@@ -1644,8 +1674,7 @@ export function AudioSpeechStageModal({
   const hideSpeakingHanzi = masteryLevel >= 7 && !speakingEvaluated && !showPinyinHint;
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex justify-center">
-      <div className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto">
+    <StageModalMotionShell>
         <SessionGameTopHud
           title={
             initialFocusMode === 'dictation'
@@ -1676,7 +1705,13 @@ export function AudioSpeechStageModal({
           }}
         />
 
-        <div className="my-auto space-y-4 py-3">
+        <motion.div
+          key={`audio-step-${stepIndex}`}
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+          className="my-auto space-y-4 py-3"
+        >
           {showDictation && (
             <div
               className={`rounded-3xl bg-slate-800/90 border p-4 space-y-3.5 shadow-xl transition-all ${
@@ -1794,7 +1829,10 @@ export function AudioSpeechStageModal({
               </form>
 
               {dictationResult && (
-                <div
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }}
                   className={`rounded-xl p-3 border text-xs space-y-2.5 ${
                     dictationResult.isValid
                       ? 'bg-emerald-500/15 border-emerald-400/50 text-emerald-200'
@@ -1836,7 +1874,7 @@ export function AudioSpeechStageModal({
                       )}
                     </div>
                   )}
-                </div>
+                </motion.div>
               )}
             </div>
           )}
@@ -1922,7 +1960,10 @@ export function AudioSpeechStageModal({
               </button>
 
               {similarityData && (
-                <div
+                <motion.div
+                  initial={{ opacity: 0, y: 6 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.18, ease: 'easeOut' }}
                   className={`rounded-2xl p-3.5 space-y-2 border ${
                     similarityData.score >= 50
                       ? 'bg-emerald-500/15 border-emerald-400/50 text-emerald-200'
@@ -1957,7 +1998,7 @@ export function AudioSpeechStageModal({
                       />
                     </div>
                   )}
-                </div>
+                </motion.div>
               )}
 
               {micErrorMsg && (
@@ -1980,7 +2021,7 @@ export function AudioSpeechStageModal({
               )}
             </div>
           )}
-        </div>
+        </motion.div>
 
         <div className="pt-1 text-center text-[11px] font-bold text-slate-400">
           {canAdvance && isInspectingExample ? (
@@ -2003,8 +2044,7 @@ export function AudioSpeechStageModal({
             'Complete the activity above to auto-advance'
           )}
         </div>
-      </div>
-    </div>
+    </StageModalMotionShell>
   );
 }
 
@@ -2027,7 +2067,11 @@ export function BossChallengeModal({
   onClose,
   onComplete
 }) {
-  const { elapsedSeconds, flushSessionTime } = useSessionTimer(true, onRecordStudySeconds);
+  const [status, setStatus] = useState('playing'); // 'playing' | 'lost' | 'won'
+  const { elapsedSeconds, flushSessionTime } = useSessionTimer(
+    status === 'playing',
+    onRecordStudySeconds
+  );
   const isRun2OrHigher = nodeLevel >= 1;
   const isMasteryTrial = nodeLevel >= 2;
   const turnDurationSeconds = isMasteryTrial ? 12 : 15;
@@ -2044,7 +2088,6 @@ export function BossChallengeModal({
   const [isAnswered, setIsAnswered] = useState(false);
   const [showPinyinHint, setShowPinyinHint] = useState(false);
   const [correctWordIds, setCorrectWordIds] = useState([]);
-  const [status, setStatus] = useState('playing'); // 'playing' | 'lost' | 'won'
 
   // Gamified Combo, Boss Hit Animation & Floating XP
   const [combo, setCombo] = useState(0);
@@ -2136,8 +2179,20 @@ export function BossChallengeModal({
   useEffect(() => {
     if (isInspectingExample) {
       clearFeedbackTimer();
+      return;
     }
-  }, [isInspectingExample, clearFeedbackTimer]);
+    if (
+      status === 'playing' &&
+      isAnswered &&
+      pendingNextHeartsRef.current !== null &&
+      !feedbackTimerRef.current
+    ) {
+      const nextHeartsVal = pendingNextHeartsRef.current;
+      feedbackTimerRef.current = setTimeout(() => {
+        advanceBossTurnNow(nextHeartsVal);
+      }, 1400);
+    }
+  }, [isInspectingExample, status, isAnswered, clearFeedbackTimer, advanceBossTurnNow]);
 
   useEffect(() => {
     if (status !== 'playing' || isAnswered) return;
@@ -2147,6 +2202,13 @@ export function BossChallengeModal({
       setCombo(0);
       setPlayerDamageAnim(true);
       setTimeout(() => setPlayerDamageAnim(false), 500);
+      if (currentQuestion) {
+        onRecordSkillEvent?.(
+          { id: currentQuestion.wordId, hanzi: currentQuestion.focusHanzi },
+          'recognition',
+          { mistakesDelta: 1, completionsDelta: 0 }
+        );
+      }
       setIsAnswered(true);
       setSelectedOptionId('timeout');
       const nextHearts = hearts - 1;
@@ -2160,7 +2222,15 @@ export function BossChallengeModal({
     }, 1000);
 
     return () => clearTimeout(timerId);
-  }, [timeLeft, status, isAnswered, hearts, scheduleBossTurnAdvance]);
+  }, [
+    timeLeft,
+    status,
+    isAnswered,
+    hearts,
+    currentQuestion,
+    onRecordSkillEvent,
+    scheduleBossTurnAdvance
+  ]);
 
   const handleSelectOption = (option) => {
     if (isAnswered || status !== 'playing') return;
@@ -2174,7 +2244,7 @@ export function BossChallengeModal({
       setBossDamageAnim(true);
       setTimeout(() => setBossDamageAnim(false), 550);
       onRecordSkillEvent?.(
-        { id: currentQuestion.wordId, hanzi: currentQuestion.speechText },
+        { id: currentQuestion.wordId, hanzi: currentQuestion.focusHanzi },
         'recognition',
         { mistakesDelta: 0, completionsDelta: 1 }
       );
@@ -2201,7 +2271,7 @@ export function BossChallengeModal({
       setPlayerDamageAnim(true);
       setTimeout(() => setPlayerDamageAnim(false), 500);
       onRecordSkillEvent?.(
-        { id: currentQuestion.wordId, hanzi: currentQuestion.speechText },
+        { id: currentQuestion.wordId, hanzi: currentQuestion.focusHanzi },
         'recognition',
         { mistakesDelta: 1, completionsDelta: 0 }
       );
@@ -2214,6 +2284,8 @@ export function BossChallengeModal({
 
   const handleRetryBoss = () => {
     clearFeedbackTimer();
+    pendingNextHeartsRef.current = null;
+    setIsInspectingExample(false);
     soundFX.playPop();
     setQuestionIndex(0);
     setHearts(3);
@@ -2232,14 +2304,16 @@ export function BossChallengeModal({
   const selectedWasCorrect = currentQuestion?.options?.find(
     (o) => o.id === selectedOptionId
   )?.isCorrect;
+  const currentQuestionMasteryLv = currentQuestionWord
+    ? getWordMasteryLevel(progress?.mastery, currentQuestionWord)
+    : 0;
   const hideBossFocusPinyin =
     !isAnswered &&
     !currentQuestion?.optionsHavePinyin &&
-    (isMasteryTrial || (isRun2OrHigher && !showPinyinHint));
+    (isMasteryTrial || ((currentQuestionMasteryLv >= 4 || isRun2OrHigher) && !showPinyinHint));
 
   return (
-    <div className="fixed inset-0 z-50 bg-slate-950/95 backdrop-blur-md flex justify-center">
-      <div className="w-full max-w-md bg-slate-900 min-h-dvh flex flex-col justify-between px-4 pt-[max(16px,env(safe-area-inset-top))] pb-[max(18px,env(safe-area-inset-bottom))] overflow-y-auto">
+    <StageModalMotionShell>
         <div>
           <SessionGameTopHud
             title={
@@ -2345,7 +2419,13 @@ export function BossChallengeModal({
         </div>
 
         {status === 'playing' && (
-          <div className="my-auto space-y-4 py-3">
+          <motion.div
+            key={`boss-turn-${questionIndex}`}
+            initial={{ opacity: 0, y: 10 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.22, ease: [0.22, 1, 0.36, 1] }}
+            className="my-auto space-y-4 py-3"
+          >
             <div
               className={`rounded-3xl bg-gradient-to-b from-purple-950/60 to-slate-800/90 border border-purple-500/40 p-5 text-center space-y-2 shadow-xl ${
                 playerDamageAnim ? 'animate-game-shake border-rose-500' : ''
@@ -2383,7 +2463,9 @@ export function BossChallengeModal({
                   <p className="text-[11px] font-bold text-slate-400">
                     {isMasteryTrial
                       ? 'Mastery Trial 3/3 • Pinyin hidden before answering'
-                      : 'Run 2/3 • Pinyin hidden by default'}
+                      : isRun2OrHigher
+                      ? 'Run 2/3 • Pinyin hidden by default'
+                      : `Lv.${currentQuestionMasteryLv} Recall • Pinyin hidden by default`}
                   </p>
                   {!isMasteryTrial && (
                     <button
@@ -2445,7 +2527,10 @@ export function BossChallengeModal({
             </div>
 
             {isAnswered && (
-              <div
+              <motion.div
+                initial={{ opacity: 0, y: 6 }}
+                animate={{ opacity: 1, y: 0 }}
+                transition={{ duration: 0.18, ease: 'easeOut' }}
                 className={`rounded-2xl p-3 text-xs border space-y-2 ${
                   selectedWasCorrect
                     ? 'bg-emerald-500/15 border-emerald-400/50 text-emerald-200'
@@ -2484,13 +2569,19 @@ export function BossChallengeModal({
                     />
                   </div>
                 )}
-              </div>
+              </motion.div>
             )}
-          </div>
+          </motion.div>
         )}
 
         {status === 'lost' && (
-          <div className="my-auto rounded-[2px] bg-slate-900 border-2 border-rose-500 p-6 text-center space-y-4 animate-game-shake">
+          <motion.div
+            initial={{ opacity: 0, y: 12, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.24, ease: [0.22, 1, 0.36, 1] }}
+            className="my-auto"
+          >
+            <div className="rounded-[2px] bg-slate-900 border-2 border-rose-500 p-6 text-center space-y-4 animate-game-shake">
             <ShieldAlert className="w-12 h-12 text-rose-400 mx-auto" />
             <h2 className="font-pixel-header text-sm text-rose-400">Out of Hearts!</h2>
             <p className="text-xs text-slate-300">
@@ -2516,11 +2607,18 @@ export function BossChallengeModal({
                 Try Again (3 Hearts)
               </button>
             </div>
-          </div>
+            </div>
+          </motion.div>
         )}
 
         {status === 'won' && (
-          <div className="my-auto rounded-[2px] bg-slate-900 border-2 border-amber-400 p-6 text-center space-y-4 animate-game-green-pulse">
+          <motion.div
+            initial={{ opacity: 0, y: 12, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            transition={{ duration: 0.26, ease: [0.22, 1, 0.36, 1] }}
+            className="my-auto"
+          >
+            <div className="rounded-[2px] bg-slate-900 border-2 border-amber-400 p-6 text-center space-y-4 animate-game-green-pulse">
             <Trophy className="w-12 h-12 text-amber-400 mx-auto" />
             <h2 className="font-pixel-header text-sm text-amber-300">Guardian Boss Defeated!</h2>
             <p className="text-xs text-slate-300">
@@ -2538,7 +2636,8 @@ export function BossChallengeModal({
             >
               Claim Victory Rewards & Bonus XP
             </button>
-          </div>
+            </div>
+          </motion.div>
         )}
 
         {status === 'playing' && (
@@ -2562,7 +2661,6 @@ export function BossChallengeModal({
             )}
           </div>
         )}
-      </div>
-    </div>
+    </StageModalMotionShell>
   );
 }

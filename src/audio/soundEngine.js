@@ -49,6 +49,21 @@ export function setGlobalPreferredVoiceURI(voiceURI) {
   }
 }
 
+function isCantoneseVoice(voice) {
+  const lang = String(voice?.lang || '').toLowerCase().replace('_', '-');
+  const name = String(voice?.name || '').toLowerCase();
+  return (
+    lang.startsWith('zh-hk') ||
+    lang.startsWith('yue') ||
+    lang.includes('-hk') ||
+    name.includes('cantonese') ||
+    name.includes('粵語') ||
+    name.includes('粤语') ||
+    name.includes('香港') ||
+    name.includes('hong kong')
+  );
+}
+
 function scoreMandarinVoiceQuality(voice) {
   const name = String(voice?.name || '');
   const lowerName = name.toLowerCase();
@@ -56,11 +71,13 @@ function scoreMandarinVoiceQuality(voice) {
 
   let score = 0;
 
-  // Prefer Mainland Standard Mandarin (zh-CN) first, then other zh locales
+  // Prefer Mainland Standard Mandarin (zh-CN) > Taiwan Mandarin (zh-TW) > other zh/cmn locales
   if (lang === 'zh-cn' || lang.startsWith('zh-cn') || lang.startsWith('cmn-hans')) {
-    score += 40;
+    score += 50;
+  } else if (lang === 'zh-tw' || lang.startsWith('zh-tw') || lang.startsWith('cmn-hant')) {
+    score += 30;
   } else if (lang === 'zh' || lang.startsWith('zh') || lang.startsWith('cmn')) {
-    score += 20;
+    score += 15;
   }
 
   // Prioritize natural / neural / cloud high-clarity voices before robotic local fallback voices
@@ -104,6 +121,7 @@ export function getAvailableMandarinVoices() {
   }
   const source = rawVoices.length > 0 ? rawVoices : cachedVoicesList;
   const zhVoices = source.filter((v) => {
+    if (isCantoneseVoice(v)) return false;
     const lang = String(v?.lang || '').toLowerCase().replace('_', '-');
     const name = String(v?.name || '').toLowerCase();
     return (
@@ -143,7 +161,11 @@ export function resolveMandarinVoice(preferredOverrideURI = undefined) {
 
 if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
   resolveMandarinVoice();
-  if ('onvoiceschanged' in window.speechSynthesis) {
+  if (typeof window.speechSynthesis.addEventListener === 'function') {
+    window.speechSynthesis.addEventListener('voiceschanged', () => {
+      resolveMandarinVoice();
+    });
+  } else if ('onvoiceschanged' in window.speechSynthesis) {
     window.speechSynthesis.onvoiceschanged = () => {
       resolveMandarinVoice();
     };
@@ -170,8 +192,13 @@ export function speakMandarinGlobal(text, overrideRate = undefined, callbacks = 
   }
 
   try {
-    // 1. Always cancel any queued or cached utterances immediately before creating a new utterance
-    window.speechSynthesis.cancel();
+    // 1. Only cancel when actively speaking or pending, and resume if paused (avoids Android WebView speech drops)
+    if (window.speechSynthesis.speaking || window.speechSynthesis.pending) {
+      window.speechSynthesis.cancel();
+    }
+    if (window.speechSynthesis.paused) {
+      window.speechSynthesis.resume();
+    }
 
     // 2. Create a fresh SpeechSynthesisUtterance with explicit zh-CN language, 1.03 pitch, and 0.65 / 1.0 rate
     const utterance = new SpeechSynthesisUtterance(cleanText);

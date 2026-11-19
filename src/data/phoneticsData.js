@@ -547,7 +547,7 @@ export const MANDARIN_FINAL_GROUPS = [
       },
       {
         pinyin: 'e',
-        ipa: '[ɤ] / [z̩] / [ʐ̩]',
+        ipa: '[ɤ] / [ə] / [ɛ]',
         note: 'Unrounded mid-back [ɤ] in open syllables (gē, hē).',
         repInitial: 'g',
         repFinal: 'e',
@@ -574,9 +574,9 @@ export const MANDARIN_FINAL_GROUPS = [
         repInitial: 'd',
         repFinal: 'u',
         repPinyin: 'dū',
-        repHanzi: '都',
+        repHanzi: '督',
         repIpa: '[tu˥]',
-        repMeaning: 'capital / read / block / degree'
+        repMeaning: 'supervise / read / block / degree'
       },
       {
         pinyin: 'ü',
@@ -667,7 +667,7 @@ export const MANDARIN_FINAL_GROUPS = [
         repPinyin: 'fān',
         repHanzi: '翻',
         repIpa: '[fan˥]',
-        repMeaning: 'turn /烦 /反 / meal'
+        repMeaning: 'turn / vexed / reverse / meal'
       },
       {
         pinyin: 'en',
@@ -915,6 +915,17 @@ export const MANDARIN_FINAL_GROUPS = [
         repMeaning: 'barren / yellow / lie / shake'
       },
       {
+        pinyin: 'ueng',
+        ipa: '[u̯əŋ]',
+        note: 'Labial glide [u̯] + velar nasal [-əŋ]; only occurs as standalone wēng (翁).',
+        repInitial: '∅',
+        repFinal: 'ueng',
+        repPinyin: 'wēng',
+        repHanzi: '翁',
+        repIpa: '[u̯əŋ˥]',
+        repMeaning: 'old man / lush / urn'
+      },
+      {
         pinyin: 'üe',
         ipa: '[y̯ɛ]',
         note: 'Front rounded glide [y̯] + [ɛ]. Written "ue" after j, q, x, y (xué, yuè) and "üe" after n, l (lüè).',
@@ -970,7 +981,7 @@ export const SANDBOX_FINALS = [
   'ai', 'ei', 'ao', 'ou',
   'an', 'en', 'ang', 'eng', 'ong',
   'ia', 'ie', 'iao', 'iu', 'ian', 'in', 'iang', 'ing', 'iong',
-  'ua', 'uo', 'uai', 'ui', 'uan', 'un', 'uang',
+  'ua', 'uo', 'uai', 'ui', 'uan', 'un', 'uang', 'ueng',
   'üe', 'üan', 'ün'
 ];
 
@@ -1086,6 +1097,7 @@ export function combineInitialAndFinal(initialId, rawFinal, courseWords) {
     uan: 'u̯an',
     un: 'u̯ən',
     uang: 'u̯ɑŋ',
+    ueng: 'u̯əŋ',
     üe: 'y̯ɛ',
     üan: 'y̯ɛn',
     ün: 'yn'
