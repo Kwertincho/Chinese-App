@@ -467,7 +467,10 @@ export function WritingStageModal({
   const [wordIndex, setWordIndex] = useState(0);
   const [charIndex, setCharIndex] = useState(0);
   const [charStage, setCharStage] = useState(() =>
-    getAdaptiveWritingConfig(getWordMasteryLevel(progress?.mastery, words[0])).initialStage
+    getAdaptiveWritingConfig(
+      getWordMasteryLevel(progress?.mastery, words[0]),
+      nodeLevel
+    ).initialStage
   ); // 1: Guided, 2: Trace, 3: Memory
   const [showPinyinHint, setShowPinyinHint] = useState(false);
   const [scriptStatus, setScriptStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
@@ -507,7 +510,7 @@ export function WritingStageModal({
   const currentChar = currentWord.chars[charIndex] || currentWord.chars[0];
   const masteryLevel = getWordMasteryLevel(progress?.mastery, currentWord);
   const tierMeta = getMasteryTierMeta(masteryLevel);
-  const writingConfig = getAdaptiveWritingConfig(masteryLevel);
+  const writingConfig = getAdaptiveWritingConfig(masteryLevel, nodeLevel);
   const stageMeta = getWritingStageMeta(charStage);
   const knownCharMeta = KNOWN_CHARACTER_INFO[currentChar] || null;
 
@@ -526,16 +529,16 @@ export function WritingStageModal({
   const totalStageSteps = useMemo(() => {
     return words.reduce((acc, w) => {
       const wLv = getWordMasteryLevel(progress?.mastery, w);
-      const wCfg = getAdaptiveWritingConfig(wLv);
+      const wCfg = getAdaptiveWritingConfig(wLv, nodeLevel);
       return acc + (w.chars?.length || 1) * wCfg.stagesCount;
     }, 0);
-  }, [words, progress?.mastery]);
+  }, [words, progress?.mastery, nodeLevel]);
 
   const completedStageSteps = useMemo(() => {
     let count = 0;
     for (let i = 0; i < wordIndex; i++) {
       const wLv = getWordMasteryLevel(progress?.mastery, words[i]);
-      const wCfg = getAdaptiveWritingConfig(wLv);
+      const wCfg = getAdaptiveWritingConfig(wLv, nodeLevel);
       count += (words[i]?.chars?.length || 1) * wCfg.stagesCount;
     }
     count += completedCharsInWord.length * writingConfig.stagesCount;
@@ -550,6 +553,7 @@ export function WritingStageModal({
     charIndex,
     charStage,
     progress?.mastery,
+    nodeLevel,
     writingConfig.stagesCount,
     writingConfig.minStage
   ]);
@@ -599,6 +603,7 @@ export function WritingStageModal({
     charIndex,
     words,
     progress,
+    nodeLevel,
     writingConfig,
     onComplete,
     onRecordSkillEvent,
@@ -614,6 +619,7 @@ export function WritingStageModal({
     charIndex,
     words,
     progress,
+    nodeLevel,
     writingConfig,
     onComplete,
     onRecordSkillEvent,
@@ -749,6 +755,7 @@ export function WritingStageModal({
             charIndex: liveCharIdx,
             words: liveWords,
             progress: liveProgress,
+            nodeLevel: liveNodeLevel,
             writingConfig: liveWritingCfg,
             onComplete: completeCb,
             onRecordSkillEvent: recordEvt,
@@ -802,7 +809,8 @@ export function WritingStageModal({
                 if (liveWordIdx < liveWords.length - 1) {
                   const nextWord = liveWords[liveWordIdx + 1];
                   const nextWordConfig = getAdaptiveWritingConfig(
-                    getWordMasteryLevel(liveProgress?.mastery, nextWord)
+                    getWordMasteryLevel(liveProgress?.mastery, nextWord),
+                    liveNodeLevel
                   );
                   setCompletedCharsInWord([]);
                   setWordXpAwarded(false);
@@ -1035,10 +1043,14 @@ export function WritingStageModal({
                 )}
               </div>
               <p className="text-[11px] text-slate-400 mt-0.5 truncate">
-                {masteryLevel >= 7
-                  ? 'Lv.7+ Blind Recall: Write directly from memory (Stage 3)'
-                  : masteryLevel >= 4
-                  ? 'Lv.4–6 Adaptive: Starts at Stage 2 Trace → Stage 3 Memory'
+                {masteryLevel >= 7 || isMasteryTrial
+                  ? isMasteryTrial && masteryLevel < 7
+                    ? 'Trial 3/3 Blind Memory: Write directly in Stage 3 (No Outline or Pinyin)'
+                    : 'Lv.7+ Blind Recall: Write directly from memory (Stage 3)'
+                  : masteryLevel >= 4 || isRun2OrHigher
+                  ? isRun2OrHigher && masteryLevel < 4
+                    ? 'Run 2/3 Adaptive: Starts at Stage 2 Ghost Trace → Stage 3 Memory'
+                    : 'Lv.4–6 Adaptive: Starts at Stage 2 Trace → Stage 3 Memory'
                   : 'Complete all 3 stages per character to earn word mastery XP'}
               </p>
             </div>
@@ -1280,7 +1292,8 @@ export function WritingStageModal({
                         } else if (wordIndex < words.length - 1) {
                           const nextWord = words[wordIndex + 1];
                           const nextWordConfig = getAdaptiveWritingConfig(
-                            getWordMasteryLevel(progress?.mastery, nextWord)
+                            getWordMasteryLevel(progress?.mastery, nextWord),
+                            nodeLevel
                           );
                           setCompletedCharsInWord([]);
                           setWordXpAwarded(false);
@@ -2455,8 +2468,22 @@ export function BossChallengeModal({
               </div>
 
               <p className="font-clarity text-[15px] font-bold text-slate-200 pt-1">{currentQuestion.prompt}</p>
-              <div className="text-3xl font-black text-white py-1 font-hanzi">
-                {currentQuestion.focusHanzi}
+              <div
+                className={
+                  currentQuestion.questionType === 'reverse_meaning'
+                    ? 'font-clarity text-2xl font-black text-amber-300 py-1.5'
+                    : currentQuestion.questionType === 'cloze'
+                    ? 'font-hanzi text-2xl font-black text-white py-1.5'
+                    : 'text-3xl font-black text-white py-1 font-hanzi'
+                }
+              >
+                {isAnswered && currentQuestion.questionType === 'reverse_meaning'
+                  ? `${currentQuestion.focusHanzi} (${currentQuestionWord?.pinyin || ''}) — ${
+                      currentQuestion.displayFocusText || currentQuestion.focusHanzi
+                    }`
+                  : isAnswered && currentQuestion.questionType === 'cloze'
+                  ? currentQuestion.speechText || currentQuestion.displayFocusText
+                  : currentQuestion.displayFocusText || currentQuestion.focusHanzi}
               </div>
               {hideBossFocusPinyin ? (
                 <div className="py-1 space-y-1.5">
@@ -2482,8 +2509,20 @@ export function BossChallengeModal({
                   )}
                 </div>
               ) : (
-                <div className="font-pinyin text-rose-300">
-                  {currentQuestion.focusPinyin}
+                <div
+                  className={
+                    currentQuestion.questionType === 'cloze'
+                      ? 'font-clarity text-sm font-bold text-slate-300 italic'
+                      : 'font-pinyin text-rose-300'
+                  }
+                >
+                  {isAnswered &&
+                  currentQuestion.questionType === 'cloze' &&
+                  (currentQuestion.clozePinyin || currentQuestionWord?.examplePinyin)
+                    ? `${currentQuestion.clozePinyin || currentQuestionWord.examplePinyin} • ${
+                        currentQuestion.focusPinyin
+                      }`
+                    : currentQuestion.focusPinyin}
                 </div>
               )}
             </div>
@@ -2514,7 +2553,15 @@ export function BossChallengeModal({
                     onClick={() => handleSelectOption(opt)}
                     className={`game-btn-3d font-clarity w-full p-3.5 rounded-2xl border text-left text-[15px] font-bold flex items-center justify-between transition-all ${btnStyle}`}
                   >
-                    <span className="font-clarity">{opt.text}</span>
+                    <span
+                      className={
+                        currentQuestion.optionsAreHanzi
+                          ? 'font-hanzi text-2xl font-black tracking-wider'
+                          : 'font-clarity'
+                      }
+                    >
+                      {opt.text}
+                    </span>
                     {isAnswered && opt.isCorrect && (
                       <Check className="w-4 h-4 text-emerald-400 shrink-0" />
                     )}

@@ -64,6 +64,7 @@ export function ClozeExerciseCard({
   courseWords,
   lessonPool = UNIT_1_WORDS,
   seed = 0,
+  nodeLevel = 0,
   selectedOptionId,
   isCompleted,
   cardAnim = 'idle',
@@ -75,8 +76,8 @@ export function ClozeExerciseCard({
   onInspectOpenChange = null
 }) {
   const clozeData = useMemo(
-    () => buildClozeExerciseData(word, lessonPool, seed),
-    [word, lessonPool, seed]
+    () => buildClozeExerciseData(word, lessonPool, seed, nodeLevel),
+    [word, lessonPool, seed, nodeLevel]
   );
 
   // Anti-Spoiler Rule: Cloze tests contextual reading deduction.
@@ -1374,7 +1375,8 @@ export function AdaptiveMixedSessionModal({
   const [charIndex, setCharIndex] = useState(0);
   const [charStage, setCharStage] = useState(() =>
     getAdaptiveWritingConfig(
-      getWordMasteryLevel(progress?.mastery, queue[0]?.word || UNIT_1_WORDS[0])
+      getWordMasteryLevel(progress?.mastery, queue[0]?.word || UNIT_1_WORDS[0]),
+      Number(sessionConfig?.nodeLevel || 0)
     ).initialStage
   );
   const [scriptStatus, setScriptStatus] = useState('loading');
@@ -1432,10 +1434,11 @@ export function AdaptiveMixedSessionModal({
   const isMasteryTrial = nodeLevel >= 2;
   const isPinyinMeaningComboStep =
     currentModality === 'meaning_mc' && stepIdx % 2 === 1;
+  const isReverseMeaningStep = currentModality === 'reverse_meaning_mc';
   const currentChar = currentWord.chars?.[charIndex] || currentWord.chars?.[0] || currentWord.hanzi[0];
   const masteryLv = getWordMasteryLevel(progress?.mastery, currentWord);
   const masteryTierMeta = getMasteryTierMeta(masteryLv);
-  const writingConfig = getAdaptiveWritingConfig(masteryLv);
+  const writingConfig = getAdaptiveWritingConfig(masteryLv, nodeLevel);
 
   const autoAdvanceDelayRef = useRef(1400);
 
@@ -1567,12 +1570,12 @@ export function AdaptiveMixedSessionModal({
         ? getWordMasteryLevel(progress?.mastery, nextItem.word)
         : 0;
       setCharIndex(0);
-      setCharStage(getAdaptiveWritingConfig(nextWordLv).initialStage);
+      setCharStage(getAdaptiveWritingConfig(nextWordLv, nodeLevel).initialStage);
       setStepIdx(nextStepIdx);
     } else {
       finishMixedSession(liveBonus, liveMax);
     }
-  }, [stepIdx, finishMixedSession, progress?.mastery]);
+  }, [stepIdx, finishMixedSession, progress?.mastery, nodeLevel]);
 
   // Dedicated auto-advance effect strictly tied to [stepCompleted, stepIdx, isInspectingExample]
   // Pauses cleanly if the learner taps a character in the post-answer Character Inspector.
@@ -1636,12 +1639,21 @@ export function AdaptiveMixedSessionModal({
         }
       });
     }
-    const rotatedCourse =
+    let rotatedCourse =
       courseDistractors.length > 0
         ? courseDistractors.map(
             (_, i) => courseDistractors[(i + stepIdx * 3) % courseDistractors.length]
           )
         : [];
+    if (nodeLevel >= 1 && rotatedCourse.length > 1) {
+      rotatedCourse = [...rotatedCourse];
+      for (let i = rotatedCourse.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tmp = rotatedCourse[i];
+        rotatedCourse[i] = rotatedCourse[j];
+        rotatedCourse[j] = tmp;
+      }
+    }
     const fallbackPool = [...queue.map((q) => q.word), ...UNIT_1_WORDS];
     const uniqueDistractors = [...rotatedCourse];
     fallbackPool.forEach((w) => {
@@ -1657,6 +1669,9 @@ export function AdaptiveMixedSessionModal({
       uniqueDistractors.push(UNIT_1_WORDS[uniqueDistractors.length % UNIT_1_WORDS.length]);
     }
     const formatOptionLabel = (w) => {
+      if (isReverseMeaningStep) {
+        return w.hanzi;
+      }
       const meaningStr = w.meaning || w.english;
       if (isPinyinMeaningComboStep) {
         return `${w.pinyin} • ${meaningStr}`;
@@ -1664,26 +1679,52 @@ export function AdaptiveMixedSessionModal({
       return meaningStr;
     };
     const rawOpts = [
-      { id: 'correct', text: formatOptionLabel(currentWord), isCorrect: true },
+      {
+        id: 'correct',
+        text: formatOptionLabel(currentWord),
+        hanzi: currentWord.hanzi,
+        pinyin: currentWord.pinyin,
+        meaning: currentWord.meaning || currentWord.english,
+        isCorrect: true
+      },
       {
         id: 'd1',
         text: formatOptionLabel(uniqueDistractors[0]),
+        hanzi: uniqueDistractors[0].hanzi,
+        pinyin: uniqueDistractors[0].pinyin,
+        meaning: uniqueDistractors[0].meaning || uniqueDistractors[0].english,
         isCorrect: false
       },
       {
         id: 'd2',
         text: formatOptionLabel(uniqueDistractors[1]),
+        hanzi: uniqueDistractors[1].hanzi,
+        pinyin: uniqueDistractors[1].pinyin,
+        meaning: uniqueDistractors[1].meaning || uniqueDistractors[1].english,
         isCorrect: false
       },
       {
         id: 'd3',
         text: formatOptionLabel(uniqueDistractors[2]),
+        hanzi: uniqueDistractors[2].hanzi,
+        pinyin: uniqueDistractors[2].pinyin,
+        meaning: uniqueDistractors[2].meaning || uniqueDistractors[2].english,
         isCorrect: false
       }
     ];
-    const shift = stepIdx % rawOpts.length;
+    if (nodeLevel >= 1) {
+      const shuffledOpts = [...rawOpts];
+      for (let i = shuffledOpts.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tmp = shuffledOpts[i];
+        shuffledOpts[i] = shuffledOpts[j];
+        shuffledOpts[j] = tmp;
+      }
+      return shuffledOpts;
+    }
+    const shift = (stepIdx + (isReverseMeaningStep ? 1 : 0)) % rawOpts.length;
     return rawOpts.map((_, idx) => rawOpts[(idx + shift) % rawOpts.length]);
-  }, [courseWords, currentWord, isPinyinMeaningComboStep, queue, stepIdx]);
+  }, [courseWords, currentWord, isPinyinMeaningComboStep, isReverseMeaningStep, nodeLevel, queue, stepIdx]);
 
   // Reset step state ONLY when advancing to a new stepIdx
   useEffect(() => {
@@ -2307,8 +2348,10 @@ export function AdaptiveMixedSessionModal({
           </div>
         </div>
 
-        {/* MODALITY 1: RECOGNITION & MEANING MULTIPLE-CHOICE QUIZ (4 OPTIONS) */}
-        {(currentModality === 'recognition' || currentModality === 'meaning_mc') && (
+        {/* MODALITY 1: RECOGNITION, MEANING MC & REVERSE MEANING MC (4 OPTIONS) */}
+        {(currentModality === 'recognition' ||
+          currentModality === 'meaning_mc' ||
+          currentModality === 'reverse_meaning_mc') && (
           <div className="my-auto space-y-3.5 py-3">
             <div
               onClick={() => {
@@ -2338,11 +2381,16 @@ export function AdaptiveMixedSessionModal({
                     ? 'Context & Example'
                     : recogAnswered
                     ? 'Tap Card for Context'
+                    : isReverseMeaningStep
+                    ? 'Reverse Recall • Meaning → Hanzi'
                     : masteryLv >= 4 || isPinyinMeaningComboStep
                     ? `Lv.${masteryLv} Reading Recall`
                     : 'Read & Deduce'}
                 </span>
-                {canExposeAudioBeforeAnswer(currentModality, isPinyinMeaningComboStep) && (
+                {canExposeAudioBeforeAnswer(
+                  currentModality,
+                  isPinyinMeaningComboStep || isReverseMeaningStep
+                ) && (
                   <MandarinAudioControls
                     text={currentWord.hanzi}
                     isSlowMode={isSlowMode}
@@ -2354,45 +2402,74 @@ export function AdaptiveMixedSessionModal({
                 )}
               </div>
 
-              <div className="font-hanzi text-5xl font-black text-white tracking-wider pt-1">
-                {currentWord.hanzi}
-              </div>
-
-              {hideRecogPinyin ? (
-                <div className="py-1.5 space-y-1.5">
-                  <p className="text-[11px] font-bold text-slate-400">
-                    {isPinyinMeaningComboStep
-                      ? 'Identify the matching Pinyin & meaning below'
-                      : isMasteryTrial
-                      ? 'Mastery Trial 3/3 • Pinyin hidden until answered'
-                      : isRun2OrHigher
-                      ? 'Run 2/3 • Pinyin hidden by default'
-                      : `Lv.${masteryLv} Recall • Pinyin hidden until answered`}
-                  </p>
-                  {!isPinyinMeaningComboStep && !isMasteryTrial && (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        soundFX.playPop();
-                        setShowPinyinHint(true);
-                      }}
-                      className="px-3 py-1 rounded-xl bg-slate-900 hover:bg-slate-800 border border-amber-500/40 text-amber-300 text-xs font-bold inline-flex items-center gap-1"
-                    >
-                      <Eye className="w-3.5 h-3.5" />
-                      <span>Show Pinyin Hint</span>
-                    </button>
+              {isReverseMeaningStep ? (
+                <>
+                  <div className="font-clarity text-2xl font-black text-amber-300 tracking-tight pt-1.5">
+                    "{currentWord.meaning || currentWord.english}"
+                  </div>
+                  {recogAnswered ? (
+                    <div className="space-y-1.5 pt-1">
+                      <div className="font-hanzi text-4xl font-black text-white tracking-wider">
+                        {currentWord.hanzi}
+                      </div>
+                      <div className="font-pinyin text-rose-400">{currentWord.pinyin}</div>
+                      <ChaoToneVisualizer
+                        pinyin={currentWord.pinyin}
+                        hanzi={currentWord.hanzi}
+                        compact
+                      />
+                    </div>
+                  ) : (
+                    <div className="py-1.5">
+                      <p className="text-[11px] font-bold text-slate-400">
+                        Select the matching Hanzi characters below • Audio & Pinyin locked until answered
+                      </p>
+                    </div>
                   )}
-                </div>
+                </>
               ) : (
                 <>
-                  <div className="font-pinyin text-rose-400">{currentWord.pinyin}</div>
+                  <div className="font-hanzi text-5xl font-black text-white tracking-wider pt-1">
+                    {currentWord.hanzi}
+                  </div>
 
-                  <ChaoToneVisualizer
-                    pinyin={currentWord.pinyin}
-                    hanzi={currentWord.hanzi}
-                    compact
-                  />
+                  {hideRecogPinyin ? (
+                    <div className="py-1.5 space-y-1.5">
+                      <p className="text-[11px] font-bold text-slate-400">
+                        {isPinyinMeaningComboStep
+                          ? 'Identify the matching Pinyin & meaning below'
+                          : isMasteryTrial
+                          ? 'Mastery Trial 3/3 • Pinyin hidden until answered'
+                          : isRun2OrHigher
+                          ? 'Run 2/3 • Pinyin hidden by default'
+                          : `Lv.${masteryLv} Recall • Pinyin hidden until answered`}
+                      </p>
+                      {!isPinyinMeaningComboStep && !isMasteryTrial && (
+                        <button
+                          type="button"
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            soundFX.playPop();
+                            setShowPinyinHint(true);
+                          }}
+                          className="px-3 py-1 rounded-xl bg-slate-900 hover:bg-slate-800 border border-amber-500/40 text-amber-300 text-xs font-bold inline-flex items-center gap-1"
+                        >
+                          <Eye className="w-3.5 h-3.5" />
+                          <span>Show Pinyin Hint</span>
+                        </button>
+                      )}
+                    </div>
+                  ) : (
+                    <>
+                      <div className="font-pinyin text-rose-400">{currentWord.pinyin}</div>
+
+                      <ChaoToneVisualizer
+                        pinyin={currentWord.pinyin}
+                        hanzi={currentWord.hanzi}
+                        compact
+                      />
+                    </>
+                  )}
                 </>
               )}
 
@@ -2438,7 +2515,9 @@ export function AdaptiveMixedSessionModal({
 
             <div className="space-y-2">
               <span className="font-clarity text-sm font-bold text-slate-300 block">
-                {isPinyinMeaningComboStep
+                {isReverseMeaningStep
+                  ? 'Select the matching Mandarin characters (Hanzi) (4 options):'
+                  : isPinyinMeaningComboStep
                   ? 'Select the matching Pinyin & English meaning (4 options):'
                   : 'Select the matching English meaning (4 options):'}
               </span>
@@ -2462,7 +2541,22 @@ export function AdaptiveMixedSessionModal({
                     onClick={() => handleSelectRecognitionOption(opt)}
                     className={`game-btn-3d font-clarity w-full p-3.5 rounded-2xl border text-left text-[15px] font-bold flex items-center justify-between transition-all ${styleClass}`}
                   >
-                    <span className="font-clarity">{opt.text}</span>
+                    <div className="flex items-center gap-2.5 min-w-0">
+                      <span
+                        className={
+                          isReverseMeaningStep
+                            ? 'font-hanzi text-2xl font-black tracking-wider'
+                            : 'font-clarity'
+                        }
+                      >
+                        {opt.text}
+                      </span>
+                      {isReverseMeaningStep && recogAnswered && opt.pinyin && (
+                        <span className="font-clarity text-xs font-bold opacity-85 truncate">
+                          ({opt.pinyin} — {opt.meaning})
+                        </span>
+                      )}
+                    </div>
                     {recogAnswered && opt.isCorrect && (
                       <Check className="w-4 h-4 text-emerald-400 shrink-0" />
                     )}
@@ -3260,6 +3354,7 @@ export function AdaptiveMixedSessionModal({
             courseWords={Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : lessonWordPool}
             lessonPool={lessonWordPool}
             seed={stepIdx}
+            nodeLevel={nodeLevel}
             selectedOptionId={clozeSelectedId}
             isCompleted={stepCompleted}
             cardAnim={cardAnim}

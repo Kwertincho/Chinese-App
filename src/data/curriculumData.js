@@ -277,6 +277,11 @@ export const MODALITY_META = {
     shortLabel: 'Meaning Quiz',
     badgeClass: 'bg-indigo-500/20 text-indigo-300 border-indigo-500/40'
   },
+  reverse_meaning_mc: {
+    label: 'Reverse Hanzi Quiz',
+    shortLabel: 'Reverse Hanzi',
+    badgeClass: 'bg-blue-500/20 text-blue-300 border-blue-500/40'
+  },
   writing: {
     label: 'Stroke Writing',
     shortLabel: 'Writing',

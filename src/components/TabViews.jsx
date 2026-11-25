@@ -756,12 +756,24 @@ export function ProgressionMapView({
             activeNodeLv === 0
               ? 'Run 1 (0/3 → 1/3): Standard scaffolding • Unlocks next node'
               : activeNodeLv === 1
-              ? 'Run 2 (1/3 → 2/3): Hidden Pinyin + Past Review (+25% XP)'
+              ? activeStageObj.launchType === 'flashcards'
+                ? 'Run 2 (1/3 → 2/3): Listening, Meaning & Reverse Hanzi Recall (+25% XP)'
+                : activeStageObj.launchType === 'meaning_mc'
+                ? 'Run 2 (1/3 → 2/3): Reverse Meaning → Hanzi + Hidden Pinyin (+25% XP)'
+                : activeStageObj.launchType === 'writing'
+                ? 'Run 2 (1/3 → 2/3): Shuffled Word Order + Hidden Pinyin (+25% XP)'
+                : activeStageObj.launchType === 'boss'
+                ? 'Run 2 (1/3 → 2/3): Reverse Hanzi & Cloze Attacks + Past Review (+25% XP)'
+                : 'Run 2 (1/3 → 2/3): Permuted Skills + Hidden Pinyin + Past Review (+25% XP)'
               : activeNodeLv === 2
-              ? `Mastery Trial (2/3 → 3/3 MAX): No Pinyin Hints${
-                  activeStageObj.launchType === 'boss' ? ' • 12s Clock' : ''
-                } (+50% XP)`
-              : `MAX Crown Trial: Strict No-Pinyin${
+              ? activeStageObj.launchType === 'flashcards'
+                ? 'Mastery Trial (2/3 → 3/3 MAX): Sentence Builder, Cloze & Listening (+50% XP)'
+                : activeStageObj.launchType === 'meaning_mc'
+                ? 'Mastery Trial (2/3 → 3/3 MAX): Reverse Hanzi + Cloze Context (+50% XP)'
+                : `Mastery Trial (2/3 → 3/3 MAX): Shuffled Production • No Pinyin Hints${
+                    activeStageObj.launchType === 'boss' ? ' • 12s Clock' : ''
+                  } (+50% XP)`
+              : `MAX Crown Trial: Shuffled Mastery Mix • Strict No-Pinyin${
                   activeStageObj.launchType === 'boss' ? ' • 12s Clock' : ''
                 } (+50% XP)`;
 

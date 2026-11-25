@@ -922,18 +922,66 @@ export default function App() {
         : targetWords;
 
     if (stage.launchType === 'flashcards') {
-      setActiveModal({
-        type: 'flashcards',
-        stageId: stage.id,
-        nodeLevel: currentNodeLevel,
-        words: wordsWithRun2Review
-      });
+      if (currentNodeLevel === 0) {
+        setActiveModal({
+          type: 'flashcards',
+          stageId: stage.id,
+          nodeLevel: currentNodeLevel,
+          words: targetWords
+        });
+      } else {
+        const discoveryModalities =
+          currentNodeLevel === 1
+            ? ['listening', 'reverse_meaning_mc', 'meaning_mc']
+            : ['sentence_builder', 'cloze', 'listening'];
+        const queue = buildDynamicModalityQueue(
+          targetWords,
+          discoveryModalities,
+          currentNodeLevel === 1
+            ? `${stage.badgeText} • Active Recall`
+            : `${stage.badgeText} • Context Mastery`,
+          activeLessonIndex,
+          pastLessonWords,
+          currentNodeLevel,
+          unlockedWords
+        );
+        setActiveModal({
+          type: 'mixed_session',
+          stageId: stage.id,
+          nodeLevel: currentNodeLevel,
+          questModeKey: 'flashcards',
+          sessionConfig: {
+            title: stage.title,
+            badgeText: stage.badgeText,
+            xpReward: stage.xpReward || 15,
+            nodeLevel: currentNodeLevel,
+            queue
+          }
+        });
+      }
     } else if (stage.launchType === 'writing') {
+      let writingWords = [...targetWords];
+      if (currentNodeLevel >= 1 && writingWords.length > 1) {
+        const shuffled = [...writingWords];
+        for (let i = shuffled.length - 1; i > 0; i--) {
+          const j = Math.floor(Math.random() * (i + 1));
+          const tmp = shuffled[i];
+          shuffled[i] = shuffled[j];
+          shuffled[j] = tmp;
+        }
+        const isSameOrder = shuffled.every((w, idx) => w?.hanzi === writingWords[idx]?.hanzi);
+        writingWords = isSameOrder
+          ? writingWords.map(
+              (_, idx) =>
+                writingWords[(idx + (currentNodeLevel === 1 ? 1 : 2)) % writingWords.length]
+            )
+          : shuffled;
+      }
       setActiveModal({
         type: 'writing',
         stageId: stage.id,
         nodeLevel: currentNodeLevel,
-        words: targetWords
+        words: writingWords
       });
     } else if (stage.launchType === 'dictation_only') {
       setActiveModal({
@@ -963,7 +1011,11 @@ export default function App() {
     } else {
       const modalitiesForNode =
         stage.launchType === 'meaning_mc'
-          ? ['meaning_mc']
+          ? currentNodeLevel === 0
+            ? ['meaning_mc']
+            : currentNodeLevel === 1
+            ? ['reverse_meaning_mc', 'meaning_mc']
+            : ['reverse_meaning_mc', 'cloze', 'meaning_mc']
           : stage.allowedModalities;
       const queue = buildDynamicModalityQueue(
         targetWords,

@@ -659,11 +659,31 @@ export function buildSentenceBuilderPuzzle(word = UNIT_1_WORDS[0]) {
   }));
 
   const shuffledTiles = [...baseTiles];
-  if (shuffledTiles.length > 1) {
-    shuffledTiles.reverse();
-    if (shuffledTiles.length >= 3) {
-      const first = shuffledTiles.shift();
-      shuffledTiles.push(first);
+  const hasDistinctTokens = new Set(tokens).size > 1;
+  if (shuffledTiles.length > 1 && hasDistinctTokens) {
+    const matchesCorrectOrder = (arr) =>
+      arr.every((tile, idx) => tile.text === tokens[idx]);
+
+    for (let attempt = 0; attempt < 8; attempt++) {
+      for (let i = shuffledTiles.length - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        const tmp = shuffledTiles[i];
+        shuffledTiles[i] = shuffledTiles[j];
+        shuffledTiles[j] = tmp;
+      }
+      if (!matchesCorrectOrder(shuffledTiles)) break;
+    }
+
+    if (matchesCorrectOrder(shuffledTiles)) {
+      const firstDiffIdx = shuffledTiles.findIndex((t) => t.text !== tokens[0]);
+      if (firstDiffIdx > 0) {
+        const tmp = shuffledTiles[0];
+        shuffledTiles[0] = shuffledTiles[firstDiffIdx];
+        shuffledTiles[firstDiffIdx] = tmp;
+      } else {
+        const first = shuffledTiles.shift();
+        shuffledTiles.push(first);
+      }
     }
   }
 
@@ -710,7 +730,13 @@ export const SUPPLEMENTAL_BLITZ_WORDS = [
   })
 ];
 
-export function buildClozeExerciseData(targetWord = UNIT_1_WORDS[0], lessonPool = UNIT_1_WORDS, seed = 0) {
+export function buildClozeExerciseData(
+  targetWord = UNIT_1_WORDS[0],
+  lessonPool = UNIT_1_WORDS,
+  seed = 0,
+  nodeLevel = 0
+) {
+  const cleanNodeLevel = Math.max(0, Math.floor(Number(nodeLevel) || 0));
   const normTarget = normalizeWordEntry(targetWord, seed);
 
   const rawExample = String(normTarget.example || '').trim();
@@ -726,7 +752,7 @@ export function buildClozeExerciseData(targetWord = UNIT_1_WORDS[0], lessonPool 
 
   // Guardrail: synthesize a minimal contextual sentence when a word has no real multi-word example (avoid "[ ___ ]！")
   if (!hasRealMultiWordExample(normTarget)) {
-    const synth = buildSynthesizedContextExample(normTarget, seed);
+    const synth = buildSynthesizedContextExample(normTarget, seed + cleanNodeLevel);
     mandarinPart = synth.mandarinSentence;
     englishPart = synth.englishSentence;
     pinyinPart = synth.pinyinSentence;
@@ -737,9 +763,14 @@ export function buildClozeExerciseData(targetWord = UNIT_1_WORDS[0], lessonPool 
     : `[ ___ ]，${mandarinPart}`;
 
   const combinedPool = [...(Array.isArray(lessonPool) ? lessonPool : []), ...FALLBACK_CLOZE_DISTRACTORS];
+  const randomDistractorOffset =
+    Math.floor(Math.random() * Math.max(1, combinedPool.length)) + cleanNodeLevel * 3;
   const distractors = [];
   for (let i = 0; i < combinedPool.length && distractors.length < 3; i++) {
-    const candidate = normalizeWordEntry(combinedPool[(i + seed) % combinedPool.length], i);
+    const candidate = normalizeWordEntry(
+      combinedPool[(i + seed + randomDistractorOffset) % combinedPool.length],
+      i
+    );
     if (
       candidate.hanzi !== normTarget.hanzi &&
       !distractors.some((d) => d.hanzi === candidate.hanzi)
@@ -765,8 +796,20 @@ export function buildClozeExerciseData(targetWord = UNIT_1_WORDS[0], lessonPool 
     }))
   ];
 
-  const shift = (seed + normTarget.hanzi.charCodeAt(0)) % rawOptions.length;
-  const options = rawOptions.map((_, idx) => rawOptions[(idx + shift) % rawOptions.length]);
+  const options = [...rawOptions];
+  for (let i = options.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = options[i];
+    options[i] = options[j];
+    options[j] = tmp;
+  }
+  if (cleanNodeLevel > 0 && options.length > 1) {
+    const extraShift = cleanNodeLevel % options.length;
+    if (extraShift > 0) {
+      const rotated = options.map((_, idx) => options[(idx + extraShift) % options.length]);
+      options.splice(0, options.length, ...rotated);
+    }
+  }
 
   return {
     mandarinSentence: mandarinPart,
@@ -1237,20 +1280,21 @@ export function getMasteryTierMeta(level = 0) {
   };
 }
 
-export function getAdaptiveWritingConfig(masteryLv = 0) {
+export function getAdaptiveWritingConfig(masteryLv = 0, nodeLevel = 0) {
   const lv = Math.max(0, Math.min(10, Math.round(Number(masteryLv) || 0)));
-  if (lv >= 7) {
+  const nLv = Math.max(0, Math.floor(Number(nodeLevel) || 0));
+  if (lv >= 7 || nLv >= 2) {
     return {
       initialStage: 3,
       minStage: 3,
       stagesCount: 1,
       isBlindRecall: true,
       hidePinyin: true,
-      hideHanzi: true,
-      badgeLabel: 'Lv.7+ Blind Recall'
+      hideHanzi: lv >= 7,
+      badgeLabel: lv >= 7 ? 'Lv.7+ Blind Recall' : 'Trial 3/3 • Stage 3 Blind Memory'
     };
   }
-  if (lv >= 4) {
+  if (lv >= 4 || nLv === 1) {
     return {
       initialStage: 2,
       minStage: 2,
@@ -1258,7 +1302,7 @@ export function getAdaptiveWritingConfig(masteryLv = 0) {
       isBlindRecall: false,
       hidePinyin: true,
       hideHanzi: false,
-      badgeLabel: 'Lv.4–6 Skip Guided (2-Stage)'
+      badgeLabel: lv >= 4 ? 'Lv.4–6 Skip Guided (2-Stage)' : 'Run 2/3 • Stage 2 Trace → Memory'
     };
   }
   return {
@@ -1768,6 +1812,7 @@ export function buildProportionalUnitNodes(lessonWords = UNIT_1_WORDS) {
 
 const NON_WRITING_REVIEW_MODALITIES = [
   'meaning_mc',
+  'reverse_meaning_mc',
   'listening',
   'speaking',
   'cloze',
@@ -1775,6 +1820,23 @@ const NON_WRITING_REVIEW_MODALITIES = [
   'classifier_drill',
   'dialogue_qa'
 ];
+
+function shuffleArrayWithGuarantee(items = [], shiftFallback = 1) {
+  const arr = [...items];
+  if (arr.length <= 1) return arr;
+  for (let i = arr.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = arr[i];
+    arr[i] = arr[j];
+    arr[j] = tmp;
+  }
+  const isIdenticalOrder = arr.every((item, idx) => item === items[idx]);
+  if (isIdenticalOrder) {
+    const offset = ((Math.max(1, shiftFallback) % (arr.length - 1)) + 1) % arr.length || 1;
+    return arr.map((_, idx) => items[(idx + offset) % items.length]);
+  }
+  return arr;
+}
 
 export function getNodeCompletionLevel(lessonProg, stageId) {
   if (!lessonProg || stageId == null) return 0;
@@ -1852,15 +1914,41 @@ export function buildDynamicModalityQueue(
   nodeLevel = 0,
   unlockedWordsPool = []
 ) {
+  const cleanNodeLevel = Math.max(0, Math.floor(Number(nodeLevel) || 0));
   const safeWords =
     Array.isArray(words) && words.length > 0 ? words : UNIT_1_WORDS;
-  const normalizedSafeWords = safeWords.map((w, idx) => normalizeWordEntry(w, idx));
+  const normalizedSafeWords = safeWords.map((w, idx) => ({
+    ...normalizeWordEntry(w, idx),
+    __origIdx: idx
+  }));
   const safeWordHanziSet = new Set(normalizedSafeWords.map((w) => w.hanzi).filter(Boolean));
 
-  const baseModes =
+  const rawBaseModes =
     Array.isArray(allowedModalities) && allowedModalities.length > 0
       ? [...allowedModalities]
       : ['recognition'];
+
+  // Mix reverse_meaning_mc into meaning_mc nodes on Run 2 (nodeLevel === 1) and alongside cloze on Run 3 (nodeLevel >= 2)
+  const baseModes = [...rawBaseModes];
+  if (baseModes.includes('meaning_mc')) {
+    if (cleanNodeLevel === 1 && !baseModes.includes('reverse_meaning_mc')) {
+      baseModes.unshift('reverse_meaning_mc');
+    } else if (cleanNodeLevel >= 2) {
+      if (!baseModes.includes('cloze')) {
+        baseModes.unshift('cloze');
+      }
+      if (!baseModes.includes('reverse_meaning_mc')) {
+        baseModes.unshift('reverse_meaning_mc');
+      }
+    }
+  } else if (
+    cleanNodeLevel >= 1 &&
+    baseModes.length > 1 &&
+    !baseModes.every((m) => m === 'writing') &&
+    !baseModes.includes('reverse_meaning_mc')
+  ) {
+    baseModes.push('reverse_meaning_mc');
+  }
 
   const effectiveUnlockedPool =
     Array.isArray(unlockedWordsPool) && unlockedWordsPool.length > 0
@@ -1902,12 +1990,44 @@ export function buildDynamicModalityQueue(
 
   // Core modes stay bound to safeWords; never displace a target micro-group word with an unrelated global item
   const coreModes = modes.filter((m) => m !== 'classifier_drill' && m !== 'dialogue_qa');
-  const activeCoreModes = coreModes.length > 0 ? coreModes : modes;
+  const rawActiveCoreModes = coreModes.length > 0 ? coreModes : modes;
+
+  // On Run 3 MAX Trial (nodeLevel >= 2), prioritize active-production/context modalities
+  const RUN3_PRIORITY_ORDER = [
+    'cloze',
+    'sentence_builder',
+    'reverse_meaning_mc',
+    'listening',
+    'speaking',
+    'meaning_mc',
+    'recognition',
+    'writing'
+  ];
+  const activeCoreModes =
+    cleanNodeLevel >= 2
+      ? [...rawActiveCoreModes].sort((a, b) => {
+          const idxA = RUN3_PRIORITY_ORDER.indexOf(a);
+          const idxB = RUN3_PRIORITY_ORDER.indexOf(b);
+          return (idxA === -1 ? 99 : idxA) - (idxB === -1 ? 99 : idxB);
+        })
+      : rawActiveCoreModes;
+
+  // Permute & shuffle word order when nodeLevel >= 1 so Run 1, Run 2, and Run 3 never present words in the same sequence
+  const totalWords = normalizedSafeWords.length;
+  const pass1Words =
+    cleanNodeLevel === 0
+      ? normalizedSafeWords
+      : shuffleArrayWithGuarantee(normalizedSafeWords, cleanNodeLevel);
+  const pass2Words =
+    cleanNodeLevel === 0
+      ? normalizedSafeWords
+      : shuffleArrayWithGuarantee(normalizedSafeWords, cleanNodeLevel + 1);
+  const permutedWordsSequence = [...pass1Words, ...pass2Words];
 
   // Guarantee thorough per-word practice: at least 2 passes across a 3-word group (6 items)
   const targetSteps = Math.max(
-    normalizedSafeWords.length * 2,
-    Math.min(8, normalizedSafeWords.length * 2)
+    totalWords * 2,
+    Math.min(8, totalWords * 2)
   );
   const coreQueue = [];
   const usedClassifierIds = new Set();
@@ -1915,20 +2035,27 @@ export function buildDynamicModalityQueue(
   let injectedCoreClassifier = false;
   let injectedCoreDialogue = false;
 
+  // Modality shift by nodeLevel: Run 1 -> +0, Run 2 -> +1, Run 3+ -> +2+
+  const modalityLevelOffset = cleanNodeLevel;
+
   for (let i = 0; i < targetSteps; i++) {
-    const word = normalizedSafeWords[i % normalizedSafeWords.length];
+    const word = permutedWordsSequence[i % permutedWordsSequence.length];
+    const passIdx = Math.floor(i / Math.max(1, totalWords));
+    const origWordIdx = typeof word.__origIdx === 'number' ? word.__origIdx : i;
     const prev1 = coreQueue.length >= 1 ? coreQueue[coreQueue.length - 1].modality : null;
     const prev2 = coreQueue.length >= 2 ? coreQueue[coreQueue.length - 2].modality : null;
 
     const candidates = activeCoreModes.filter((m) => !(m === prev1 && m === prev2));
     const poolToPick = candidates.length > 0 ? candidates : activeCoreModes;
-    let chosenModality = poolToPick[i % poolToPick.length];
+    const shiftedModalityIndex =
+      (origWordIdx + passIdx + modalityLevelOffset) % poolToPick.length;
+    let chosenModality = poolToPick[shiftedModalityIndex];
     let classifierItem = null;
     let dialoguePair = null;
     const stepWord = word;
 
     // On second pass of mixed nodes, inject classifier_drill / dialogue_qa in-place ONLY when it matches this exact micro-group word
-    if (isMixedMultiSkillNode && i >= normalizedSafeWords.length) {
+    if (isMixedMultiSkillNode && i >= totalWords) {
       if (classifierGate.unlocked && !injectedCoreClassifier) {
         const matchClf = classifierGate.items.find(
           (it) => !usedClassifierIds.has(it.id) && classifierMatchesWord(it, word)
@@ -1968,7 +2095,7 @@ export function buildDynamicModalityQueue(
         classifierItem = matchClf;
         usedClassifierIds.add(matchClf.id);
       } else {
-        chosenModality = 'meaning_mc';
+        chosenModality = cleanNodeLevel >= 1 ? 'reverse_meaning_mc' : 'meaning_mc';
       }
     } else if (chosenModality === 'dialogue_qa' && !dialoguePair) {
       const matchQa = dialogueGate.pairs.find(
@@ -1980,7 +2107,7 @@ export function buildDynamicModalityQueue(
         dialoguePair = matchQa;
         usedDialogueIds.add(matchQa.id);
       } else {
-        chosenModality = 'meaning_mc';
+        chosenModality = cleanNodeLevel >= 1 ? 'reverse_meaning_mc' : 'meaning_mc';
       }
     }
 
@@ -1989,11 +2116,20 @@ export function buildDynamicModalityQueue(
       (chosenModality === 'cloze' || chosenModality === 'sentence_builder') &&
       !hasRealMultiWordExample(stepWord)
     ) {
-      chosenModality = i % 2 === 0 ? 'meaning_mc' : 'listening';
+      const fallbackQuizMode =
+        cleanNodeLevel >= 1 && activeCoreModes.includes('reverse_meaning_mc')
+          ? 'reverse_meaning_mc'
+          : 'meaning_mc';
+      chosenModality =
+        (i + modalityLevelOffset) % 2 === 0
+          ? fallbackQuizMode
+          : activeCoreModes.includes('listening')
+          ? 'listening'
+          : fallbackQuizMode;
     }
 
     coreQueue.push({
-      stepId: `mix_${stepWord.id}_${chosenModality}_${i}`,
+      stepId: `mix_${stepWord.id}_${chosenModality}_lv${cleanNodeLevel}_${i}`,
       word: stepWord,
       modality: chosenModality,
       classifierItem,
@@ -2001,6 +2137,12 @@ export function buildDynamicModalityQueue(
       isPastLessonReview: false,
       reason: `${badgeText} • ${MODALITY_META[chosenModality]?.label || chosenModality}`
     });
+  }
+
+  // On Run 3 MAX Trial (nodeLevel >= 2), shuffle the queue so the question sequence is fully randomized
+  if (cleanNodeLevel >= 2 && coreQueue.length > 2) {
+    const shuffledCore = shuffleArrayWithGuarantee(coreQueue, 2);
+    coreQueue.splice(0, coreQueue.length, ...shuffledCore);
   }
 
   // Append up to 1-2 supplemental classifier_drill / dialogue_qa steps on mixed nodes without displacing the target micro-group words
@@ -2065,6 +2207,9 @@ export function buildDynamicModalityQueue(
     const validReviewModes = modes
       .map((m) => (m === 'recognition' ? 'meaning_mc' : m))
       .filter((m) => m !== 'writing' && NON_WRITING_REVIEW_MODALITIES.includes(m));
+    if (cleanNodeLevel >= 1 && !validReviewModes.includes('reverse_meaning_mc')) {
+      validReviewModes.push('reverse_meaning_mc');
+    }
     if (pastMatchingDialogues.length > 0 && !validReviewModes.includes('dialogue_qa')) {
       validReviewModes.push('dialogue_qa');
     }
@@ -2072,26 +2217,31 @@ export function buildDynamicModalityQueue(
       validReviewModes.push('classifier_drill');
     }
     const reviewModePool =
-      validReviewModes.length > 0 ? validReviewModes : ['meaning_mc', 'listening', 'cloze'];
-    const fallbackPastModes = ['meaning_mc', 'listening', 'speaking', 'cloze'];
+      validReviewModes.length > 0
+        ? validReviewModes
+        : ['reverse_meaning_mc', 'meaning_mc', 'listening', 'cloze'];
+    const fallbackPastModes =
+      cleanNodeLevel >= 1
+        ? ['reverse_meaning_mc', 'listening', 'cloze', 'speaking']
+        : ['meaning_mc', 'listening', 'speaking', 'cloze'];
 
     // ~20% of the node's question queue (1 to 2 review items) + 1 extra item on Run 2/3 (nodeLevel >= 1)
     const baseReviewCount = coreQueue.length >= 6 ? 2 : 1;
-    const extraNodeLevelReview = nodeLevel >= 1 ? 1 : 0;
+    const extraNodeLevelReview = cleanNodeLevel >= 1 ? 1 : 0;
     const reviewCount = Math.min(
       normalizedPastWords.length,
       baseReviewCount + extraNodeLevelReview
     );
 
     // Pick distinct past-lesson words
-    const shuffledPast = [...normalizedPastWords].sort(() => Math.random() - 0.5);
+    const shuffledPast = shuffleArrayWithGuarantee(normalizedPastWords, cleanNodeLevel + 1);
     const selectedReviewWords = shuffledPast.slice(0, reviewCount);
     const insertSlots = [2, 5, 7];
 
     selectedReviewWords.forEach((normalizedRev, rIdx) => {
       // Strictly never 'writing'
       const chosenReviewModality =
-        reviewModePool[(rIdx + Math.floor(Math.random() * reviewModePool.length)) % reviewModePool.length];
+        reviewModePool[(rIdx + cleanNodeLevel + Math.floor(Math.random() * reviewModePool.length)) % reviewModePool.length];
       let safeReviewModality =
         chosenReviewModality === 'writing' ? 'meaning_mc' : chosenReviewModality;
       let revClassifierItem = null;
@@ -2130,7 +2280,12 @@ export function buildDynamicModalityQueue(
         (safeReviewModality === 'cloze' || safeReviewModality === 'sentence_builder') &&
         !hasRealMultiWordExample(revStepWord)
       ) {
-        safeReviewModality = rIdx % 2 === 0 ? 'meaning_mc' : 'listening';
+        safeReviewModality =
+          rIdx % 2 === 0
+            ? cleanNodeLevel >= 1
+              ? 'reverse_meaning_mc'
+              : 'meaning_mc'
+            : 'listening';
       }
 
       const reviewItem = {
@@ -2157,6 +2312,7 @@ export function buildBossQuestionsForWords(
   pastLessonWords = [],
   nodeLevel = 0
 ) {
+  const cleanNodeLevel = Math.max(0, Math.floor(Number(nodeLevel) || 0));
   const normalizedPool = (words.length > 0 ? words : UNIT_1_WORDS).map((w, idx) =>
     normalizeWordEntry(w, idx)
   );
@@ -2174,10 +2330,75 @@ export function buildBossQuestionsForWords(
   ];
 
   const createQuestionForWord = (word, idx, isPastReview = false, questionType = 'meaning') => {
-    const distractors = fallbackPool.filter((w) => w.hanzi !== word.hanzi);
+    const baseDistractors = fallbackPool.filter((w) => w.hanzi !== word.hanzi);
+    const distractors =
+      cleanNodeLevel >= 1
+        ? shuffleArrayWithGuarantee(baseDistractors, cleanNodeLevel + idx + 1)
+        : baseDistractors;
     const d1 = distractors[idx % Math.max(1, distractors.length)] || UNIT_1_WORDS[0];
     const d2 = distractors[(idx + 1) % Math.max(1, distractors.length)] || UNIT_1_WORDS[1];
     const d3 = distractors[(idx + 2) % Math.max(1, distractors.length)] || UNIT_1_WORDS[2];
+
+    const permuteBossOptions = (opts, baseShift = 0) => {
+      if (cleanNodeLevel >= 1) {
+        return shuffleArrayWithGuarantee(opts, cleanNodeLevel + baseShift + 1);
+      }
+      return opts.map((_, oIdx) => opts[(oIdx + baseShift) % opts.length]);
+    };
+
+    if (questionType === 'reverse_meaning') {
+      const reverseOpts = [
+        { id: `${word.id}_rm_correct_${idx}`, text: word.hanzi, isCorrect: true },
+        { id: `${word.id}_rm_d1_${idx}`, text: d1.hanzi, isCorrect: false },
+        { id: `${word.id}_rm_d2_${idx}`, text: d2.hanzi, isCorrect: false },
+        { id: `${word.id}_rm_d3_${idx}`, text: d3.hanzi, isCorrect: false }
+      ];
+      const rotatedReverseOpts = permuteBossOptions(reverseOpts, idx + 2);
+
+      return {
+        id: `boss_q_rev_meaning_${word.id}_${idx}`,
+        wordId: word.id,
+        questionType: 'reverse_meaning',
+        optionsHavePinyin: true,
+        optionsAreHanzi: true,
+        isPastLessonReview: isPastReview,
+        reviewBadge: isPastReview ? 'Past Lesson Review' : null,
+        prompt: 'Select the Mandarin characters (Hanzi) that match this English meaning:',
+        focusHanzi: word.hanzi,
+        displayFocusText: `"${word.meaning || word.english}"`,
+        focusPinyin: 'Active Recall • Meaning → Hanzi',
+        speechText: word.hanzi,
+        explanation: `${word.hanzi} (${word.pinyin}) means "${word.meaning || word.english}".`,
+        options: rotatedReverseOpts
+      };
+    }
+
+    if (questionType === 'cloze') {
+      const clozeData = buildClozeExerciseData(word, fallbackPool, idx + 3, cleanNodeLevel);
+      const clozeOpts = clozeData.options.map((opt, oIdx) => ({
+        id: `${word.id}_clz_${oIdx}_${idx}`,
+        text: opt.hanzi,
+        isCorrect: Boolean(opt.isCorrect)
+      }));
+
+      return {
+        id: `boss_q_cloze_${word.id}_${idx}`,
+        wordId: word.id,
+        questionType: 'cloze',
+        optionsHavePinyin: true,
+        optionsAreHanzi: true,
+        isPastLessonReview: isPastReview,
+        reviewBadge: isPastReview ? 'Past Lesson Review' : null,
+        prompt: 'Choose the Mandarin word that best completes the sentence blank [ ___ ]:',
+        focusHanzi: word.hanzi,
+        displayFocusText: clozeData.blankSentence,
+        focusPinyin: `"${clozeData.englishSentence}"`,
+        clozePinyin: clozeData.pinyinSentence,
+        speechText: clozeData.mandarinSentence || word.exampleHanzi || word.hanzi,
+        explanation: `${clozeData.mandarinSentence} (${clozeData.pinyinSentence}) — "${clozeData.englishSentence}"`,
+        options: clozeOpts
+      };
+    }
 
     if (questionType === 'meaning') {
       const meaningOpts = [
@@ -2186,19 +2407,19 @@ export function buildBossQuestionsForWords(
         { id: `${word.id}_m_d2_${idx}`, text: d2.meaning || d2.english, isCorrect: false },
         { id: `${word.id}_m_d3_${idx}`, text: d3.meaning || d3.english, isCorrect: false }
       ];
-      const rotatedMeaningOpts = meaningOpts.map(
-        (_, oIdx) => meaningOpts[(oIdx + idx) % meaningOpts.length]
-      );
+      const rotatedMeaningOpts = permuteBossOptions(meaningOpts, idx);
 
       return {
         id: `boss_q_meaning_${word.id}_${idx}`,
         wordId: word.id,
         questionType: 'meaning',
         optionsHavePinyin: false,
+        optionsAreHanzi: false,
         isPastLessonReview: isPastReview,
         reviewBadge: isPastReview ? 'Past Lesson Review' : null,
         prompt: 'Select the correct English meaning for this Mandarin word:',
         focusHanzi: word.hanzi,
+        displayFocusText: word.hanzi,
         focusPinyin: word.pinyin,
         speechText: word.hanzi,
         explanation: `${word.hanzi} (${word.pinyin}) means "${word.meaning || word.english}".`,
@@ -2228,19 +2449,19 @@ export function buildBossQuestionsForWords(
         isCorrect: false
       }
     ];
-    const rotatedPinyinOpts = pinyinOpts.map(
-      (_, oIdx) => pinyinOpts[(oIdx + idx + 1) % pinyinOpts.length]
-    );
+    const rotatedPinyinOpts = permuteBossOptions(pinyinOpts, idx + 1);
 
     return {
       id: `boss_q_pinyin_${word.id}_${idx}`,
       wordId: word.id,
       questionType: 'pinyin',
       optionsHavePinyin: true,
+      optionsAreHanzi: false,
       isPastLessonReview: isPastReview,
       reviewBadge: isPastReview ? 'Past Lesson Review' : null,
       prompt: `Which Pinyin & meaning matches "${word.hanzi}" in "${word.exampleHanzi}"?`,
       focusHanzi: word.hanzi,
+      displayFocusText: word.hanzi,
       focusPinyin: 'Identify Pinyin & Meaning',
       speechText: word.exampleHanzi || word.hanzi,
       explanation: `${word.exampleHanzi} (${word.examplePinyin}) — "${word.exampleEnglish}"`,
@@ -2250,20 +2471,51 @@ export function buildBossQuestionsForWords(
 
   const questions = [];
 
-  normalizedPool.forEach((word, idx) => {
-    questions.push(createQuestionForWord(word, idx, false, 'meaning'));
-    questions.push(createQuestionForWord(word, idx, false, 'pinyin'));
-  });
+  if (cleanNodeLevel === 0) {
+    // Run 1 (nodeLevel === 0): meaning (Hanzi -> English) and pinyin (Context -> Pinyin & Meaning)
+    normalizedPool.forEach((word, idx) => {
+      questions.push(createQuestionForWord(word, idx, false, 'meaning'));
+      questions.push(createQuestionForWord(word, idx, false, 'pinyin'));
+    });
+  } else if (cleanNodeLevel === 1) {
+    // Run 2 (nodeLevel === 1): include reverse_meaning and cloze alongside shuffled meaning/pinyin turns
+    const run2PrimaryTypes = ['reverse_meaning', 'cloze'];
+    const run2SecondaryTypes = ['pinyin', 'meaning'];
+    normalizedPool.forEach((word, idx) => {
+      const firstType = run2PrimaryTypes[idx % run2PrimaryTypes.length];
+      const secondType = run2SecondaryTypes[(idx + 1) % run2SecondaryTypes.length];
+      questions.push(createQuestionForWord(word, idx * 2, false, firstType));
+      questions.push(createQuestionForWord(word, idx * 2 + 1, false, secondType));
+    });
+  } else {
+    // Run 3 MAX Trial (nodeLevel >= 2): full shuffled mix of reverse_meaning, cloze, pinyin, and meaning turns
+    const run3Types = ['cloze', 'reverse_meaning', 'pinyin', 'meaning'];
+    normalizedPool.forEach((word, idx) => {
+      const firstType = run3Types[(idx * 2 + 1) % run3Types.length];
+      const secondType = run3Types[(idx * 2 + 2) % run3Types.length];
+      questions.push(createQuestionForWord(word, idx * 2, false, firstType));
+      questions.push(createQuestionForWord(word, idx * 2 + 1, false, secondType));
+    });
+  }
 
-  const baseQuestions = questions.slice(0, 6);
+  let baseQuestions = questions.slice(0, 6);
+  if (cleanNodeLevel >= 1) {
+    baseQuestions = shuffleArrayWithGuarantee(baseQuestions, cleanNodeLevel);
+  }
 
   if (normalizedPastPool.length > 0) {
-    const extraReview = nodeLevel >= 1 ? 1 : 0;
+    const extraReview = cleanNodeLevel >= 1 ? 1 : 0;
     const reviewCount = Math.min(normalizedPastPool.length, 2 + extraReview);
-    const shuffledPast = [...normalizedPastPool].sort(() => Math.random() - 0.5);
+    const shuffledPast = shuffleArrayWithGuarantee(normalizedPastPool, cleanNodeLevel + 1);
     const insertSlots = [2, 5, 7];
+    const pastTypeCycle =
+      cleanNodeLevel === 0
+        ? ['meaning', 'pinyin']
+        : cleanNodeLevel === 1
+        ? ['reverse_meaning', 'cloze', 'pinyin', 'meaning']
+        : ['cloze', 'reverse_meaning', 'pinyin', 'meaning'];
     shuffledPast.slice(0, reviewCount).forEach((revWord, rIdx) => {
-      const qType = rIdx % 2 === 0 ? 'meaning' : 'pinyin';
+      const qType = pastTypeCycle[(rIdx + cleanNodeLevel) % pastTypeCycle.length];
       const revQ = createQuestionForWord(revWord, 50 + rIdx, true, qType);
       const insertPos = Math.min(baseQuestions.length, insertSlots[rIdx] ?? baseQuestions.length);
       baseQuestions.splice(insertPos, 0, revQ);
@@ -2277,8 +2529,8 @@ export function buildBossQuestionsForWords(
  * Global Anti-Spoiler Audio Guardrail
  * Returns true ONLY for passive Discovery flashcards ('flashcards') and pure Listening/Speaking
  * exercises ('listening', 'speaking', 'tone_sandhi_drill', 'hsk_mock_listening').
- * Returns false for reading, context, or word-order exercises ('meaning_mc', 'cloze',
- * 'sentence_builder', 'recognition', 'hsk_mock_reading', and any Boss question whose options
+ * Returns false for reading, context, or word-order exercises ('meaning_mc', 'reverse_meaning_mc',
+ * 'cloze', 'sentence_builder', 'recognition', 'hsk_mock_reading', and any Boss question whose options
  * contain Pinyin or test visual comprehension).
  */
 export function canExposeAudioBeforeAnswer(modality, optionsHavePinyin = false) {
