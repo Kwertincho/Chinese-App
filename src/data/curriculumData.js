@@ -266,6 +266,19 @@ export const ADVANCED_MODE_UNLOCK_THRESHOLDS = {
   hsk_mock_exam: 40
 };
 
+export const SRS_STABILITY_CONFIG = {
+  minEase: 1.3,
+  maxEase: 2.5,
+  defaultEase: 2.0,
+  passEaseDelta: 0.1,
+  failEaseDelta: -0.2,
+  leechLapseThreshold: 4,
+  leechEaseThreshold: 1.55,
+  leechRecoveryStreak: 3,
+  failMinHours: 4,
+  failMaxHours: 12
+};
+
 export const MODALITY_META = {
   recognition: {
     label: 'Recognition',
@@ -351,6 +364,11 @@ export const MODALITY_META = {
     label: 'Micro-Reading • 短文阅读',
     shortLabel: 'Micro-Read',
     badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+  },
+  confusable_chars: {
+    label: 'Confusable Twins • 形近字/同音字',
+    shortLabel: 'Twins',
+    badgeClass: 'bg-teal-500/20 text-teal-300 border-teal-400/40'
   }
 };
 
@@ -1211,6 +1229,7 @@ export const INITIAL_PROGRESS_STATE = {
   },
   wordNotes: {},
   wordLinguisticOverrides: {},
+  wordPriorityOverrides: {},
   unlockedStage: 1,
   completedStages: [],
   completedStrokeRules: [],

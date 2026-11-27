@@ -365,6 +365,57 @@ export function realizeSubjectEnglish(word) {
   };
 }
 
+function realizeAgentObjectEnglish(word) {
+  const h = typeof word?.hanzi === 'string' ? word.hanzi : '';
+  if (h === '我') return 'me';
+  if (h === '你' || h === '您') return 'you';
+  if (h === '他') return 'him';
+  if (h === '她') return 'her';
+  if (h === '它') return 'it';
+  if (h === '我们') return 'us';
+  if (h === '你们') return 'you all';
+  if (h === '他们' || h === '她们') return 'them';
+  return realizeSubjectEnglish(word).text;
+}
+
+function realizeVerbParticipleEnglish(verbWord) {
+  const raw =
+    verbWord?.enGloss?.base ||
+    (typeof verbWord?.enGloss === 'string' ? verbWord.enGloss : null) ||
+    verbWord?.meaning ||
+    verbWord?.english ||
+    'do';
+  const cleanBase =
+    String(raw)
+      .split(/[;/]/)[0]
+      .replace(/^to\s+/i, '')
+      .replace(/\([^)]*\)/g, '')
+      .trim() || 'do';
+  const parts = cleanBase.split(/\s+/);
+  const head = parts[0] || 'do';
+  const rest = parts.length > 1 ? ` ${parts.slice(1).join(' ')}` : '';
+  return `${conjugateHeadWord(head, 'pp')}${rest}`;
+}
+
+function realizeVerbGerundEnglish(verbWord) {
+  const raw =
+    verbWord?.enGloss?.base ||
+    (typeof verbWord?.enGloss === 'string' ? verbWord.enGloss : null) ||
+    verbWord?.meaning ||
+    verbWord?.english ||
+    'do';
+  const cleanBase =
+    String(raw)
+      .split(/[;/]/)[0]
+      .replace(/^to\s+/i, '')
+      .replace(/\([^)]*\)/g, '')
+      .trim() || 'do';
+  const parts = cleanBase.split(/\s+/);
+  const head = parts[0] || 'do';
+  const rest = parts.length > 1 ? ` ${parts.slice(1).join(' ')}` : '';
+  return `${conjugateHeadWord(head, 'gerund')}${rest}`;
+}
+
 function realizePlaceEnglish(placeWord) {
   const h = placeWord?.hanzi || '';
   if (h === '家') return 'home';
@@ -508,6 +559,18 @@ export function getParticleEntry(hanzi, poolMap) {
       pos: 'adv',
       features: ['negation', 'neg_past'],
       sourceWord: meiyou
+    };
+  }
+  // Allow composite 越来越 when both 越 and 来 are unlocked
+  if (hanzi === '越来越' && poolMap.has('越') && poolMap.has('来')) {
+    const yue = poolMap.get('越');
+    return {
+      hanzi: '越来越',
+      pinyin: 'yuè lái yuè',
+      meaning: 'more and more',
+      pos: 'adv',
+      features: ['degree', 'gradual'],
+      sourceWord: yue
     };
   }
   return null;
@@ -2279,6 +2342,401 @@ export const GRAMMAR_SCHEMAS = [
         distractorTokens: buildDistractors([
           { hanzi: '了', pinyin: 'le', reason: '过 expresses past life experience, distinct from 了' },
           { hanzi: '在', pinyin: 'zài', reason: '在 marks ongoing actions, not past experience' }
+        ])
+      });
+    }
+  },
+
+  // --------------------------------------------------------------------------
+  // GROUP 6: HSK 2–3 FORWARD-GATED COMPLEX & STRUCTURAL SCHEMAS (33–38)
+  // --------------------------------------------------------------------------
+  {
+    id: 'cause_yinwei_suoyi',
+    hskLevel: 2,
+    title: 'Cause & Effect (因为 ... 所以 ...)',
+    ruleSummary:
+      'Pair 因为 (yīnwèi, because) + Cause with 所以 (suǒyǐ, therefore) + Result to link cause and effect.',
+    requiredParticles: ['因为', '所以'],
+    slots: [
+      STANDARD_SUBJECT_SLOT,
+      {
+        role: 'causeAdj',
+        filter: (w, chosen) => Boolean(chosen?.subject) && doesAdjMatchSubject(w, chosen.subject)
+      },
+      TRANSITIVE_VERB_SLOT,
+      OBJECT_FOR_VERB_SLOT
+    ],
+    realize(slots, poolMap) {
+      const yinwei = getParticleEntry('因为', poolMap);
+      const suoyi = getParticleEntry('所以', poolMap);
+      if (!yinwei || !suoyi || !slots?.subject || !slots?.causeAdj || !slots?.verb || !slots?.object) {
+        return null;
+      }
+      const hen = getParticleEntry('很', poolMap);
+      const subj = realizeSubjectEnglish(slots.subject);
+      const beEn = getBeForm(subj.subjectType, 'present');
+      const adjEn = realizeAdjEnglish(slots.causeAdj);
+      const voEn = realizeVerbObjectEnglish(
+        slots.verb,
+        slots.object,
+        { subjectType: subj.subjectType, tense: 'present' },
+        { count: 1 }
+      );
+
+      const clause1Tokens = [
+        tokenFromWord(yinwei, 'conj', 0),
+        tokenFromWord(slots.subject, 'subject', 1),
+        ...(hen ? [tokenFromWord(hen, 'adv', 2)] : []),
+        tokenFromWord(slots.causeAdj, 'adj', 3)
+      ];
+      const clause2Tokens = [
+        tokenFromWord(suoyi, 'conj', 4),
+        tokenFromWord(slots.subject, 'subject_2', 5),
+        tokenFromWord(slots.verb, 'verb', 6),
+        tokenFromWord(slots.object, 'object', 7)
+      ];
+      const commaVariant = `${clause1Tokens.map((t) => t.hanzi).join('')}，${clause2Tokens
+        .map((t) => t.hanzi)
+        .join('')}。`;
+
+      return buildResult({
+        schema: this,
+        tokens: [...clause1Tokens, ...clause2Tokens],
+        punctuation: '。',
+        english: capitalizeSentence(`Because ${subj.text} ${beEn} ${adjEn}, ${subj.text} ${voEn}`, '.'),
+        acceptedVariants: [commaVariant],
+        distractorTokens: buildDistractors([
+          { hanzi: '但是', pinyin: 'dànshì', reason: '因为 pairs with 所以 (cause/effect), not 但是' },
+          { hanzi: '虽然', pinyin: 'suīrán', reason: 'Use 因为 to introduce a reason/cause' }
+        ])
+      });
+    }
+  },
+  {
+    id: 'concession_suiran_danshi',
+    hskLevel: 2,
+    title: 'Concession (虽然 ... 但是 ...)',
+    ruleSummary:
+      'Contrast two clauses with 虽然 (suīrán, although) + Clause 1 and 但是 (dànshì, but) + Clause 2. Mandarin keeps both conjunctions together.',
+    requiredParticles: ['虽然', '但是'],
+    slots: [
+      STANDARD_SUBJECT_SLOT,
+      {
+        role: 'adj',
+        filter: (w, chosen) => Boolean(chosen?.subject) && doesAdjMatchSubject(w, chosen.subject)
+      },
+      TRANSITIVE_VERB_SLOT,
+      OBJECT_FOR_VERB_SLOT
+    ],
+    realize(slots, poolMap) {
+      const suiran = getParticleEntry('虽然', poolMap);
+      const danshi = getParticleEntry('但是', poolMap);
+      if (!suiran || !danshi || !slots?.subject || !slots?.adj || !slots?.verb || !slots?.object) {
+        return null;
+      }
+      const hen = getParticleEntry('很', poolMap);
+      const subj = realizeSubjectEnglish(slots.subject);
+      const beEn = getBeForm(subj.subjectType, 'present');
+      const adjEn = realizeAdjEnglish(slots.adj);
+      const voEn = realizeVerbObjectEnglish(
+        slots.verb,
+        slots.object,
+        { subjectType: subj.subjectType, tense: 'present' },
+        { count: 1 }
+      );
+
+      const clause1Tokens = [
+        tokenFromWord(suiran, 'conj', 0),
+        tokenFromWord(slots.subject, 'subject', 1),
+        ...(hen ? [tokenFromWord(hen, 'adv', 2)] : []),
+        tokenFromWord(slots.adj, 'adj', 3)
+      ];
+      const clause2Tokens = [
+        tokenFromWord(danshi, 'conj', 4),
+        tokenFromWord(slots.subject, 'subject_2', 5),
+        tokenFromWord(slots.verb, 'verb', 6),
+        tokenFromWord(slots.object, 'object', 7)
+      ];
+      const commaVariant = `${clause1Tokens.map((t) => t.hanzi).join('')}，${clause2Tokens
+        .map((t) => t.hanzi)
+        .join('')}。`;
+
+      return buildResult({
+        schema: this,
+        tokens: [...clause1Tokens, ...clause2Tokens],
+        punctuation: '。',
+        english: capitalizeSentence(`Although ${subj.text} ${beEn} ${adjEn}, ${subj.text} ${voEn}`, '.'),
+        acceptedVariants: [commaVariant],
+        distractorTokens: buildDistractors([
+          { hanzi: '所以', pinyin: 'suǒyǐ', reason: '虽然 pairs with 但是 (contrast), not 所以' },
+          { hanzi: '因为', pinyin: 'yīnwèi', reason: 'Use 虽然 for "although", not 因为' }
+        ])
+      });
+    }
+  },
+  {
+    id: 'additive_budan_erqie',
+    hskLevel: 3,
+    title: 'Not Only ... But Also (S + 不但 ... 而且 ...)',
+    ruleSummary:
+      'Add a second, stronger quality with Subject + 不但 (búdàn) + Adj1 + 而且 (érqiě) + Adj2.',
+    requiredParticles: ['不但', '而且'],
+    slots: [
+      {
+        role: 'subject',
+        filter: (w) =>
+          (getWordPos(w) === 'pron' &&
+            hasFeature(w, 'human') &&
+            !hasAnyFeature(w, ['interrogative', 'demonstrative'])) ||
+          (getWordPos(w) === 'noun' &&
+            !hasAnyFeature(w, ['interrogative', 'demonstrative', 'location']))
+      },
+      {
+        role: 'adj1',
+        filter: (w, chosen) => Boolean(chosen?.subject) && doesAdjMatchSubject(w, chosen.subject)
+      },
+      {
+        role: 'adj2',
+        filter: (w, chosen) =>
+          Boolean(chosen?.subject && chosen?.adj1) &&
+          w.hanzi !== chosen.adj1.hanzi &&
+          doesAdjMatchSubject(w, chosen.subject)
+      }
+    ],
+    realize(slots, poolMap) {
+      const budan = getParticleEntry('不但', poolMap);
+      const erqie = getParticleEntry('而且', poolMap);
+      if (!budan || !erqie || !slots?.subject || !slots?.adj1 || !slots?.adj2) {
+        return null;
+      }
+      const subj = realizeSubjectEnglish(slots.subject);
+      const beEn = getBeForm(subj.subjectType, 'present');
+      const adj1En = realizeAdjEnglish(slots.adj1);
+      const adj2En = realizeAdjEnglish(slots.adj2);
+
+      const part1Tokens = [
+        tokenFromWord(slots.subject, 'subject', 0),
+        tokenFromWord(budan, 'conj', 1),
+        tokenFromWord(slots.adj1, 'adj1', 2)
+      ];
+      const part2Tokens = [
+        tokenFromWord(erqie, 'conj', 3),
+        tokenFromWord(slots.adj2, 'adj2', 4)
+      ];
+      const commaVariant = `${part1Tokens.map((t) => t.hanzi).join('')}，${part2Tokens
+        .map((t) => t.hanzi)
+        .join('')}。`;
+
+      return buildResult({
+        schema: this,
+        tokens: [...part1Tokens, ...part2Tokens],
+        punctuation: '。',
+        english: capitalizeSentence(
+          `${subj.text} ${beEn} not only ${adj1En}, but also ${adj2En}`,
+          '.'
+        ),
+        acceptedVariants: [commaVariant],
+        distractorTokens: buildDistractors([
+          { hanzi: '但是', pinyin: 'dànshì', reason: '不但 pairs with 而且 to add qualities, not 但是' },
+          { hanzi: '虽然', pinyin: 'suīrán', reason: 'Use 不但 ... 而且 for "not only ... but also"' }
+        ])
+      });
+    }
+  },
+  {
+    id: 'gradual_yuelaiyue',
+    hskLevel: 2,
+    title: 'Gradual Change (S + 越来越 + Adj)',
+    ruleSummary:
+      'Express steady change over time using Subject + 越来越 (yuè lái yuè, more and more) + Adjective. Do NOT add 很 before the adjective.',
+    requiredParticles: ['越来越'],
+    slots: [
+      {
+        role: 'subject',
+        filter: (w) =>
+          (getWordPos(w) === 'pron' &&
+            hasFeature(w, 'human') &&
+            !hasAnyFeature(w, ['interrogative', 'demonstrative'])) ||
+          ((getWordPos(w) === 'noun' || getWordPos(w) === 'place') &&
+            !hasAnyFeature(w, ['interrogative', 'demonstrative', 'location']))
+      },
+      {
+        role: 'adj',
+        filter: (w, chosen) => Boolean(chosen?.subject) && doesAdjMatchSubject(w, chosen.subject)
+      }
+    ],
+    realize(slots, poolMap) {
+      const yuelaiyue = getParticleEntry('越来越', poolMap);
+      if (!yuelaiyue || !slots?.subject || !slots?.adj) return null;
+      const subj = realizeSubjectEnglish(slots.subject);
+      const beEn = getBeForm(subj.subjectType, 'present');
+      const adjEn = realizeAdjEnglish(slots.adj);
+
+      return buildResult({
+        schema: this,
+        tokens: [
+          tokenFromWord(slots.subject, 'subject', 0),
+          tokenFromWord(yuelaiyue, 'adv', 1),
+          tokenFromWord(slots.adj, 'adj', 2)
+        ],
+        punctuation: '。',
+        english: capitalizeSentence(`${subj.text} ${beEn} getting more and more ${adjEn}`, '.'),
+        distractorTokens: buildDistractors([
+          { hanzi: '很', pinyin: 'hěn', reason: 'Never insert 很 between 越来越 and the adjective' },
+          { hanzi: '比', pinyin: 'bǐ', reason: '越来越 shows gradual change over time, not A vs B comparison' }
+        ])
+      });
+    }
+  },
+  {
+    id: 'ba_disposal',
+    hskLevel: 3,
+    title: 'Disposal Structure with 把 (S + 把 + Obj + V + 了/完)',
+    ruleSummary:
+      'Highlight how an action handles a specific object: Subject + 把 (bǎ) + Object + Action Verb + 了 (or 完). Never use static verbs like 是, 有, or 喜欢.',
+    requiredParticles: ['把', '了'],
+    slots: [
+      STANDARD_SUBJECT_SLOT,
+      {
+        role: 'verb',
+        filter: (w) =>
+          TRANSITIVE_VERB_SLOT.filter(w) &&
+          [
+            '吃',
+            '喝',
+            '看',
+            '读',
+            '写',
+            '买',
+            '做',
+            '拿',
+            '放',
+            '洗',
+            '关',
+            '开',
+            '用',
+            '卖',
+            '借',
+            '还',
+            '带',
+            '送',
+            '学',
+            '学习'
+          ].includes(w.hanzi)
+      },
+      OBJECT_FOR_VERB_SLOT
+    ],
+    realize(slots, poolMap) {
+      const ba = getParticleEntry('把', poolMap);
+      const le = getParticleEntry('了', poolMap);
+      if (!ba || !le || !slots?.subject || !slots?.verb || !slots?.object) return null;
+
+      const wan = getParticleEntry('完', poolMap);
+      const canUseWan =
+        Boolean(wan) &&
+        ['吃', '喝', '看', '读', '写', '做', '洗', '用', '学', '学习'].includes(slots.verb.hanzi);
+
+      const subj = realizeSubjectEnglish(slots.subject);
+      const objEn = realizeEnglishNoun(slots.object.enGloss || slots.object.meaning || slots.object.hanzi, {
+        count: 1,
+        definite: true
+      });
+      const pastEn = realizeEnglishVerb(slots.verb.enGloss || slots.verb.meaning || slots.verb.hanzi, {
+        subjectType: subj.subjectType,
+        tense: 'past'
+      });
+      const gerundEn = realizeVerbGerundEnglish(slots.verb);
+
+      const tokens = canUseWan
+        ? [
+            tokenFromWord(slots.subject, 'subject', 0),
+            tokenFromWord(ba, 'prep', 1),
+            tokenFromWord(slots.object, 'object', 2),
+            tokenFromWord(slots.verb, 'verb', 3),
+            tokenFromWord(wan, 'complement', 4),
+            tokenFromWord(le, 'aspect', 5)
+          ]
+        : [
+            tokenFromWord(slots.subject, 'subject', 0),
+            tokenFromWord(ba, 'prep', 1),
+            tokenFromWord(slots.object, 'object', 2),
+            tokenFromWord(slots.verb, 'verb', 3),
+            tokenFromWord(le, 'aspect', 4)
+          ];
+
+      const simpleLeVariant = `${slots.subject.hanzi}把${slots.object.hanzi}${slots.verb.hanzi}了。`;
+      const englishSentence = canUseWan
+        ? `${subj.text} finished ${gerundEn} ${objEn}`
+        : `${subj.text} ${pastEn} ${objEn}`;
+
+      return buildResult({
+        schema: this,
+        tokens,
+        punctuation: '。',
+        english: capitalizeSentence(englishSentence, '.'),
+        acceptedVariants: [simpleLeVariant],
+        distractorTokens: buildDistractors([
+          { hanzi: '被', pinyin: 'bèi', reason: '把 puts the doer first; 被 introduces passive voice' },
+          { hanzi: '不', pinyin: 'bù', reason: 'Completed 把 actions require 了 or a result complement like 完' }
+        ])
+      });
+    }
+  },
+  {
+    id: 'bei_passive',
+    hskLevel: 3,
+    title: 'Passive Voice with 被 (Obj + 被 + Agent + V + 了)',
+    ruleSummary:
+      'Form passive sentences with Affected Object + 被 (bèi, by) + Agent + Action Verb + 了.',
+    requiredParticles: ['被', '了'],
+    slots: [
+      {
+        role: 'agent',
+        filter: STANDARD_SUBJECT_SLOT.filter
+      },
+      {
+        role: 'verb',
+        filter: (w) =>
+          TRANSITIVE_VERB_SLOT.filter(w) &&
+          ['吃', '喝', '看', '读', '写', '买', '做', '拿', '用', '卖', '借', '带', '送', '洗'].includes(
+            w.hanzi
+          )
+      },
+      {
+        role: 'object',
+        filter: (w, chosen) =>
+          Boolean(chosen?.verb && chosen?.agent) &&
+          w.hanzi !== chosen.agent.hanzi &&
+          !hasFeature(w, 'human') &&
+          doesVerbMatchObject(chosen.verb, w)
+      }
+    ],
+    realize(slots, poolMap) {
+      const bei = getParticleEntry('被', poolMap);
+      const le = getParticleEntry('了', poolMap);
+      if (!bei || !le || !slots?.object || !slots?.agent || !slots?.verb) return null;
+
+      const objEn = realizeEnglishNoun(slots.object.enGloss || slots.object.meaning || slots.object.hanzi, {
+        count: 1,
+        definite: true
+      });
+      const agentEn = realizeAgentObjectEnglish(slots.agent);
+      const ppEn = realizeVerbParticipleEnglish(slots.verb);
+
+      return buildResult({
+        schema: this,
+        tokens: [
+          tokenFromWord(slots.object, 'object', 0),
+          tokenFromWord(bei, 'prep', 1),
+          tokenFromWord(slots.agent, 'agent', 2),
+          tokenFromWord(slots.verb, 'verb', 3),
+          tokenFromWord(le, 'aspect', 4)
+        ],
+        punctuation: '。',
+        english: capitalizeSentence(`${objEn} was ${ppEn} by ${agentEn}`, '.'),
+        distractorTokens: buildDistractors([
+          { hanzi: '把', pinyin: 'bǎ', reason: '被 marks passive voice (Obj + 被 + Agent); 把 puts the agent first' },
+          { hanzi: '比', pinyin: 'bǐ', reason: '被 marks passive voice, not comparison' }
         ])
       });
     }

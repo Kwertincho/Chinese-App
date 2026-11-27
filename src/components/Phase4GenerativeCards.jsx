@@ -16,7 +16,9 @@ import { soundFX } from '../audio/soundEngine.js';
 import { KNOWN_CHARACTER_INFO } from '../data/curriculumData.js';
 import {
   loadHanziWriterScript,
-  highlightRadicalOutlineStrokes
+  highlightRadicalOutlineStrokes,
+  CJK_SINGLE_CHAR_REGEX,
+  extractWritableCjkChars
 } from '../utils/mandarinHelpers.js';
 import {
   MandarinAudioControls,
@@ -47,14 +49,7 @@ function getCardFrameClass(cardAnim, accentBorderClass) {
 }
 
 function extractHanziChars(targetWord) {
-  if (!targetWord || typeof targetWord !== 'object') return [];
-  if (Array.isArray(targetWord.chars) && targetWord.chars.length > 0) {
-    return targetWord.chars
-      .map((c) => String(c || '').trim())
-      .filter((c) => /[\u4e00-\u9fff]/.test(c));
-  }
-  const raw = String(targetWord.hanzi || '').trim();
-  return Array.from(raw).filter((c) => /[\u4e00-\u9fff]/.test(c));
+  return extractWritableCjkChars(targetWord);
 }
 
 function splitSentenceAroundTarget(sentence = '', targetHanzi = '') {
@@ -213,6 +208,7 @@ export function ContextualWritingCard({
       !writerTargetRef.current ||
       !window.HanziWriter ||
       !currentChar ||
+      !CJK_SINGLE_CHAR_REGEX.test(currentChar) ||
       isLocked
     ) {
       return;

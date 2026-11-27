@@ -9,14 +9,78 @@ import {
   getCorpusSentenceCount
 } from './corpusMiner.js';
 
-const LEXICON_DATA_URL = '/data/hsk_lexicon.json';
-const CURRICULUM_DATA_URL = '/data/hsk_curriculum.json';
-const CORPUS_DATA_URL = '/data/corpus_hsk.json';
+const LEXICON_FILENAME = 'hsk_lexicon.json';
+const CURRICULUM_FILENAME = 'hsk_curriculum.json';
+const CORPUS_FILENAME = 'corpus_hsk.json';
+
+export const DEFAULT_REMOTE_DATA_BASE_URL =
+  'https://cdn.jsdelivr.net/gh/Kwertincho/hanziapp-data@main';
+export const DATA_BASE_URL_STORAGE_KEY = 'hanziapp_data_base_url';
+const LAST_SYNCED_AT_STORAGE_KEY = 'hanziapp_data_last_synced_at';
+const LAST_SYNC_SOURCE_STORAGE_KEY = 'hanziapp_data_last_source';
 
 let masterLexiconMap = {};
 let preloadedCurriculum = { version: null, courses: [] };
 let isLoaded = false;
 let inFlightLoadPromise = null;
+let activeDataSource = (() => {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(LAST_SYNC_SOURCE_STORAGE_KEY) || 'embedded';
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return 'embedded';
+})();
+let lastSyncedAt = (() => {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(LAST_SYNCED_AT_STORAGE_KEY) || null;
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return null;
+})();
+
+/**
+ * Returns the active remote data repository base URL (without trailing slashes),
+ * reading an optional user override from localStorage ('hanziapp_data_base_url').
+ */
+export function getDataBaseUrl() {
+  try {
+    if (typeof localStorage !== 'undefined') {
+      const saved = localStorage.getItem(DATA_BASE_URL_STORAGE_KEY);
+      if (typeof saved === 'string' && saved.trim()) {
+        return saved.trim().replace(/\/+$/, '');
+      }
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return DEFAULT_REMOTE_DATA_BASE_URL;
+}
+
+/**
+ * Persists a custom data repository base URL in localStorage (or clears override
+ * when empty / equal to DEFAULT_REMOTE_DATA_BASE_URL) and returns the active base URL.
+ */
+export function setDataBaseUrl(url) {
+  const cleaned = typeof url === 'string' ? url.trim().replace(/\/+$/, '') : '';
+  try {
+    if (typeof localStorage !== 'undefined') {
+      if (!cleaned || cleaned === DEFAULT_REMOTE_DATA_BASE_URL) {
+        localStorage.removeItem(DATA_BASE_URL_STORAGE_KEY);
+      } else {
+        localStorage.setItem(DATA_BASE_URL_STORAGE_KEY, cleaned);
+      }
+    }
+  } catch {
+    // Ignore storage errors
+  }
+  return getDataBaseUrl();
+}
 
 /**
  * Maps ICTCLAS part-of-speech tags (used in complete-hsk-vocabulary `p` arrays)
@@ -307,38 +371,83 @@ async function fetchStaticJsonSafely(url) {
 }
 
 /**
+ * Attempts to fetch a static dataset JSON file from the configured remote data
+ * repository first, falling back silently to local `/data/${filename}`.
+ */
+async function fetchDatasetWithFallback(filename, { activeBaseUrl, forceRefresh = false } = {}) {
+  const cacheBust = forceRefresh ? `?t=${Date.now()}` : '';
+  const cleanBase = String(activeBaseUrl || DEFAULT_REMOTE_DATA_BASE_URL).replace(/\/+$/, '');
+
+  if (cleanBase) {
+    const remoteUrl = `${cleanBase}/${filename}${cacheBust}`;
+    const remoteData = await fetchStaticJsonSafely(remoteUrl);
+    if (remoteData !== null) {
+      return { data: remoteData, source: 'remote' };
+    }
+  }
+
+  const localUrl = `/data/${filename}${cacheBust}`;
+  const localData = await fetchStaticJsonSafely(localUrl);
+  if (localData !== null) {
+    return { data: localData, source: 'local' };
+  }
+
+  return { data: null, source: 'embedded' };
+}
+
+/**
  * Async singleton loader for static offline linguistic assets.
  * Safe to invoke during app idle/startup: never throws and never blocks UI.
  */
 export async function loadStaticLinguisticData(options = {}) {
-  const { forceReload = false } = options || {};
+  const { forceRefresh = false, forceReload = false } = options || {};
+  const shouldForce = Boolean(forceRefresh || forceReload);
 
-  if (isLoaded && !forceReload) {
+  if (isLoaded && !shouldForce) {
     return getLinguisticDataStatus();
   }
-  if (inFlightLoadPromise && !forceReload) {
+  if (inFlightLoadPromise && !shouldForce) {
     return inFlightLoadPromise;
   }
+
+  const activeBaseUrl = getDataBaseUrl();
 
   inFlightLoadPromise = (async () => {
     try {
       const [lexiconResult, curriculumResult, corpusResult] = await Promise.allSettled([
-        fetchStaticJsonSafely(LEXICON_DATA_URL),
-        fetchStaticJsonSafely(CURRICULUM_DATA_URL),
-        fetchStaticJsonSafely(CORPUS_DATA_URL)
+        fetchDatasetWithFallback(LEXICON_FILENAME, { activeBaseUrl, forceRefresh: shouldForce }),
+        fetchDatasetWithFallback(CURRICULUM_FILENAME, { activeBaseUrl, forceRefresh: shouldForce }),
+        fetchDatasetWithFallback(CORPUS_FILENAME, { activeBaseUrl, forceRefresh: shouldForce })
       ]);
 
-      const lexiconPayload =
-        lexiconResult.status === 'fulfilled' ? lexiconResult.value : null;
-      const curriculumPayload =
-        curriculumResult.status === 'fulfilled' ? curriculumResult.value : null;
-      const corpusPayload =
-        corpusResult.status === 'fulfilled' ? corpusResult.value : null;
+      const lexiconRes =
+        lexiconResult.status === 'fulfilled'
+          ? lexiconResult.value
+          : { data: null, source: 'embedded' };
+      const curriculumRes =
+        curriculumResult.status === 'fulfilled'
+          ? curriculumResult.value
+          : { data: null, source: 'embedded' };
+      const corpusRes =
+        corpusResult.status === 'fulfilled'
+          ? corpusResult.value
+          : { data: null, source: 'embedded' };
 
-      masterLexiconMap = lexiconPayload ? indexLexiconPayload(lexiconPayload) : {};
-      preloadedCurriculum = curriculumPayload
-        ? normalizeCurriculumPayload(curriculumPayload)
-        : { version: null, courses: [] };
+      const lexiconPayload = lexiconRes.data;
+      const curriculumPayload = curriculumRes.data;
+      const corpusPayload = corpusRes.data;
+
+      if (lexiconPayload) {
+        masterLexiconMap = indexLexiconPayload(lexiconPayload);
+      } else if (!isLoaded) {
+        masterLexiconMap = {};
+      }
+
+      if (curriculumPayload) {
+        preloadedCurriculum = normalizeCurriculumPayload(curriculumPayload);
+      } else if (!isLoaded) {
+        preloadedCurriculum = { version: null, courses: [] };
+      }
 
       if (corpusPayload) {
         const externalSentences = Array.isArray(corpusPayload)
@@ -351,10 +460,32 @@ export async function loadStaticLinguisticData(options = {}) {
         }
       }
 
+      const sources = [lexiconRes.source, curriculumRes.source, corpusRes.source];
+      if (sources.includes('remote')) {
+        activeDataSource = 'remote';
+      } else if (sources.includes('local')) {
+        activeDataSource = 'local';
+      } else if (!isLoaded) {
+        activeDataSource = 'embedded';
+      }
+
+      if (sources.includes('remote') || sources.includes('local') || shouldForce) {
+        lastSyncedAt = new Date().toISOString();
+        try {
+          if (typeof localStorage !== 'undefined') {
+            localStorage.setItem(LAST_SYNCED_AT_STORAGE_KEY, lastSyncedAt);
+            localStorage.setItem(LAST_SYNC_SOURCE_STORAGE_KEY, activeDataSource);
+          }
+        } catch {
+          // Ignore storage errors
+        }
+      }
+
       isLoaded = true;
     } catch {
       masterLexiconMap = masterLexiconMap || {};
       preloadedCurriculum = preloadedCurriculum || { version: null, courses: [] };
+      activeDataSource = activeDataSource || 'embedded';
       isLoaded = true;
     } finally {
       inFlightLoadPromise = null;
@@ -393,12 +524,18 @@ export function getPreloadedCurriculum() {
  * Synchronous status snapshot for diagnostics or UI badges.
  */
 export function getLinguisticDataStatus() {
+  const activeBaseUrl = getDataBaseUrl();
   return {
     loaded: isLoaded,
     lexiconCount: Object.keys(masterLexiconMap).length,
     preloadedCoursesCount: Array.isArray(preloadedCurriculum?.courses)
       ? preloadedCurriculum.courses.length
       : 0,
-    corpusCount: getCorpusSentenceCount()
+    curriculumVersion: preloadedCurriculum?.version || null,
+    corpusCount: getCorpusSentenceCount(),
+    source: activeDataSource || 'embedded',
+    lastSyncedAt: lastSyncedAt || null,
+    activeBaseUrl,
+    dataBaseUrl: activeBaseUrl
   };
 }

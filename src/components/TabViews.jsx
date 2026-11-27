@@ -11,6 +11,7 @@ import {
   RotateCcw,
   Trophy,
   Sparkles,
+  ChevronLeft,
   ChevronRight,
   ChevronDown,
   Eye,
@@ -40,7 +41,10 @@ import {
   ArrowRight,
   AlertTriangle,
   FlaskConical,
-  ScrollText
+  ScrollText,
+  Pencil,
+  Tag,
+  LayoutGrid
 } from 'lucide-react';
 import {
   soundFX,
@@ -82,11 +86,18 @@ import {
   getWordSrsEntry,
   isWordSrsDue,
   getSrsOverdueMs,
+  getLeechWords,
   countWordsAtLeastLevel,
   getClassifierDrillUnlockStatus,
   getDialogueQaUnlockStatus,
-  getNumbersTimeLabUnlockStatus
+  getNumbersTimeLabUnlockStatus,
+  buildConfusableDrillItems,
+  COURSE_HSK_FILTER_PILLS,
+  matchesCourseHskFilter,
+  getCourseHskBandNumber,
+  sortCoursesCanonically
 } from '../utils/mandarinHelpers.js';
+import { getMasterLexiconMap } from '../engine/linguisticDataLoader.js';
 import {
   MandarinAudioControls,
   CharacterInspectModal,
@@ -134,10 +145,82 @@ export function ProgressionMapView({
   const safeDailyQuests = Array.isArray(dailyQuests) ? dailyQuests : [];
   const [selectedStagePreview, setSelectedStagePreview] = useState(null);
   const [questsExpanded, setQuestsExpanded] = useState(true);
+  const [courseBandFilter, setCourseBandFilter] = useState('all');
+  const [lessonPage, setLessonPage] = useState(0);
+
+  const filteredMapCourses = useMemo(
+    () =>
+      sortCoursesCanonically(
+        (Array.isArray(courses) ? courses : []).filter((c) =>
+          matchesCourseHskFilter(c, courseBandFilter)
+        )
+      ),
+    [courses, courseBandFilter]
+  );
+
+  const MAP_UNITS_PER_PAGE = 15;
+  const activeCourseLessons = Array.isArray(activeCourse?.lessons) ? activeCourse.lessons : [];
+  const shouldPaginateLessons = activeCourseLessons.length > 20;
+  const totalLessonPages = shouldPaginateLessons
+    ? Math.max(1, Math.ceil(activeCourseLessons.length / MAP_UNITS_PER_PAGE))
+    : 1;
+
+  const isCourseLessonCompleted = useCallback(
+    (lessonObj) => {
+      if (!lessonObj || !activeCourse?.id) return false;
+      const lKey = `${activeCourse.id}__${lessonObj.id}`;
+      const lp = progress.lessonProgress?.[lKey];
+      const bossStageId = buildProportionalUnitNodes(lessonObj.words || []).length;
+      if (lp) {
+        const bossLv = Number(lp.nodeLevels?.[String(bossStageId)] || 0);
+        if (
+          bossLv >= 1 ||
+          (Array.isArray(lp.completedStages) && lp.completedStages.includes(bossStageId))
+        ) {
+          return true;
+        }
+      }
+      if (
+        activeCourse.id === 'course_default_unit1' &&
+        lessonObj.id === 'lesson_unit_1' &&
+        Array.isArray(progress.completedStages) &&
+        progress.completedStages.includes(bossStageId)
+      ) {
+        return true;
+      }
+      return false;
+    },
+    [activeCourse?.id, progress.lessonProgress, progress.completedStages]
+  );
+
+  const firstIncompleteLessonIndex = useMemo(() => {
+    if (activeCourseLessons.length === 0) return 0;
+    const idx = activeCourseLessons.findIndex((lesson) => !isCourseLessonCompleted(lesson));
+    return idx >= 0 ? idx : 0;
+  }, [activeCourseLessons, isCourseLessonCompleted]);
+
+  const safeLessonPage = Math.min(lessonPage, Math.max(0, totalLessonPages - 1));
+  const pageStartIndex = shouldPaginateLessons ? safeLessonPage * MAP_UNITS_PER_PAGE : 0;
+  const visibleMapLessons = shouldPaginateLessons
+    ? activeCourseLessons.slice(pageStartIndex, pageStartIndex + MAP_UNITS_PER_PAGE)
+    : activeCourseLessons;
 
   useEffect(() => {
     setSelectedStagePreview(null);
   }, [activeCourse.id, activeLesson.id]);
+
+  useEffect(() => {
+    if (!shouldPaginateLessons) {
+      setLessonPage(0);
+      return;
+    }
+    const activeIdx = activeCourseLessons.findIndex((l) => l.id === activeLesson.id);
+    if (activeIdx >= 0) {
+      setLessonPage(Math.floor(activeIdx / MAP_UNITS_PER_PAGE));
+    } else {
+      setLessonPage(0);
+    }
+  }, [activeCourse.id, activeLesson.id, shouldPaginateLessons]);
 
   const lessonKey = `${activeCourse.id}__${activeLesson.id}`;
   const isDefaultUnit1 =
@@ -430,19 +513,76 @@ export function ProgressionMapView({
           </button>
         </div>
 
+        {/* Refined HSK Band Filter Pills */}
+        <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+          {COURSE_HSK_FILTER_PILLS.map((pill) => {
+            const count = (Array.isArray(courses) ? courses : []).filter((c) =>
+              matchesCourseHskFilter(c, pill.id)
+            ).length;
+            const isSelected = courseBandFilter === pill.id;
+            return (
+              <button
+                key={pill.id}
+                type="button"
+                onClick={() => {
+                  soundFX.playPop();
+                  setCourseBandFilter(pill.id);
+                  const matching = sortCoursesCanonically(
+                    (Array.isArray(courses) ? courses : []).filter((c) =>
+                      matchesCourseHskFilter(c, pill.id)
+                    )
+                  );
+                  if (matching.length > 0 && !matching.some((c) => c.id === activeCourse.id)) {
+                    onSelectCourseAndLesson(matching[0].id, null);
+                  }
+                }}
+                className={`px-2.5 py-1 rounded-xl text-[10px] font-black shrink-0 border transition-all flex items-center gap-1 ${
+                  isSelected
+                    ? 'bg-rose-600 text-white border-rose-400 shadow'
+                    : count === 0
+                    ? 'bg-slate-950/60 text-slate-600 border-slate-800/80'
+                    : 'bg-slate-950 text-slate-300 border-slate-800 hover:border-slate-600'
+                }`}
+              >
+                <span>{pill.label}</span>
+                <span
+                  className={`text-[9px] px-1 rounded ${
+                    isSelected ? 'bg-rose-800/70 text-rose-100' : 'bg-slate-900 text-slate-400'
+                  }`}
+                >
+                  {count}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+
         <div className="grid grid-cols-1 gap-2">
           <div className="relative">
             <select
-              value={activeCourse.id}
-              onChange={(e) => onSelectCourseAndLesson(e.target.value, null)}
-              className="w-full appearance-none bg-slate-950 border border-slate-700 focus:border-rose-500 rounded-xl px-3.5 py-2.5 pr-8 text-xs font-extrabold text-white outline-none"
+              value={
+                filteredMapCourses.some((c) => c.id === activeCourse.id)
+                  ? activeCourse.id
+                  : filteredMapCourses[0]?.id || ''
+              }
+              disabled={filteredMapCourses.length === 0}
+              onChange={(e) => {
+                if (e.target.value) {
+                  onSelectCourseAndLesson(e.target.value, null);
+                }
+              }}
+              className="w-full appearance-none bg-slate-950 border border-slate-700 focus:border-rose-500 disabled:opacity-60 rounded-xl px-3.5 py-2.5 pr-8 text-xs font-extrabold text-white outline-none"
             >
-              {courses.map((course) => (
-                <option key={course.id} value={course.id}>
-                  {course.courseName} ({course.lessons?.length || 1} Unit
-                  {(course.lessons?.length || 1) > 1 ? 's' : ''})
-                </option>
-              ))}
+              {filteredMapCourses.length > 0 ? (
+                filteredMapCourses.map((course) => (
+                  <option key={course.id} value={course.id}>
+                    {course.courseName} ({course.lessons?.length || 1} Unit
+                    {(course.lessons?.length || 1) > 1 ? 's' : ''})
+                  </option>
+                ))
+              ) : (
+                <option value="">No courses in this HSK band yet</option>
+              )}
             </select>
             <ChevronDown className="w-4 h-4 text-slate-400 absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none" />
           </div>
@@ -457,26 +597,142 @@ export function ProgressionMapView({
             />
           </div>
 
-          {activeCourse.lessons && activeCourse.lessons.length > 1 && (
-            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 pt-0.5">
-              {activeCourse.lessons.map((lesson) => {
-                const isSelected = lesson.id === activeLesson.id;
-                const wordCount = lesson.words?.length || 0;
-                return (
+          {activeCourseLessons.length > 1 && (
+            <div className="space-y-2 pt-0.5">
+              {shouldPaginateLessons && (
+                <div className="flex items-center justify-between gap-1.5 flex-wrap rounded-xl bg-slate-950/90 border border-slate-800 px-2.5 py-1.5">
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={safeLessonPage <= 0}
+                      onClick={() => {
+                        soundFX.playPop();
+                        setLessonPage((p) => Math.max(0, p - 1));
+                      }}
+                      className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-40 border border-slate-700 text-[10px] font-black text-slate-200 inline-flex items-center gap-0.5"
+                    >
+                      <ChevronLeft className="w-3 h-3" />
+                      <span>Prev</span>
+                    </button>
+                    <span className="text-[10px] font-extrabold text-slate-300 px-1.5 tabular-nums">
+                      Units {pageStartIndex + 1}–
+                      {Math.min(pageStartIndex + MAP_UNITS_PER_PAGE, activeCourseLessons.length)}{' '}
+                      of {activeCourseLessons.length}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={safeLessonPage >= totalLessonPages - 1}
+                      onClick={() => {
+                        soundFX.playPop();
+                        setLessonPage((p) => Math.min(totalLessonPages - 1, p + 1));
+                      }}
+                      className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-40 border border-slate-700 text-[10px] font-black text-slate-200 inline-flex items-center gap-0.5"
+                    >
+                      <span>Next</span>
+                      <ChevronRight className="w-3 h-3" />
+                    </button>
+                  </div>
                   <button
-                    key={lesson.id}
                     type="button"
-                    onClick={() => onSelectCourseAndLesson(activeCourse.id, lesson.id)}
-                    className={`game-btn-3d px-3 py-1.5 rounded-xl text-xs font-bold shrink-0 max-w-[210px] border transition-all ${
-                      isSelected
-                        ? 'bg-rose-600 text-white border-rose-400 shadow'
-                        : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
-                    }`}
+                    onClick={() => {
+                      soundFX.playPop();
+                      const targetLesson = activeCourseLessons[firstIncompleteLessonIndex];
+                      setLessonPage(Math.floor(firstIncompleteLessonIndex / MAP_UNITS_PER_PAGE));
+                      if (targetLesson?.id && targetLesson.id !== activeLesson.id) {
+                        onSelectCourseAndLesson(activeCourse.id, targetLesson.id);
+                      }
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/50 text-[10px] font-black text-amber-200"
                   >
-                    <ScrollingText text={`${lesson.title} (${wordCount}w)`} />
+                    Jump to Current
                   </button>
-                );
-              })}
+                </div>
+              )}
+
+              <div
+                className={
+                  shouldPaginateLessons
+                    ? 'grid grid-cols-2 sm:grid-cols-3 gap-1.5'
+                    : 'flex items-center gap-1.5 overflow-x-auto pb-1'
+                }
+              >
+                {visibleMapLessons.map((lesson) => {
+                  const isSelected = lesson.id === activeLesson.id;
+                  const isCompleted = isCourseLessonCompleted(lesson);
+                  const wordCount = lesson.words?.length || 0;
+                  return (
+                    <button
+                      key={lesson.id}
+                      type="button"
+                      onClick={() => onSelectCourseAndLesson(activeCourse.id, lesson.id)}
+                      className={`game-btn-3d px-3 py-1.5 rounded-xl text-xs font-bold border transition-all flex items-center gap-1.5 ${
+                        shouldPaginateLessons ? 'w-full min-w-0' : 'shrink-0 max-w-[210px]'
+                      } ${
+                        isSelected
+                          ? 'bg-rose-600 text-white border-rose-400 shadow'
+                          : isCompleted
+                          ? 'bg-emerald-950/60 text-emerald-200 border-emerald-500/40 hover:border-emerald-400'
+                          : 'bg-slate-900 text-slate-400 border-slate-800 hover:text-slate-200'
+                      }`}
+                    >
+                      {isCompleted && (
+                        <CheckCircle2 className="w-3 h-3 text-emerald-400 shrink-0" />
+                      )}
+                      <ScrollingText text={`${lesson.title} (${wordCount}w)`} className="flex-1" />
+                    </button>
+                  );
+                })}
+              </div>
+
+              {shouldPaginateLessons && (
+                <div className="flex items-center justify-between gap-1.5 flex-wrap rounded-xl bg-slate-950/90 border border-slate-800 px-2.5 py-1.5">
+                  <div className="flex items-center gap-1">
+                    <button
+                      type="button"
+                      disabled={safeLessonPage <= 0}
+                      onClick={() => {
+                        soundFX.playPop();
+                        setLessonPage((p) => Math.max(0, p - 1));
+                      }}
+                      className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-40 border border-slate-700 text-[10px] font-black text-slate-200 inline-flex items-center gap-0.5"
+                    >
+                      <ChevronLeft className="w-3 h-3" />
+                      <span>Prev</span>
+                    </button>
+                    <span className="text-[10px] font-extrabold text-slate-300 px-1.5 tabular-nums">
+                      Units {pageStartIndex + 1}–
+                      {Math.min(pageStartIndex + MAP_UNITS_PER_PAGE, activeCourseLessons.length)}{' '}
+                      of {activeCourseLessons.length}
+                    </span>
+                    <button
+                      type="button"
+                      disabled={safeLessonPage >= totalLessonPages - 1}
+                      onClick={() => {
+                        soundFX.playPop();
+                        setLessonPage((p) => Math.min(totalLessonPages - 1, p + 1));
+                      }}
+                      className="px-2 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 disabled:opacity-40 border border-slate-700 text-[10px] font-black text-slate-200 inline-flex items-center gap-0.5"
+                    >
+                      <span>Next</span>
+                      <ChevronRight className="w-3 h-3" />
+                    </button>
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundFX.playPop();
+                      const targetLesson = activeCourseLessons[firstIncompleteLessonIndex];
+                      setLessonPage(Math.floor(firstIncompleteLessonIndex / MAP_UNITS_PER_PAGE));
+                      if (targetLesson?.id && targetLesson.id !== activeLesson.id) {
+                        onSelectCourseAndLesson(activeCourse.id, targetLesson.id);
+                      }
+                    }}
+                    className="px-2.5 py-1 rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-400/50 text-[10px] font-black text-amber-200"
+                  >
+                    Jump to Current
+                  </button>
+                </div>
+              )}
             </div>
           )}
         </div>
@@ -895,9 +1151,11 @@ export function SmartReviewArenaView({
   enrichedUnlockedWords,
   generativeReadiness,
   corpusStats,
+  linguisticDataStatus,
   speakMandarin,
   speakingState,
   onLaunchSmartReviewSession,
+  onLaunchLeechRemediation,
   onLaunchSentenceBuilderDrill,
   onLaunchClassifierDrill,
   onLaunchDialogueQaDrill,
@@ -907,6 +1165,7 @@ export function SmartReviewArenaView({
   onLaunchHskMockExam,
   onLaunchBlitzMatch,
   onLaunchGenerativeDrill,
+  onOpenShadowing,
   onLaunchActivity,
   triggerToast
 }) {
@@ -980,6 +1239,10 @@ export function SmartReviewArenaView({
     () => getNumbersTimeLabUnlockStatus(effectiveUnlockedPool),
     [effectiveUnlockedPool]
   );
+  const confusableItemsPreview = useMemo(
+    () => buildConfusableDrillItems(effectiveUnlockedPool, getMasterLexiconMap(), 8),
+    [effectiveUnlockedPool, linguisticDataStatus?.lexiconCount]
+  );
 
   const isClassifierUnlocked = classifierStatus.unlocked;
   const isDialogueQaUnlocked = dialogueStatus.unlocked;
@@ -994,6 +1257,12 @@ export function SmartReviewArenaView({
   }, [allUniqueWordsArray, scannedPool, progress?.mastery]);
 
   const isSrsActive = learnedLv1PlusCount >= SRS_ACTIVATION_MIN_WORDS;
+
+  const activeSrsMap = progress.srsData || progress.srsSchedule || {};
+  const leechWords = useMemo(
+    () => getLeechWords(effectiveUnlockedPool, activeSrsMap),
+    [effectiveUnlockedPool, activeSrsMap]
+  );
 
   const reviewAnalytics = useMemo(() => {
     const nowMs = Date.now();
@@ -1043,7 +1312,15 @@ export function SmartReviewArenaView({
 
     const activeSummaryKeys = Object.keys(modalitySummary);
 
-    const enrichedWords = scannedPool.map((word) => {
+    const enrichedWords = scannedPool.map((rawWord) => {
+      const word = enrichWordEntry(
+        rawWord,
+        progress.wordLinguisticOverrides,
+        progress.wordPriorityOverrides
+      );
+      const priorityTier = word.priorityTier || 'standard';
+      const priorityWeight =
+        typeof word.priorityWeight === 'number' ? word.priorityWeight : 1.0;
       const mastery = getWordMasteryLevel(progress.mastery, word);
       const telemetry = getWordSkillTelemetry(progress.skillTelemetry, word);
       const srsEntry = getWordSrsEntry(progress.srsData, word);
@@ -1098,14 +1375,23 @@ export function SmartReviewArenaView({
         (telemetry.classifier_drill?.mistakes || 0) +
         (telemetry.dialogue_qa?.mistakes || 0);
 
+      const isLeech = Boolean(srsEntry?.isLeech);
+      const lapseCount = Number(srsEntry?.lapseCount || 0);
+      const easeFactor = typeof srsEntry?.easeFactor === 'number' ? srsEntry.easeFactor : 2.0;
+
       const enriched = {
         word,
+        priorityTier,
+        priorityWeight,
         mastery,
         telemetry,
         totalMistakes,
         srsEntry,
         isDue,
         overdueMs,
+        isLeech,
+        lapseCount,
+        easeFactor,
         weakestAllModality,
         weakestWritingAudioModality
       };
@@ -1139,6 +1425,8 @@ export function SmartReviewArenaView({
     progress.mastery,
     progress.skillTelemetry,
     progress.srsData,
+    progress.wordLinguisticOverrides,
+    progress.wordPriorityOverrides,
     isSrsActive,
     isClozeUnlocked,
     isSentenceBuilderUnlocked,
@@ -1167,26 +1455,71 @@ export function SmartReviewArenaView({
             ...(isDialogueQaUnlocked ? ['dialogue_qa'] : [])
           ];
 
+    const computeCandidatePriorityScore = (c) => {
+      const pWeight = typeof c.priorityWeight === 'number' ? c.priorityWeight : 1.0;
+      const dueBonus = isSrsActive && c.isDue ? 85 : 0;
+      const overdueDays =
+        isSrsActive && c.isDue && c.overdueMs > 0
+          ? Math.min(14, c.overdueMs / (24 * 60 * 60 * 1000))
+          : 0;
+      const overdueBonus = overdueDays * 2.5;
+      const lowMasteryScore = (10 - Math.min(10, c.mastery || 0)) * 9;
+      const mistakesCount = allowedModes.reduce(
+        (sum, k) => sum + (c.telemetry[k]?.mistakes || 0),
+        0
+      );
+      const mistakeBonus = mistakesCount * 6;
+      const leechBonus = c.isLeech ? 140 + Math.min(60, (c.lapseCount || 0) * 10) : 0;
+      const priorityMultiplierBonus = pWeight * 22;
+      return (
+        (dueBonus + overdueBonus + lowMasteryScore + mistakeBonus) * pWeight +
+        priorityMultiplierBonus +
+        leechBonus
+      );
+    };
+
     const sortedCandidates = [...reviewAnalytics.enrichedWords].sort((a, b) => {
-      if (isSrsActive) {
-        if (a.isDue !== b.isDue) return a.isDue ? -1 : 1;
-        if (a.isDue && b.isDue && a.overdueMs !== b.overdueMs) {
-          return b.overdueMs - a.overdueMs;
-        }
-      }
+      const scoreDiff = computeCandidatePriorityScore(b) - computeCandidatePriorityScore(a);
+      if (Math.abs(scoreDiff) > 0.01) return scoreDiff;
+      if (isSrsActive && a.isDue !== b.isDue) return a.isDue ? -1 : 1;
       if (a.mastery !== b.mastery) return a.mastery - b.mastery;
-      const aMistakes = allowedModes.reduce((sum, k) => sum + (a.telemetry[k]?.mistakes || 0), 0);
-      const bMistakes = allowedModes.reduce((sum, k) => sum + (b.telemetry[k]?.mistakes || 0), 0);
-      return bMistakes - aMistakes;
+      return (b.priorityWeight || 1.0) - (a.priorityWeight || 1.0);
     });
 
     const targetCount = Math.min(10, Math.max(sortedCandidates.length * 2, 6));
+    const nonNicheCandidates = sortedCandidates.filter((c) => c.priorityTier !== 'niche');
+    const allCandidatesAreNiche = nonNicheCandidates.length === 0;
+    const maxNicheAllowed = allCandidatesAreNiche ? targetCount : 1;
+
+    // Build capped candidate sequence: at most 1 'niche' step per 10-step Smart Review session (unless all words are niche)
+    const selectedSessionCandidates = [];
+    let nicheStepsScheduled = 0;
+    let nonNicheFallbackCursor = 0;
+
+    for (let idx = 0; idx < sortedCandidates.length && selectedSessionCandidates.length < targetCount; idx++) {
+      const cand = sortedCandidates[idx];
+      if (!cand) continue;
+      if (cand.priorityTier === 'niche') {
+        if (nicheStepsScheduled >= maxNicheAllowed) continue;
+        nicheStepsScheduled += 1;
+      }
+      selectedSessionCandidates.push(cand);
+    }
+
+    while (selectedSessionCandidates.length < targetCount && sortedCandidates.length > 0) {
+      const refillPool = !allCandidatesAreNiche ? nonNicheCandidates : sortedCandidates;
+      const nextCand = refillPool[nonNicheFallbackCursor % refillPool.length];
+      nonNicheFallbackCursor += 1;
+      if (!nextCand) break;
+      selectedSessionCandidates.push(nextCand);
+    }
+
     const queue = [];
     let classifierCursor = 0;
     let dialogueCursor = 0;
 
-    for (let i = 0; i < targetCount; i++) {
-      const candidate = sortedCandidates[i % sortedCandidates.length];
+    for (let i = 0; i < selectedSessionCandidates.length; i++) {
+      const candidate = selectedSessionCandidates[i];
       if (!candidate) break;
 
       const preferredModes = getPreferredModalitiesForMastery(candidate.mastery);
@@ -1491,6 +1824,73 @@ export function SmartReviewArenaView({
           <Zap className="w-4 h-4 fill-slate-950" />
           <span>Start Smart Review ({adaptiveSmartQueue.length} Words)</span>
         </button>
+
+        {/* DEDICATED LEECH REMEDIATION CARD */}
+        {leechWords.length > 0 ? (
+          <div className="rounded-2xl bg-gradient-to-br from-rose-950/90 via-amber-950/45 to-slate-900 border-2 border-rose-500/70 p-3.5 space-y-2.5 shadow-lg">
+            <div className="flex items-start justify-between gap-2">
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <span className="text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded-[2px] bg-rose-500/25 text-rose-200 border border-rose-400/60 inline-flex items-center gap-1">
+                    <AlertTriangle className="w-3 h-3 text-amber-300" />
+                    <span>Leech Remediation</span>
+                  </span>
+                  <span className="text-[10px] font-black px-2 py-0.5 rounded-[2px] bg-amber-500/20 text-amber-200 border border-amber-400/50">
+                    {leechWords.length} Stubborn Word{leechWords.length === 1 ? '' : 's'}
+                  </span>
+                </div>
+                <p className="font-clarity text-xs text-slate-200 mt-1.5 leading-snug">
+                  High-retention attack drill (Listening, Reverse Hanzi, Cloze &amp; Writing) to clear stubborn memory lapses.
+                </p>
+              </div>
+            </div>
+
+            <div className="flex items-center flex-wrap gap-1.5">
+              {leechWords.slice(0, 6).map((lw, lIdx) => {
+                const leechEntry = getWordSrsEntry(activeSrsMap, lw);
+                return (
+                  <span
+                    key={`leech_chip_${lw.hanzi || lw.id}_${lIdx}`}
+                    className="px-2 py-0.5 rounded-[2px] bg-slate-950/90 border border-rose-500/50 text-[11px] font-bold text-white inline-flex items-center gap-1"
+                  >
+                    <span className="font-hanzi text-sm text-rose-200">{lw.hanzi}</span>
+                    <span className="font-clarity text-[10px] text-amber-300">
+                      {leechEntry?.lapseCount || 0}×
+                    </span>
+                  </span>
+                );
+              })}
+              {leechWords.length > 6 && (
+                <span className="text-[10px] font-bold text-rose-300">
+                  +{leechWords.length - 6} more
+                </span>
+              )}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => onLaunchLeechRemediation?.(leechWords)}
+              className="game-btn-3d w-full py-2.5 px-3 rounded-xl bg-gradient-to-r from-rose-600 to-amber-500 hover:from-rose-500 hover:to-amber-400 text-white font-black text-xs border-b-4 border-rose-900 flex items-center justify-center gap-2"
+            >
+              <Swords className="w-4 h-4 text-amber-100" />
+              <span>Attack {leechWords.length} Leech Word{leechWords.length === 1 ? '' : 's'} (+35 XP)</span>
+            </button>
+          </div>
+        ) : (
+          <div className="rounded-2xl bg-slate-900/80 border border-emerald-500/35 px-3.5 py-2.5 flex items-center justify-between gap-2">
+            <div className="flex items-center gap-2 min-w-0">
+              <CheckCircle2 className="w-4 h-4 text-emerald-400 shrink-0" />
+              <div className="min-w-0">
+                <p className="text-xs font-extrabold text-emerald-300">
+                  Leech Remediation • 0 Leeches — Memory Stable
+                </p>
+                <p className="font-clarity text-[10px] text-slate-400 leading-snug">
+                  Words with 4+ lapses &amp; low ease automatically surface here for targeted drills.
+                </p>
+              </div>
+            </div>
+          </div>
+        )}
 
         <div className="flex items-center justify-between pt-2 border-t border-slate-800">
           <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400">
@@ -1840,6 +2240,33 @@ export function SmartReviewArenaView({
           )}
         </button>
 
+        {/* Hands-Free Audio Shadowing Mode (Always Available — Passive Listening & Speaking) */}
+        <button
+          type="button"
+          onClick={() => onOpenShadowing?.()}
+          className="game-btn-3d w-full p-3.5 rounded-[2px] border-2 bg-gradient-to-r from-indigo-600/25 via-violet-600/20 to-emerald-500/20 hover:from-indigo-600/35 hover:to-emerald-500/30 border-indigo-400/70 flex items-center justify-between gap-3 shadow-lg transition-all"
+        >
+          <div className="flex items-center gap-3 min-w-0 text-left">
+            <div className="w-10 h-10 rounded-[2px] border-2 bg-indigo-500/25 border-indigo-400 text-indigo-200 flex items-center justify-center shrink-0">
+              <Headphones className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-center gap-1.5 flex-wrap">
+                <span className="text-xs font-black text-white">
+                  Hands-Free Shadowing
+                </span>
+                <span className="font-clarity text-[9px] font-black uppercase px-2 py-0.5 rounded-[2px] bg-indigo-500/25 text-indigo-200 border border-indigo-400/40">
+                  Audio Loop
+                </span>
+              </div>
+              <p className="text-[10px] text-slate-300 truncate mt-0.5">
+                English Cue → Recall Pause → 1.0x &amp; 0.65x Mandarin • Screen Wake Lock
+              </p>
+            </div>
+          </div>
+          <ChevronRight className="w-4 h-4 text-indigo-300 shrink-0" />
+        </button>
+
         {/* Generative Grammar & Production Lab (Phase 3-5 Gated Launch Grid) */}
         <div className="pt-2 border-t border-slate-800 space-y-2.5">
           <div className="flex items-center justify-between gap-2 flex-wrap">
@@ -1956,6 +2383,21 @@ export function SmartReviewArenaView({
                   'bg-gradient-to-br from-emerald-500/20 to-teal-500/20 hover:from-emerald-500/30 hover:to-teal-500/30 border-emerald-400/60',
                 tagClass: 'text-emerald-300 font-hanzi',
                 iconClass: 'text-emerald-400'
+              },
+              {
+                modeKey: 'confusable_chars',
+                tag: '形近字/同音字',
+                title: 'Confusable Twins',
+                subtitle: 'Visual & Homophone Contrast',
+                icon: Eye,
+                customStatus: {
+                  unlocked: confusableItemsPreview.length >= 3,
+                  detailProgressText: `Unlocks at 3 confusable sets (${confusableItemsPreview.length}/3 ready)`
+                },
+                unlockedClass:
+                  'bg-gradient-to-br from-teal-500/20 to-cyan-500/20 hover:from-teal-500/30 hover:to-cyan-500/30 border-teal-400/60',
+                tagClass: 'text-teal-300 font-hanzi',
+                iconClass: 'text-teal-400'
               }
             ].map((card) => {
               const status = card.customStatus ||
@@ -2205,17 +2647,399 @@ const QUICK_ADD_CATEGORY_PRESETS = {
   expression: { pos: 'expression', features: ['clause'] }
 };
 
+const QUICK_ADD_CATEGORY_OPTIONS = [
+  { value: 'auto', label: 'Auto-detect (HSK Lexicon & Rules)' },
+  { value: 'verb', label: 'Action / Verb' },
+  { value: 'noun_person', label: 'Person / Nationality / Role' },
+  { value: 'noun_place', label: 'Place / Country / Location' },
+  { value: 'noun_language', label: 'Language' },
+  { value: 'noun_food_drink', label: 'Food or Drink' },
+  { value: 'noun_object', label: 'Object / Item' },
+  { value: 'time', label: 'Time / Date' },
+  { value: 'adj', label: 'Adjective / Description' },
+  { value: 'expression', label: 'Full Phrase / Expression' }
+];
+
+function resolveWordCategoryPresetKey(overrideObj) {
+  if (!overrideObj || typeof overrideObj !== 'object') return 'auto';
+  if (overrideObj.categoryKey && QUICK_ADD_CATEGORY_PRESETS[overrideObj.categoryKey]) {
+    return overrideObj.categoryKey;
+  }
+  const pos = overrideObj.pos || '';
+  const features = Array.isArray(overrideObj.features) ? overrideObj.features : [];
+  if (pos === 'verb') return 'verb';
+  if (pos === 'place') return 'noun_place';
+  if (pos === 'time') return 'time';
+  if (pos === 'adj') return 'adj';
+  if (pos === 'expression') return 'expression';
+  if (pos === 'noun') {
+    if (features.includes('human')) return 'noun_person';
+    if (features.includes('language')) return 'noun_language';
+    if (features.includes('food') || features.includes('drink')) return 'noun_food_drink';
+    if (features.includes('object')) return 'noun_object';
+  }
+  return 'auto';
+}
+
+const BASIC_STROKES_8 = [
+  {
+    id: 'heng',
+    hanzi: '横',
+    pinyin: 'héng',
+    english: 'Horizontal',
+    category: 'Fundamental',
+    rule: 'Write left to right with a slight upward tilt, pressing gently at both ends.',
+    examples: [
+      { char: '一', pinyin: 'yī', meaning: 'one' },
+      { char: '三', pinyin: 'sān', meaning: 'three' },
+      { char: '工', pinyin: 'gōng', meaning: 'work' }
+    ]
+  },
+  {
+    id: 'shu',
+    hanzi: '竖',
+    pinyin: 'shù',
+    english: 'Vertical',
+    category: 'Fundamental',
+    rule: 'Draw straight from top to bottom; never pull a vertical stroke upward.',
+    examples: [
+      { char: '十', pinyin: 'shí', meaning: 'ten' },
+      { char: '工', pinyin: 'gōng', meaning: 'work' },
+      { char: '中', pinyin: 'zhōng', meaning: 'middle' }
+    ]
+  },
+  {
+    id: 'pie',
+    hanzi: '撇',
+    pinyin: 'piě',
+    english: 'Left-Falling',
+    category: 'Fundamental',
+    rule: 'Start at the top-right and curve smoothly down to the bottom-left, tapering off.',
+    examples: [
+      { char: '人', pinyin: 'rén', meaning: 'person' },
+      { char: '八', pinyin: 'bā', meaning: 'eight' },
+      { char: '月', pinyin: 'yuè', meaning: 'moon/month' }
+    ]
+  },
+  {
+    id: 'na',
+    hanzi: '捺',
+    pinyin: 'nà',
+    english: 'Right-Falling',
+    category: 'Fundamental',
+    rule: 'Sweep downward to the right, pressing firmly near the base before releasing rightward.',
+    examples: [
+      { char: '大', pinyin: 'dà', meaning: 'big' },
+      { char: '天', pinyin: 'tiān', meaning: 'day/sky' },
+      { char: '人', pinyin: 'rén', meaning: 'person' }
+    ]
+  },
+  {
+    id: 'dian',
+    hanzi: '点',
+    pinyin: 'diǎn',
+    english: 'Dot',
+    category: 'Fundamental',
+    rule: 'Press briefly downward and slightly right; start light and finish fuller.',
+    examples: [
+      { char: '六', pinyin: 'liù', meaning: 'six' },
+      { char: '太', pinyin: 'tài', meaning: 'too/very' },
+      { char: '主', pinyin: 'zhǔ', meaning: 'main/host' }
+    ]
+  },
+  {
+    id: 'ti',
+    hanzi: '提',
+    pinyin: 'tí',
+    english: 'Rising',
+    category: 'Fundamental',
+    rule: 'Press at the bottom-left and flick briskly upward to the top-right in one motion.',
+    examples: [
+      { char: '打', pinyin: 'dǎ', meaning: 'hit/play' },
+      { char: '习', pinyin: 'xí', meaning: 'practice' },
+      { char: '我', pinyin: 'wǒ', meaning: 'I/me' }
+    ]
+  },
+  {
+    id: 'zhe',
+    hanzi: '折',
+    pinyin: 'zhé',
+    english: 'Turning',
+    category: 'Compound • 横折 / 竖折',
+    rule: 'Change direction cleanly at a sharp corner in one unbroken stroke (e.g. horizontal-then-down 横折 or down-then-right 竖折).',
+    examples: [
+      { char: '口', pinyin: 'kǒu', meaning: 'mouth' },
+      { char: '山', pinyin: 'shān', meaning: 'mountain' },
+      { char: '日', pinyin: 'rì', meaning: 'sun/day' }
+    ]
+  },
+  {
+    id: 'gou',
+    hanzi: '钩',
+    pinyin: 'gōu',
+    english: 'Hook',
+    category: 'Compound • 竖钩 / 弯钩 / 斜钩',
+    rule: 'Pause briefly at the end of a vertical or curved stroke, then flick sharply into a crisp hook.',
+    examples: [
+      { char: '小', pinyin: 'xiǎo', meaning: 'small' },
+      { char: '我', pinyin: 'wǒ', meaning: 'I/me' },
+      { char: '水', pinyin: 'shuǐ', meaning: 'water' }
+    ]
+  }
+];
+
+function BasicStrokeSvg({ strokeId }) {
+  const arrowMarkerId = `stroke-arrow-${strokeId}`;
+  const pathMap = {
+    heng: { d: 'M 14 43 Q 40 39 64 38', start: [14, 43] },
+    shu: { d: 'M 40 14 L 40 64', start: [40, 14] },
+    pie: { d: 'M 54 14 Q 46 44 19 64', start: [54, 14] },
+    na: { d: 'M 19 17 Q 37 46 64 62', start: [19, 17] },
+    dian: { d: 'M 29 25 Q 42 36 51 53', start: [29, 25] },
+    ti: { d: 'M 18 57 L 62 27', start: [18, 57] },
+    zhe: { d: 'M 18 22 L 58 22 L 58 61', start: [18, 22], corner: [58, 22] },
+    gou: { d: 'M 46 14 L 46 62 L 26 51', start: [46, 14], corner: [46, 62] }
+  };
+  const spec = pathMap[strokeId] || pathMap.heng;
+
+  return (
+    <svg
+      viewBox="0 0 80 80"
+      className="w-16 h-16 shrink-0 bg-slate-950 border-2 border-slate-700 rounded-[2px]"
+      aria-hidden="true"
+    >
+      <defs>
+        <marker
+          id={arrowMarkerId}
+          viewBox="0 0 10 10"
+          refX="7"
+          refY="5"
+          markerWidth="5.5"
+          markerHeight="5.5"
+          orient="auto-start-reverse"
+        >
+          <path d="M 0 1 L 10 5 L 0 9 z" fill="#fb7185" />
+        </marker>
+      </defs>
+      {/* Subtle 田 calligraphy guide grid */}
+      <line x1="40" y1="4" x2="40" y2="76" stroke="#334155" strokeWidth="1" strokeDasharray="3 3" />
+      <line x1="4" y1="40" x2="76" y2="40" stroke="#334155" strokeWidth="1" strokeDasharray="3 3" />
+      <rect x="4" y="4" width="72" height="72" fill="none" stroke="#1e293b" strokeWidth="1" />
+
+      {/* Main stroke path with directional arrowhead */}
+      <path
+        d={spec.d}
+        fill="none"
+        stroke="#f8fafc"
+        strokeWidth="5.5"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+        markerEnd={`url(#${arrowMarkerId})`}
+      />
+
+      {/* Optional turning/pivot corner dot */}
+      {spec.corner && (
+        <circle cx={spec.corner[0]} cy={spec.corner[1]} r="3" fill="#38bdf8" />
+      )}
+
+      {/* Start dot (amber) */}
+      <circle
+        cx={spec.start[0]}
+        cy={spec.start[1]}
+        r="4.5"
+        fill="#fbbf24"
+        stroke="#0f172a"
+        strokeWidth="1.5"
+      />
+    </svg>
+  );
+}
+
+const CHARACTER_STRUCTURES_6 = [
+  {
+    id: 'single',
+    title: 'Single-Component',
+    hanzi: '独体字',
+    pinyin: 'dútǐzì',
+    orderHint: 'Write as one indivisible unit following standard top-to-bottom and left-to-right stroke rules.',
+    examples: [
+      { char: '人', pinyin: 'rén', meaning: 'person' },
+      { char: '日', pinyin: 'rì', meaning: 'sun/day' },
+      { char: '月', pinyin: 'yuè', meaning: 'moon/month' },
+      { char: '木', pinyin: 'mù', meaning: 'wood/tree' },
+      { char: '水', pinyin: 'shuǐ', meaning: 'water' }
+    ],
+    extraPool: ['大', '小', '中', '山', '火', '口', '女', '子', '车', '门', '我', '书']
+  },
+  {
+    id: 'left_right',
+    title: 'Left–Right',
+    hanzi: '左右结构',
+    pinyin: 'zuǒyòu jiégòu',
+    orderHint: 'Write the left radical completely first (1), then write the right phonetic or semantic component (2).',
+    examples: [
+      { char: '好', pinyin: 'hǎo', meaning: 'good' },
+      { char: '你', pinyin: 'nǐ', meaning: 'you' },
+      { char: '妈', pinyin: 'mā', meaning: 'mom' },
+      { char: '喝', pinyin: 'hē', meaning: 'drink' },
+      { char: '吃', pinyin: 'chī', meaning: 'eat' }
+    ],
+    extraPool: ['他', '她', '们', '很', '明', '朋', '语', '说', '请', '看', '现', '汉']
+  },
+  {
+    id: 'top_bottom',
+    title: 'Top–Bottom',
+    hanzi: '上下结构',
+    pinyin: 'shàngxià jiégòu',
+    orderHint: 'Finish the upper radical/component first (1), then construct the lower component underneath (2).',
+    examples: [
+      { char: '爸', pinyin: 'bà', meaning: 'dad' },
+      { char: '字', pinyin: 'zì', meaning: 'character' },
+      { char: '学', pinyin: 'xué', meaning: 'study' },
+      { char: '思', pinyin: 'sī', meaning: 'think' },
+      { char: '早', pinyin: 'zǎo', meaning: 'early/morning' }
+    ],
+    extraPool: ['是', '茶', '家', '星', '名', '多', '高', '喜', '爱', '见', '点', '热']
+  },
+  {
+    id: 'left_mid_right',
+    title: 'Left–Middle–Right',
+    hanzi: '左中右结构',
+    pinyin: 'zuǒzhōngyòu jiégòu',
+    orderHint: 'Build cleanly from left (1) to center (2) to right (3), keeping each vertical column balanced.',
+    examples: [
+      { char: '谢', pinyin: 'xiè', meaning: 'thank' },
+      { char: '树', pinyin: 'shù', meaning: 'tree' },
+      { char: '班', pinyin: 'bān', meaning: 'class/shift' },
+      { char: '做', pinyin: 'zuò', meaning: 'do/make' }
+    ],
+    extraPool: ['哪', '街', '游', '倒', '湖', '脚']
+  },
+  {
+    id: 'semi_enclosed',
+    title: 'Semi-Enclosed',
+    hanzi: '半包围结构',
+    pinyin: 'bànbāowéi jiégòu',
+    orderHint: 'Top/left wrappers (同, 问, 病) are written before the inside; bottom-left walkers (辶 in 这, 还) wrap LAST.',
+    examples: [
+      { char: '这', pinyin: 'zhè', meaning: 'this' },
+      { char: '还', pinyin: 'hái', meaning: 'still/also' },
+      { char: '同', pinyin: 'tóng', meaning: 'same' },
+      { char: '问', pinyin: 'wèn', meaning: 'ask' },
+      { char: '医', pinyin: 'yī', meaning: 'doctor/medicine' },
+      { char: '病', pinyin: 'bìng', meaning: 'illness' }
+    ],
+    extraPool: ['进', '远', '送', '友', '风', '店', '床', '厅', '区']
+  },
+  {
+    id: 'full_enclosed',
+    title: 'Full-Enclosed',
+    hanzi: '全包围结构',
+    pinyin: 'quánbāowéi jiégòu',
+    orderHint: 'Outside frame first (left, top, right), fill the entire inside component, then seal the bottom horizontal stroke last.',
+    examples: [
+      { char: '国', pinyin: 'guó', meaning: 'country' },
+      { char: '回', pinyin: 'huí', meaning: 'return' },
+      { char: '园', pinyin: 'yuán', meaning: 'garden/park' },
+      { char: '四', pinyin: 'sì', meaning: 'four' }
+    ],
+    extraPool: ['因', '图', '圆', '团', '围']
+  }
+];
+
+function CharacterStructureSvg({ structureId }) {
+  return (
+    <svg
+      viewBox="0 0 64 64"
+      className="w-16 h-16 shrink-0 bg-slate-950 border-2 border-slate-700 rounded-[2px]"
+      aria-hidden="true"
+    >
+      {structureId === 'single' && (
+        <>
+          <rect x="8" y="8" width="48" height="48" fill="#e11d48" fillOpacity="0.22" stroke="#fb7185" strokeWidth="2.5" />
+          <line x1="32" y1="10" x2="32" y2="54" stroke="#fb7185" strokeOpacity="0.35" strokeWidth="1" strokeDasharray="3 3" />
+          <line x1="10" y1="32" x2="54" y2="32" stroke="#fb7185" strokeOpacity="0.35" strokeWidth="1" strokeDasharray="3 3" />
+          <text x="32" y="37" textAnchor="middle" fill="#fecdd3" fontSize="14" fontWeight="900">1</text>
+        </>
+      )}
+
+      {structureId === 'left_right' && (
+        <>
+          <rect x="6" y="8" width="24" height="48" fill="#e11d48" fillOpacity="0.25" stroke="#fb7185" strokeWidth="2.5" />
+          <rect x="34" y="8" width="24" height="48" fill="#f59e0b" fillOpacity="0.22" stroke="#fbbf24" strokeWidth="2.5" />
+          <text x="18" y="37" textAnchor="middle" fill="#fecdd3" fontSize="13" fontWeight="900">1</text>
+          <text x="46" y="37" textAnchor="middle" fill="#fde68a" fontSize="13" fontWeight="900">2</text>
+        </>
+      )}
+
+      {structureId === 'top_bottom' && (
+        <>
+          <rect x="8" y="6" width="48" height="24" fill="#e11d48" fillOpacity="0.25" stroke="#fb7185" strokeWidth="2.5" />
+          <rect x="8" y="34" width="48" height="24" fill="#f59e0b" fillOpacity="0.22" stroke="#fbbf24" strokeWidth="2.5" />
+          <text x="32" y="23" textAnchor="middle" fill="#fecdd3" fontSize="13" fontWeight="900">1</text>
+          <text x="32" y="51" textAnchor="middle" fill="#fde68a" fontSize="13" fontWeight="900">2</text>
+        </>
+      )}
+
+      {structureId === 'left_mid_right' && (
+        <>
+          <rect x="5" y="8" width="16" height="48" fill="#e11d48" fillOpacity="0.25" stroke="#fb7185" strokeWidth="2" />
+          <rect x="24" y="8" width="16" height="48" fill="#f59e0b" fillOpacity="0.22" stroke="#fbbf24" strokeWidth="2" />
+          <rect x="43" y="8" width="16" height="48" fill="#0ea5e9" fillOpacity="0.22" stroke="#38bdf8" strokeWidth="2" />
+          <text x="13" y="37" textAnchor="middle" fill="#fecdd3" fontSize="12" fontWeight="900">1</text>
+          <text x="32" y="37" textAnchor="middle" fill="#fde68a" fontSize="12" fontWeight="900">2</text>
+          <text x="51" y="37" textAnchor="middle" fill="#bae6fd" fontSize="12" fontWeight="900">3</text>
+        </>
+      )}
+
+      {structureId === 'semi_enclosed' && (
+        <>
+          {/* Outer top-left-right / L wrapper */}
+          <path
+            d="M 7 57 L 7 7 L 57 7 L 57 21 L 21 21 L 21 57 Z"
+            fill="#e11d48"
+            fillOpacity="0.28"
+            stroke="#fb7185"
+            strokeWidth="2.5"
+            strokeLinejoin="miter"
+          />
+          <rect x="26" y="26" width="31" height="31" fill="#f59e0b" fillOpacity="0.24" stroke="#fbbf24" strokeWidth="2.5" />
+          <text x="14" y="18" textAnchor="middle" fill="#fecdd3" fontSize="10" fontWeight="900">1</text>
+          <text x="41.5" y="46" textAnchor="middle" fill="#fde68a" fontSize="13" fontWeight="900">2</text>
+        </>
+      )}
+
+      {structureId === 'full_enclosed' && (
+        <>
+          {/* Outer 3-sided frame (1) + dashed bottom seal (3) */}
+          <rect x="6" y="6" width="52" height="52" fill="#e11d48" fillOpacity="0.16" stroke="none" />
+          <path d="M 7 56 L 7 7 L 57 7 L 57 56" fill="none" stroke="#fb7185" strokeWidth="3" />
+          <line x1="6" y1="57" x2="58" y2="57" stroke="#38bdf8" strokeWidth="3" strokeDasharray="5 2" />
+          <rect x="18" y="18" width="28" height="28" fill="#f59e0b" fillOpacity="0.26" stroke="#fbbf24" strokeWidth="2.2" />
+          <text x="32" y="36" textAnchor="middle" fill="#fde68a" fontSize="13" fontWeight="900">2</text>
+          <text x="13" y="16" textAnchor="middle" fill="#fecdd3" fontSize="9" fontWeight="900">1</text>
+          <text x="51" y="54" textAnchor="middle" fill="#7dd3fc" fontSize="9" fontWeight="900">3</text>
+        </>
+      )}
+    </svg>
+  );
+}
+
 export function LibraryView({
   progress,
   courses,
   activeCourse,
   customDecks,
-  linguisticDataStatus = { loaded: false, lexiconCount: 0, preloadedCoursesCount: 0 },
+  linguisticDataStatus = { loaded: false, lexiconCount: 0, preloadedCoursesCount: 0, corpusCount: 0, source: 'embedded' },
+  isSyncingData = false,
+  onSyncLinguisticData,
   onSaveWordLinguisticOverride,
+  onCycleWordPriority,
   isSlowMode,
   onSetSlowMode,
   speakMandarin,
   speakingState,
+  onOpenShadowing,
   onAddWordsToDeck,
   onAddImportedCourse,
   onDeleteCourse,
@@ -2228,15 +3052,29 @@ export function LibraryView({
   triggerToast
 }) {
   const [librarySection, setLibrarySection] = useState('decks');
+  const [strokesSubTab, setStrokesSubTab] = useState('strokes');
+  const [editingCategoryWordKey, setEditingCategoryWordKey] = useState(null);
   const [confirmDeleteCourseId, setConfirmDeleteCourseId] = useState(null);
   const [studioToolMode, setStudioToolMode] = useState('none');
   const [searchQuery, setSearchQuery] = useState('');
-  const [vocabVisibleCount, setVocabVisibleCount] = useState(25);
+  const [courseBandFilter, setCourseBandFilter] = useState('all');
+  const [vocabFilterMode, setVocabFilterMode] = useState('all');
+
+  const filteredLibraryCourses = useMemo(
+    () =>
+      sortCoursesCanonically(
+        (Array.isArray(courses) ? courses : []).filter((c) =>
+          matchesCourseHskFilter(c, courseBandFilter)
+        )
+      ),
+    [courses, courseBandFilter]
+  );
+  const [vocabVisibleCount, setVocabVisibleCount] = useState(50);
   const [selectedCharEntry, setSelectedCharEntry] = useState(null);
 
   useEffect(() => {
-    setVocabVisibleCount(25);
-  }, [searchQuery]);
+    setVocabVisibleCount(50);
+  }, [searchQuery, vocabFilterMode]);
 
   const [radicalFilterMode, setRadicalFilterMode] = useState('all');
   const [radicalSearch, setRadicalSearch] = useState('');
@@ -2293,7 +3131,10 @@ export function LibraryView({
     ]);
 
     if (singleCategory !== 'auto' && QUICK_ADD_CATEGORY_PRESETS[singleCategory]) {
-      onSaveWordLinguisticOverride?.({ hanzi: h }, QUICK_ADD_CATEGORY_PRESETS[singleCategory]);
+      onSaveWordLinguisticOverride?.(
+        { hanzi: h },
+        { ...QUICK_ADD_CATEGORY_PRESETS[singleCategory], categoryKey: singleCategory }
+      );
     }
 
     setSingleHanzi('');
@@ -2589,10 +3430,13 @@ export function LibraryView({
     e.target.value = '';
   };
 
-  const filteredWordsList = useMemo(() => {
+  const librarySrsMap = progress.srsData || progress.srsSchedule || {};
+
+  const { filteredWordsList, libraryLeechCount } = useMemo(() => {
     const q = searchQuery.trim().toLowerCase();
     const list = [];
     const seen = new Set();
+    let leechCount = 0;
 
     courses.forEach((c) => {
       (c.lessons || []).forEach((l) => {
@@ -2601,7 +3445,15 @@ export function LibraryView({
           const key = `${norm.hanzi}_${c.courseName}`;
           if (!seen.has(key)) {
             seen.add(key);
-            list.push({ ...norm, sourceBadge: `${c.courseName} • ${l.title}` });
+            const srsEntry = getWordSrsEntry(librarySrsMap, norm);
+            const isLeech = Boolean(srsEntry?.isLeech);
+            if (isLeech) leechCount += 1;
+            list.push({
+              ...norm,
+              sourceBadge: `${c.courseName} • ${l.title}`,
+              _srsEntry: srsEntry,
+              _isLeech: isLeech
+            });
           }
         });
       });
@@ -2613,20 +3465,36 @@ export function LibraryView({
         const key = `${norm.hanzi}_${d.name}`;
         if (!seen.has(key)) {
           seen.add(key);
-          list.push({ ...norm, sourceBadge: `Deck: ${d.name}` });
+          const srsEntry = getWordSrsEntry(librarySrsMap, norm);
+          const isLeech = Boolean(srsEntry?.isLeech);
+          if (isLeech) leechCount += 1;
+          list.push({
+            ...norm,
+            sourceBadge: `Deck: ${d.name}`,
+            _srsEntry: srsEntry,
+            _isLeech: isLeech
+          });
         }
       });
     });
 
-    if (!q) return list;
-    return list.filter(
-      (item) =>
-        item.hanzi.toLowerCase().includes(q) ||
-        item.pinyin.toLowerCase().includes(q) ||
-        item.pinyinToneless.toLowerCase().includes(q) ||
-        (item.meaning || '').toLowerCase().includes(q)
-    );
-  }, [courses, customDecks, searchQuery]);
+    const filteredByMode =
+      vocabFilterMode === 'leeches' && leechCount > 0
+        ? list.filter((item) => item._isLeech)
+        : list;
+
+    const finalFiltered = !q
+      ? filteredByMode
+      : filteredByMode.filter(
+          (item) =>
+            item.hanzi.toLowerCase().includes(q) ||
+            item.pinyin.toLowerCase().includes(q) ||
+            item.pinyinToneless.toLowerCase().includes(q) ||
+            (item.meaning || '').toLowerCase().includes(q)
+        );
+
+    return { filteredWordsList: finalFiltered, libraryLeechCount: leechCount };
+  }, [courses, customDecks, searchQuery, vocabFilterMode, librarySrsMap]);
 
   const characterMatrixList = useMemo(() => {
     const charMap = new window.Map();
@@ -2830,20 +3698,33 @@ export function LibraryView({
   return (
     <div className="p-4 space-y-4 relative pb-28">
       <div className="rounded-3xl bg-slate-800/90 border border-slate-700/80 p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30">
-            Orthography & Vocabulary Studio
+        <div className="flex items-center justify-between gap-2">
+          <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-sky-500/20 text-sky-300 border border-sky-500/30 truncate">
+            Orthography &amp; Vocabulary Studio
           </span>
-          <span className="text-xs font-bold text-slate-400">
-            {allLoadedCharactersMap.size} Active Chars • 25 Radicals
-          </span>
+          <div className="flex items-center gap-2 shrink-0">
+            <span className="text-[11px] font-bold text-slate-400 hidden sm:inline">
+              {allLoadedCharactersMap.size} Chars • 25 Radicals
+            </span>
+            <button
+              type="button"
+              onClick={() => onOpenShadowing?.()}
+              title="Open Hands-Free Audio Shadowing"
+              aria-label="Open Hands-Free Audio Shadowing"
+              className="game-btn-3d px-2.5 py-1.5 rounded-xl bg-indigo-500/20 hover:bg-indigo-500/35 border border-indigo-400/50 text-indigo-200 flex items-center gap-1.5 text-[11px] font-black transition-all"
+            >
+              <Headphones className="w-3.5 h-3.5 text-indigo-300 shrink-0" />
+              <span>Shadow</span>
+            </button>
+          </div>
         </div>
 
-        <div className="grid grid-cols-5 gap-1 bg-slate-950 p-1 rounded-2xl border border-slate-800">
+        <div className="grid grid-cols-3 gap-1.5 bg-slate-950 p-1.5 rounded-2xl border border-slate-800">
           {[
             { id: 'decks', label: 'Decks', icon: BookMarked },
             { id: 'char_grid', label: 'Hanzi Grid', icon: Layers },
             { id: 'radicals', label: 'Radicals', icon: Sparkles },
+            { id: 'strokes_structures', label: 'Strokes & Structures', icon: LayoutGrid },
             { id: 'stroke_rules', label: 'Stroke Rules', icon: PenTool },
             { id: 'phonetics', label: 'Phonetics', icon: Volume2 }
           ].map((item) => {
@@ -2857,14 +3738,14 @@ export function LibraryView({
                   soundFX.playPop();
                   setLibrarySection(item.id);
                 }}
-                className={`py-2 px-1 rounded-xl text-[10px] font-extrabold flex flex-col items-center justify-center gap-1 transition-all leading-tight text-center ${
+                className={`py-2 px-1.5 rounded-xl text-[10px] font-extrabold flex flex-col items-center justify-center gap-1 transition-all leading-tight text-center ${
                   active
                     ? 'bg-rose-600 text-white shadow'
                     : 'text-slate-400 hover:text-slate-200'
                 }`}
               >
                 <Icon className="w-3.5 h-3.5 shrink-0" />
-                <span className="truncate w-full">{item.label}</span>
+                <span className="w-full leading-tight">{item.label}</span>
               </button>
             );
           })}
@@ -3122,6 +4003,244 @@ export function LibraryView({
               </div>
             ))}
           </div>
+        </div>
+      )}
+
+      {/* SUB-TAB 3B: "STROKES & STRUCTURES" (BASIC STROKES 笔画 + COMPOUND CHARACTER STRUCTURES 合体字) */}
+      {librarySection === 'strokes_structures' && (
+        <div className="space-y-3.5">
+          <div className="rounded-3xl bg-gradient-to-br from-slate-800 via-slate-900 to-slate-950 border border-sky-500/35 p-4 space-y-3 shadow-xl">
+            <div className="flex items-start justify-between gap-2">
+              <div>
+                <span className="text-[10px] font-black uppercase tracking-wider px-2.5 py-1 rounded-full bg-sky-500/20 text-sky-300 border border-sky-400/40 inline-block">
+                  HSK 1 Orthography Foundation
+                </span>
+                <h2 className="text-base font-black text-white mt-1.5">
+                  {strokesSubTab === 'strokes' ? (
+                    <>
+                      Basic Strokes • <span className="font-hanzi text-rose-400">笔画</span>
+                    </>
+                  ) : (
+                    <>
+                      Character Structures • <span className="font-hanzi text-amber-300">合体字</span>
+                    </>
+                  )}
+                </h2>
+                <p className="font-clarity text-xs text-slate-300 mt-0.5 leading-relaxed">
+                  {strokesSubTab === 'strokes'
+                    ? 'Master the 8 fundamental and compound Chinese strokes. Tap any example character below to inspect its animated stroke order.'
+                    : 'Every Chinese character fits inside a balanced square using one of 6 geometric layouts. Tap any character pill to trace its exact stroke sequence.'}
+                </p>
+              </div>
+            </div>
+
+            <div className="grid grid-cols-2 gap-1.5 bg-slate-950 p-1 rounded-2xl border border-slate-800">
+              <button
+                type="button"
+                onClick={() => {
+                  soundFX.playPop();
+                  setStrokesSubTab('strokes');
+                }}
+                className={`py-2 px-2 rounded-xl text-xs font-extrabold transition-all flex items-center justify-center gap-1.5 ${
+                  strokesSubTab === 'strokes'
+                    ? 'bg-rose-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <span>Basic Strokes</span>
+                <span className="font-hanzi text-xs opacity-90">(笔画)</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  soundFX.playPop();
+                  setStrokesSubTab('structures');
+                }}
+                className={`py-2 px-2 rounded-xl text-xs font-extrabold transition-all flex items-center justify-center gap-1.5 ${
+                  strokesSubTab === 'structures'
+                    ? 'bg-amber-600 text-white shadow'
+                    : 'text-slate-400 hover:text-slate-200'
+                }`}
+              >
+                <span>Structures</span>
+                <span className="font-hanzi text-xs opacity-90">(合体字)</span>
+              </button>
+            </div>
+          </div>
+
+          {strokesSubTab === 'strokes' && (
+            <div className="space-y-2.5">
+              {BASIC_STROKES_8.map((stroke) => (
+                <div
+                  key={stroke.id}
+                  className="rounded-2xl bg-slate-800/85 border border-slate-700/80 p-3.5 space-y-2.5 shadow-md"
+                >
+                  <div className="flex items-start gap-3">
+                    <BasicStrokeSvg strokeId={stroke.id} />
+                    <div className="flex-1 min-w-0 space-y-1">
+                      <div className="flex items-baseline gap-2 flex-wrap">
+                        <span className="font-hanzi text-2xl font-black text-white leading-none">
+                          {stroke.hanzi}
+                        </span>
+                        <span className="font-pinyin text-rose-400 leading-none">
+                          {stroke.pinyin}
+                        </span>
+                        <span className="font-clarity text-xs font-extrabold text-amber-300">
+                          — {stroke.english}
+                        </span>
+                      </div>
+                      <span className="inline-block font-clarity text-[10px] font-bold px-2 py-0.5 rounded-[2px] bg-slate-950 border border-slate-700 text-sky-300">
+                        <span className="font-hanzi">{stroke.category}</span>
+                      </span>
+                      <p className="font-clarity text-xs text-slate-300 leading-relaxed pt-0.5">
+                        {stroke.rule}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="flex items-center flex-wrap gap-1.5 pt-2 border-t border-slate-700/60">
+                    <span className="text-[10px] font-extrabold uppercase tracking-wider text-slate-400 mr-1">
+                      Examples:
+                    </span>
+                    {stroke.examples.map((ex) => {
+                      const loadedEntry = allLoadedCharactersMap.get(ex.char);
+                      const lv =
+                        loadedEntry?.mastery ??
+                        getWordMasteryLevel(progress.mastery, { id: ex.char, hanzi: ex.char });
+                      const inCourses = Boolean(loadedEntry);
+                      return (
+                        <button
+                          key={`${stroke.id}_${ex.char}`}
+                          type="button"
+                          onClick={() => handleInspectCharacter(ex)}
+                          className={`game-btn-3d px-2.5 py-1 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all ${getMasteryPillStyle(
+                            lv
+                          )}`}
+                        >
+                          <span className="font-hanzi text-sm font-black text-white">
+                            {ex.char}
+                          </span>
+                          <span className="font-clarity text-[10px] text-rose-300 font-bold">
+                            {ex.pinyin}
+                          </span>
+                          <span className="font-clarity text-[10px] text-slate-300">
+                            {ex.meaning}
+                          </span>
+                          {inCourses && (
+                            <span
+                              title="In your loaded courses/decks"
+                              className="w-1.5 h-1.5 rounded-full bg-emerald-400"
+                            />
+                          )}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {strokesSubTab === 'structures' && (
+            <div className="space-y-2.5">
+              {CHARACTER_STRUCTURES_6.map((struct) => {
+                // Combine default HSK 1 examples with up to 3 extra matched characters from the learner's vocabulary
+                const pillChars = [];
+                const seen = new Set();
+
+                struct.examples.forEach((ex) => {
+                  const loaded = allLoadedCharactersMap.get(ex.char);
+                  seen.add(ex.char);
+                  pillChars.push({
+                    char: ex.char,
+                    pinyin: loaded?.pinyinSyllables?.[0] || ex.pinyin,
+                    meaning: loaded?.meanings?.[0] || ex.meaning,
+                    mastery:
+                      loaded?.mastery ??
+                      getWordMasteryLevel(progress.mastery, { id: ex.char, hanzi: ex.char }),
+                    inUserCourses: Boolean(loaded)
+                  });
+                });
+
+                let extraAdded = 0;
+                (struct.extraPool || []).forEach((ch) => {
+                  if (extraAdded >= 3 || seen.has(ch)) return;
+                  const loaded = allLoadedCharactersMap.get(ch);
+                  if (loaded) {
+                    seen.add(ch);
+                    extraAdded += 1;
+                    pillChars.push({
+                      char: ch,
+                      pinyin: KNOWN_CHARACTER_INFO[ch]?.pinyin || loaded.pinyinSyllables?.[0] || ch,
+                      meaning: KNOWN_CHARACTER_INFO[ch]?.meaning || loaded.meanings?.[0] || '',
+                      mastery: loaded.mastery,
+                      inUserCourses: true
+                    });
+                  }
+                });
+
+                const matchedCount = pillChars.filter((p) => p.inUserCourses).length;
+
+                return (
+                  <div
+                    key={struct.id}
+                    className={`rounded-2xl bg-slate-800/85 border p-3.5 space-y-2.5 shadow-md ${
+                      matchedCount > 0 ? 'border-amber-400/40' : 'border-slate-700/80'
+                    }`}
+                  >
+                    <div className="flex items-start gap-3">
+                      <CharacterStructureSvg structureId={struct.id} />
+                      <div className="flex-1 min-w-0 space-y-1">
+                        <div className="flex items-center justify-between gap-2 flex-wrap">
+                          <h3 className="text-sm font-black text-white leading-tight">
+                            {struct.title}
+                          </h3>
+                          <span className="font-hanzi text-xs font-black px-2 py-0.5 rounded-[2px] bg-rose-500/20 text-rose-300 border border-rose-400/40">
+                            {struct.hanzi}
+                          </span>
+                        </div>
+                        <div className="font-pinyin-inline text-amber-300 leading-tight">
+                          {struct.pinyin}
+                        </div>
+                        <p className="font-clarity text-xs text-slate-300 leading-relaxed">
+                          {struct.orderHint}
+                        </p>
+                      </div>
+                    </div>
+
+                    <div className="flex items-center flex-wrap gap-1.5 pt-2 border-t border-slate-700/60">
+                      {pillChars.map((pill) => (
+                        <button
+                          key={`${struct.id}_${pill.char}`}
+                          type="button"
+                          onClick={() => handleInspectCharacter(pill)}
+                          className={`game-btn-3d px-2.5 py-1 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all ${getMasteryPillStyle(
+                            pill.mastery
+                          )}`}
+                        >
+                          <span className="font-hanzi text-sm font-black text-white">
+                            {pill.char}
+                          </span>
+                          <span className="font-clarity text-[10px] text-rose-300 font-bold">
+                            {pill.pinyin}
+                          </span>
+                          <span className="text-[9px] font-black px-1 rounded bg-black/30">
+                            Lv.{pill.mastery}/10
+                          </span>
+                          {pill.inUserCourses && (
+                            <span
+                              title="Present in your loaded courses/decks"
+                              className="w-1.5 h-1.5 rounded-full bg-emerald-400"
+                            />
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 
@@ -3383,14 +4502,93 @@ export function LibraryView({
           </div>
 
           <div className="space-y-2.5">
-            <h2 className="text-xs font-extrabold uppercase tracking-wider text-sky-400">
-              Available Courses ({courses.length})
-            </h2>
-            {courses.map((course) => {
+            <div className="flex items-center justify-between gap-2">
+              <h2 className="text-xs font-extrabold uppercase tracking-wider text-sky-400">
+                Available Courses ({filteredLibraryCourses.length}
+                {courseBandFilter !== 'all' ? ` / ${courses.length}` : ''})
+              </h2>
+            </div>
+
+            {/* Refined HSK Band Filter Pills */}
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+              {COURSE_HSK_FILTER_PILLS.map((pill) => {
+                const count = (Array.isArray(courses) ? courses : []).filter((c) =>
+                  matchesCourseHskFilter(c, pill.id)
+                ).length;
+                const isSelected = courseBandFilter === pill.id;
+                return (
+                  <button
+                    key={pill.id}
+                    type="button"
+                    onClick={() => {
+                      soundFX.playPop();
+                      setCourseBandFilter(pill.id);
+                    }}
+                    className={`px-2.5 py-1 rounded-xl text-[10px] font-black shrink-0 border transition-all flex items-center gap-1 ${
+                      isSelected
+                        ? 'bg-sky-600 text-white border-sky-400 shadow'
+                        : count === 0
+                        ? 'bg-slate-950/60 text-slate-600 border-slate-800/80'
+                        : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-500'
+                    }`}
+                  >
+                    <span>{pill.label}</span>
+                    <span
+                      className={`text-[9px] px-1 rounded ${
+                        isSelected ? 'bg-sky-800/70 text-sky-100' : 'bg-slate-950 text-slate-400'
+                      }`}
+                    >
+                      {count}
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+
+            {filteredLibraryCourses.length === 0 && (
+              <div className="rounded-2xl bg-slate-900/70 border border-slate-800 p-4 text-center space-y-1">
+                <p className="text-xs font-bold text-slate-300">
+                  No courses match &ldquo;
+                  {COURSE_HSK_FILTER_PILLS.find((p) => p.id === courseBandFilter)?.label}&rdquo;
+                  yet.
+                </p>
+                <p className="text-[11px] text-slate-500">
+                  Switch filter pills above or import a JSON / HSK deck to add courses to this band.
+                </p>
+              </div>
+            )}
+
+            {filteredLibraryCourses.map((course) => {
               const isDefaultStarter =
                 course.id === 'course_default_unit1' && courses.length === 1;
               const isConfirmingDelete = confirmDeleteCourseId === course.id;
               const isCurrentActiveCourse = activeCourse?.id === course.id;
+              const courseIdLower = String(course.id || '').toLowerCase();
+              const courseBandNum = getCourseHskBandNumber(course);
+              const originBadge = courseIdLower.startsWith('preloaded_new_hsk_')
+                ? {
+                    label: 'Official',
+                    className: 'bg-emerald-500/20 border-emerald-400/50 text-emerald-300'
+                  }
+                : courseIdLower === 'preloaded_custom_notes' ||
+                  courseIdLower.includes('custom_notes')
+                ? {
+                    label: 'Custom',
+                    className: 'bg-amber-500/20 border-amber-400/50 text-amber-300'
+                  }
+                : courseIdLower.startsWith('preloaded_hsk_') ||
+                  String(course.courseName || '').includes('Gradual Path') ||
+                  (course.sourceType === 'preloaded-hsk' &&
+                    courseBandNum != null &&
+                    courseBandNum >= 7)
+                ? {
+                    label: 'Gradual',
+                    className: 'bg-sky-500/20 border-sky-400/50 text-sky-300'
+                  }
+                : {
+                    label: 'Custom',
+                    className: 'bg-amber-500/20 border-amber-400/50 text-amber-300'
+                  };
 
               return (
                 <div
@@ -3408,6 +4606,11 @@ export function LibraryView({
                           text={course.courseName}
                           className="text-sm font-black text-white flex-1"
                         />
+                        <span
+                          className={`px-1.5 py-0.5 rounded-[2px] border text-[9px] font-black uppercase shrink-0 ${originBadge.className}`}
+                        >
+                          {originBadge.label}
+                        </span>
                         {isCurrentActiveCourse && (
                           <span className="px-1.5 py-0.5 rounded-[2px] bg-sky-500/20 border border-sky-400/50 text-sky-300 text-[9px] font-black uppercase shrink-0">
                             Active
@@ -3494,20 +4697,101 @@ export function LibraryView({
               <h2 className="text-xs font-extrabold uppercase tracking-wider text-slate-300">
                 Vocabulary Reference ({filteredWordsList.length})
               </h2>
-              {linguisticDataStatus?.lexiconCount > 0 && (
+              <div className="flex items-center gap-1.5 flex-wrap">
+                {libraryLeechCount > 0 && (
+                  <div className="flex items-center bg-slate-950 p-0.5 rounded-[2px] border border-slate-800">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        soundFX.playPop();
+                        setVocabFilterMode('all');
+                      }}
+                      className={`px-2 py-0.5 rounded-[2px] text-[10px] font-extrabold transition-all ${
+                        vocabFilterMode !== 'leeches'
+                          ? 'bg-slate-700 text-white'
+                          : 'text-slate-400 hover:text-slate-200'
+                      }`}
+                    >
+                      All
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        soundFX.playPop();
+                        setVocabFilterMode('leeches');
+                      }}
+                      className={`px-2 py-0.5 rounded-[2px] text-[10px] font-extrabold transition-all ${
+                        vocabFilterMode === 'leeches'
+                          ? 'bg-rose-600 text-white'
+                          : 'text-rose-300 hover:text-rose-200'
+                      }`}
+                    >
+                      Leeches ({libraryLeechCount})
+                    </button>
+                  </div>
+                )}
                 <span className="font-clarity text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-400/30">
-                  HSK Lexicon • {linguisticDataStatus.lexiconCount.toLocaleString()} entries
+                  {linguisticDataStatus?.lexiconCount > 0
+                    ? `HSK Lexicon • ${linguisticDataStatus.lexiconCount.toLocaleString()} entries (${
+                        linguisticDataStatus.source === 'remote'
+                          ? 'CDN'
+                          : linguisticDataStatus.source === 'local'
+                          ? 'Local'
+                          : 'Offline'
+                      })`
+                    : `Corpus • ${linguisticDataStatus?.corpusCount || 60} sentences`}
                 </span>
-              )}
+                {onSyncLinguisticData && (
+                  <button
+                    type="button"
+                    disabled={isSyncingData}
+                    onClick={() => {
+                      soundFX.playPop();
+                      onSyncLinguisticData();
+                    }}
+                    title="Sync Data Repo (Refresh Lexicon, Curriculum & Corpus from GitHub CDN)"
+                    className={`game-btn-3d p-1.5 rounded-full border text-[10px] font-black transition-all flex items-center justify-center ${
+                      isSyncingData
+                        ? 'bg-indigo-500/30 border-indigo-400 text-indigo-200 opacity-75 cursor-wait'
+                        : 'bg-slate-900 hover:bg-indigo-950/80 border-indigo-400/40 text-indigo-300 hover:text-white'
+                    }`}
+                  >
+                    <RotateCcw className={`w-3 h-3 ${isSyncingData ? 'animate-spin' : ''}`} />
+                  </button>
+                )}
+              </div>
             </div>
             {filteredWordsList.slice(0, vocabVisibleCount).map((word, idx) => {
               const masteryLv = getWordMasteryLevel(progress.mastery, word);
               const tierTitle = getMasteryTierMeta(masteryLv).tier;
-              const enrichedWord = enrichWordEntry(word, progress.wordLinguisticOverrides);
+              const enrichedWord = enrichWordEntry(
+                word,
+                progress.wordLinguisticOverrides,
+                progress.wordPriorityOverrides
+              );
               const linguisticBadges = getLinguisticBadgeSummary(enrichedWord);
+              const priorityTier = enrichedWord.priorityTier || 'standard';
+              const hasManualPriority = Boolean(enrichedWord.priorityOverride);
+              const priorityBadgeLabel =
+                priorityTier === 'core'
+                  ? 'Core ★'
+                  : priorityTier === 'niche'
+                  ? 'Niche ↓'
+                  : 'Normal';
+              const priorityBadgeClass =
+                priorityTier === 'core'
+                  ? 'bg-amber-500/20 text-amber-200 border-amber-400/50 hover:bg-amber-500/30'
+                  : priorityTier === 'niche'
+                  ? 'bg-slate-900/90 text-slate-400 border-slate-700 hover:bg-slate-800'
+                  : 'bg-indigo-500/15 text-indigo-200 border-indigo-400/35 hover:bg-indigo-500/25';
+              const wordCardKey = `${word.hanzi || word.id}_${idx}`;
+              const existingLingOverride =
+                progress.wordLinguisticOverrides?.[word.hanzi] || null;
+              const currentCategoryKey = resolveWordCategoryPresetKey(existingLingOverride);
+              const isEditingCategory = editingCategoryWordKey === wordCardKey;
               return (
                 <div
-                  key={`${word.id}_${idx}`}
+                  key={wordCardKey}
                   className="rounded-2xl bg-slate-800/70 border border-slate-700/80 p-3.5 space-y-2"
                 >
                   <div className="flex items-center justify-between gap-2.5">
@@ -3549,22 +4833,110 @@ export function LibraryView({
                       />
                     </div>
                   </div>
-                  {linguisticBadges.length > 0 && (
-                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5">
-                      {linguisticBadges.map((badge, bIdx) => (
-                        <span
-                          key={`${word.id}_lb_${bIdx}`}
-                          className={`font-clarity shrink-0 whitespace-nowrap text-[10px] font-bold px-2 py-0.5 rounded-[2px] border ${
-                            badge.includes('Separable')
-                              ? 'bg-amber-500/15 text-amber-300 border-amber-400/35'
-                              : badge.startsWith('CL:')
-                              ? 'bg-emerald-500/15 text-emerald-300 border-emerald-400/35'
-                              : 'bg-slate-900/90 text-sky-300 border-slate-700'
-                          }`}
-                        >
-                          {badge}
-                        </span>
-                      ))}
+                  <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5">
+                    {word._isLeech && (
+                      <span
+                        title={`Flagged Leech • Ease ${(word._srsEntry?.easeFactor ?? 1.5).toFixed(2)}`}
+                        className="font-clarity shrink-0 whitespace-nowrap text-[10px] font-extrabold px-2 py-0.5 rounded-[2px] border bg-rose-500/20 text-amber-200 border-rose-400/60"
+                      >
+                        Leech • {word._srsEntry?.lapseCount || 0} lapses
+                      </span>
+                    )}
+                    <button
+                      type="button"
+                      onClick={() => onCycleWordPriority?.(word)}
+                      title={`Priority: ${priorityBadgeLabel} (${
+                        hasManualPriority ? 'Manual override' : 'Auto-classified'
+                      }) — tap to cycle`}
+                      className={`font-clarity shrink-0 whitespace-nowrap text-[10px] font-extrabold px-2 py-0.5 rounded-[2px] border transition-colors cursor-pointer ${priorityBadgeClass}`}
+                    >
+                      {priorityBadgeLabel}
+                      {hasManualPriority ? ' •' : ''}
+                    </button>
+                    {linguisticBadges.map((badge, bIdx) => (
+                      <span
+                        key={`${word.id}_lb_${bIdx}`}
+                        className={`font-clarity shrink-0 whitespace-nowrap text-[10px] font-bold px-2 py-0.5 rounded-[2px] border ${
+                          badge.includes('Separable')
+                            ? 'bg-amber-500/15 text-amber-300 border-amber-400/35'
+                            : badge.startsWith('CL:')
+                            ? 'bg-emerald-500/15 text-emerald-300 border-emerald-400/35'
+                            : 'bg-slate-900/90 text-sky-300 border-slate-700'
+                        }`}
+                      >
+                        {badge}
+                      </span>
+                    ))}
+                    {onSaveWordLinguisticOverride && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          soundFX.playPop();
+                          setEditingCategoryWordKey((prev) =>
+                            prev === wordCardKey ? null : wordCardKey
+                          );
+                        }}
+                        title={
+                          existingLingOverride
+                            ? 'Edit linguistic category (Manual override active)'
+                            : 'Edit grammatical category for sentence engine'
+                        }
+                        aria-label={`Edit linguistic category for ${word.hanzi}`}
+                        className={`font-clarity shrink-0 whitespace-nowrap text-[10px] font-extrabold px-2 py-0.5 rounded-[2px] border transition-colors cursor-pointer inline-flex items-center gap-1 ${
+                          isEditingCategory
+                            ? 'bg-sky-600/30 text-sky-200 border-sky-400'
+                            : existingLingOverride
+                            ? 'bg-sky-500/20 text-sky-200 border-sky-400/60 hover:bg-sky-500/30'
+                            : 'bg-slate-900/90 text-slate-300 border-slate-700 hover:border-sky-400/60 hover:text-sky-200'
+                        }`}
+                      >
+                        <Tag className="w-2.5 h-2.5" />
+                        <Pencil className="w-2.5 h-2.5" />
+                        {existingLingOverride ? <span>•</span> : null}
+                      </button>
+                    )}
+                  </div>
+                  {isEditingCategory && onSaveWordLinguisticOverride && (
+                    <div className="pt-1.5 border-t border-slate-700/60 flex items-center gap-2">
+                      <label
+                        htmlFor={`cat-select-${idx}`}
+                        className="font-clarity text-[10px] font-extrabold uppercase tracking-wider text-sky-300 shrink-0"
+                      >
+                        Grammar Tag
+                      </label>
+                      <select
+                        id={`cat-select-${idx}`}
+                        value={currentCategoryKey}
+                        onChange={(e) => {
+                          const nextVal = e.target.value;
+                          soundFX.playPop();
+                          if (nextVal === 'auto' || !QUICK_ADD_CATEGORY_PRESETS[nextVal]) {
+                            onSaveWordLinguisticOverride(word, null);
+                          } else {
+                            onSaveWordLinguisticOverride(word, {
+                              ...QUICK_ADD_CATEGORY_PRESETS[nextVal],
+                              categoryKey: nextVal
+                            });
+                          }
+                        }}
+                        className="font-clarity flex-1 min-w-0 bg-slate-950 border border-sky-500/60 focus:border-sky-400 rounded-xl px-2.5 py-1.5 text-xs font-bold text-white outline-none"
+                      >
+                        {QUICK_ADD_CATEGORY_OPTIONS.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </select>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          soundFX.playPop();
+                          setEditingCategoryWordKey(null);
+                        }}
+                        className="px-2 py-1.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] font-extrabold text-slate-300 shrink-0"
+                      >
+                        Done
+                      </button>
                     </div>
                   )}
                   <div className="flex items-center justify-between gap-2 text-[10px] text-slate-400 border-t border-slate-800 pt-1.5">
@@ -3578,12 +4950,11 @@ export function LibraryView({
                 type="button"
                 onClick={() => {
                   soundFX.playPop();
-                  setVocabVisibleCount((prev) => prev + 25);
+                  setVocabVisibleCount((prev) => prev + 50);
                 }}
                 className="game-btn-3d w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border-2 border-slate-700 text-xs font-extrabold text-amber-300"
               >
-                Show More (+{Math.min(25, filteredWordsList.length - vocabVisibleCount)} of{' '}
-                {filteredWordsList.length - vocabVisibleCount} remaining)
+                Show 50 more ({filteredWordsList.length - vocabVisibleCount} left)
               </button>
             )}
           </div>
@@ -4121,6 +5492,11 @@ export function ProfileView({
   courses,
   customDecks,
   currentLevel,
+  linguisticDataStatus,
+  isSyncingData = false,
+  onSyncLinguisticData,
+  defaultDataBaseUrl = 'https://cdn.jsdelivr.net/gh/Kwertincho/hanziapp-data@main',
+  getDataBaseUrl,
   onToggleSpeed,
   speakMandarin,
   onExportAllData,
@@ -4135,6 +5511,11 @@ export function ProfileView({
   const [availableVoices, setAvailableVoices] = useState(() => getAvailableMandarinVoices());
   const [preferredVoiceURI, setPreferredVoiceURIState] = useState(() =>
     getGlobalPreferredVoiceURI()
+  );
+  const [dataRepoUrlInput, setDataRepoUrlInput] = useState(() =>
+    typeof getDataBaseUrl === 'function'
+      ? getDataBaseUrl()
+      : linguisticDataStatus?.dataBaseUrl || defaultDataBaseUrl
   );
 
   useEffect(() => {
@@ -4563,6 +5944,84 @@ export function ProfileView({
             <Upload className="w-3.5 h-3.5" />
             <span>Import Backup</span>
           </button>
+        </div>
+
+        {/* LINGUISTIC DATA REPOSITORY (GITHUB CDN / OFFLINE CACHE SYNC) */}
+        <div className="pt-2.5 border-t border-slate-700/70 space-y-2">
+          <div className="flex items-start justify-between gap-2">
+            <div>
+              <p className="text-xs font-bold text-white flex items-center gap-1.5">
+                <span>Linguistic Data Repository (GitHub CDN)</span>
+                <span
+                  className={`text-[10px] font-black px-2 py-0.5 rounded-full border ${
+                    linguisticDataStatus?.source === 'remote'
+                      ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40'
+                      : linguisticDataStatus?.source === 'local'
+                      ? 'bg-sky-500/20 text-sky-300 border-sky-400/40'
+                      : 'bg-slate-800 text-slate-300 border-slate-700'
+                  }`}
+                >
+                  {linguisticDataStatus?.source === 'remote'
+                    ? 'Remote CDN'
+                    : linguisticDataStatus?.source === 'local'
+                    ? 'Local /data/'
+                    : 'Built-in'}
+                </span>
+              </p>
+              <p className="text-[11px] text-slate-400 mt-0.5">
+                {linguisticDataStatus?.lexiconCount?.toLocaleString?.() || 0} Lexicon •{' '}
+                {linguisticDataStatus?.preloadedCoursesCount || 0} Preloaded HSK Course(s) •{' '}
+                {linguisticDataStatus?.corpusCount || 60} Corpus Sentences
+                {linguisticDataStatus?.lastSyncedAt
+                  ? ` • Synced ${new Date(linguisticDataStatus.lastSyncedAt).toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit'
+                    })}`
+                  : ''}
+              </p>
+            </div>
+            <button
+              type="button"
+              disabled={isSyncingData}
+              onClick={() => {
+                soundFX.playPop();
+                onSyncLinguisticData?.(dataRepoUrlInput);
+              }}
+              className={`game-btn-3d px-3 py-1.5 rounded-xl border text-xs font-black flex items-center gap-1.5 shrink-0 ${
+                isSyncingData
+                  ? 'bg-indigo-600/30 border-indigo-400 text-indigo-200 opacity-75 cursor-wait'
+                  : 'bg-indigo-600/25 hover:bg-indigo-600/35 border-indigo-400/50 text-indigo-200'
+              }`}
+            >
+              <RotateCcw className={`w-3.5 h-3.5 ${isSyncingData ? 'animate-spin' : ''}`} />
+              <span>{isSyncingData ? 'Syncing...' : 'Sync Data Repo'}</span>
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1.5">
+            <input
+              type="url"
+              value={dataRepoUrlInput}
+              onChange={(e) => setDataRepoUrlInput(e.target.value)}
+              placeholder={defaultDataBaseUrl}
+              aria-label="Data Repository Base URL"
+              className="font-clarity flex-1 min-w-0 rounded-xl bg-slate-950 border border-slate-700 focus:border-indigo-400 px-3 py-2 text-xs font-semibold text-white placeholder:text-slate-500 outline-none"
+            />
+            {dataRepoUrlInput.trim() !== defaultDataBaseUrl && (
+              <button
+                type="button"
+                onClick={() => {
+                  soundFX.playPop();
+                  setDataRepoUrlInput(defaultDataBaseUrl);
+                  onSyncLinguisticData?.(defaultDataBaseUrl);
+                }}
+                title="Reset to Default GitHub CDN URL"
+                className="px-2.5 py-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-[10px] font-extrabold text-slate-300 shrink-0"
+              >
+                Reset
+              </button>
+            )}
+          </div>
         </div>
 
         <div className="flex items-center justify-between pt-2 border-t border-slate-700/70">

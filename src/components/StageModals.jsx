@@ -39,7 +39,9 @@ import {
   canExposeAudioBeforeAnswer,
   highlightRadicalOutlineStrokes,
   getWritingStageMeta,
-  loadHanziWriterScript
+  loadHanziWriterScript,
+  CJK_SINGLE_CHAR_REGEX,
+  extractWritableCjkChars
 } from '../utils/mandarinHelpers.js';
 import {
   ChaoToneVisualizer,
@@ -451,7 +453,7 @@ export function FlashcardStageModal({
 // STAGE 2 MODAL: STROKE ORDER WRITING (HANZI-WRITER v3.5, MI ZI GE, ADAPTIVE MASTERY STAGES)
 // ============================================================================
 export function WritingStageModal({
-  words = UNIT_1_WORDS,
+  words: rawWords = UNIT_1_WORDS,
   nodeLevel = 0,
   progress,
   isSlowMode,
@@ -463,6 +465,17 @@ export function WritingStageModal({
   onClose,
   onComplete
 }) {
+  const words = useMemo(() => {
+    const source = Array.isArray(rawWords) && rawWords.length > 0 ? rawWords : UNIT_1_WORDS;
+    const sanitized = source
+      .map((w) => ({
+        ...w,
+        chars: extractWritableCjkChars(w)
+      }))
+      .filter((w) => w.chars.length > 0);
+    return sanitized.length > 0 ? sanitized : UNIT_1_WORDS;
+  }, [rawWords]);
+
   const { elapsedSeconds, flushSessionTime } = useSessionTimer(true, onRecordStudySeconds);
   const [wordIndex, setWordIndex] = useState(0);
   const [charIndex, setCharIndex] = useState(0);
@@ -844,7 +857,15 @@ export function WritingStageModal({
   );
 
   useEffect(() => {
-    if (scriptStatus !== 'ready' || !writerTargetRef.current || !window.HanziWriter) return;
+    if (
+      scriptStatus !== 'ready' ||
+      !writerTargetRef.current ||
+      !window.HanziWriter ||
+      !currentChar ||
+      !CJK_SINGLE_CHAR_REGEX.test(currentChar)
+    ) {
+      return;
+    }
 
     const containerEl = writerTargetRef.current;
     if (writerInstanceRef.current?.cancelQuiz) {

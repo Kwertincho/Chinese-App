@@ -59,10 +59,41 @@ function shuffleCopy(arr = []) {
   return copy;
 }
 
+function getWordPriorityWeight(word) {
+  const raw = Number(word?.priorityWeight ?? word?.linguistics?.priorityWeight ?? 1.0);
+  return Number.isFinite(raw) && raw > 0 ? raw : 1.0;
+}
+
+function weightedShuffleWords(arr = []) {
+  if (!Array.isArray(arr) || arr.length <= 1) return [...(arr || [])];
+  const pool = [...arr];
+  const ordered = [];
+  while (pool.length > 0) {
+    const weights = pool.map((w) => getWordPriorityWeight(w));
+    const total = weights.reduce((acc, w) => acc + w, 0);
+    if (total <= 0) {
+      ordered.push(...shuffleCopy(pool));
+      break;
+    }
+    let r = Math.random() * total;
+    let idx = pool.length - 1;
+    for (let i = 0; i < pool.length; i++) {
+      r -= weights[i];
+      if (r <= 0) {
+        idx = i;
+        break;
+      }
+    }
+    ordered.push(pool.splice(idx, 1)[0]);
+  }
+  return ordered;
+}
+
 function scoreCandidateWord(word, { focusSet, srsSet }) {
-  let score = Math.random() * 1.5;
-  if (focusSet?.has(word.hanzi)) score += 6;
-  if (srsSet?.has(word.hanzi)) score += 3.5;
+  const priorityWeight = getWordPriorityWeight(word);
+  let score = (0.4 + Math.random()) * priorityWeight * 1.5;
+  if (focusSet?.has(word.hanzi)) score += 6 * Math.max(0.75, priorityWeight);
+  if (srsSet?.has(word.hanzi)) score += 3.5 * Math.max(0.75, priorityWeight);
   return score;
 }
 
@@ -333,7 +364,7 @@ export function generateGenerativeBatch(
   const srsList = pool.filter(
     (w) => srsSet.has(w.hanzi) && !focusList.some((f) => f.hanzi === w.hanzi)
   );
-  const remainingList = shuffleCopy(
+  const remainingList = weightedShuffleWords(
     pool.filter(
       (w) =>
         !focusList.some((f) => f.hanzi === w.hanzi) &&
@@ -341,7 +372,11 @@ export function generateGenerativeBatch(
     )
   );
 
-  const priorityQueue = [...shuffleCopy(focusList), ...shuffleCopy(srsList), ...remainingList];
+  const priorityQueue = [
+    ...weightedShuffleWords(focusList),
+    ...weightedShuffleWords(srsList),
+    ...remainingList
+  ];
   const results = [];
   const seenHanzi = new Set();
   const usedSchemaIds = [];
@@ -839,7 +874,7 @@ export function generateSeparableVerbLabItem(enrichedUnlockedWords = []) {
   );
   if (unlockedSeparables.length === 0) return null;
 
-  const shuffledSep = shuffleCopy(unlockedSeparables);
+  const shuffledSep = weightedShuffleWords(unlockedSeparables);
   const le = getParticleEntry('了', poolMap);
 
   for (let i = 0; i < shuffledSep.length; i++) {
@@ -849,7 +884,9 @@ export function generateSeparableVerbLabItem(enrichedUnlockedWords = []) {
       if (!parts) continue;
 
       // Try modifier insertion first if an unlocked modifier matches (e.g., 上中文课, 看汉语书)
-      const matchingMod = shuffleCopy(pool).find((m) => doesModifierMatchSeparable(sepWord, m));
+      const matchingMod = weightedShuffleWords(pool).find((m) =>
+        doesModifierMatchSeparable(sepWord, m)
+      );
       const preferModifier = Boolean(matchingMod) && (!le || Math.random() < 0.5);
 
       if (preferModifier && matchingMod) {
@@ -984,10 +1021,10 @@ export function generateSeparableVerbLabItem(enrichedUnlockedWords = []) {
 // ============================================================================
 
 function pickDistractorWords(correctWord, pool, predicate, count = 3) {
-  const sameCategory = shuffleCopy(
+  const sameCategory = weightedShuffleWords(
     pool.filter((w) => w.hanzi !== correctWord.hanzi && predicate(w))
   );
-  const generalFallback = shuffleCopy(
+  const generalFallback = weightedShuffleWords(
     pool.filter(
       (w) =>
         w.hanzi !== correctWord.hanzi &&
@@ -1141,7 +1178,7 @@ export function generateMicroReadingPassage(enrichedUnlockedWords = [], focusWor
 
   const poolMap = buildUnlockedPoolMap(pool);
 
-  const protagonists = shuffleCopy(
+  const protagonists = weightedShuffleWords(
     pool.filter(
       (w) =>
         (getWordPos(w) === 'pron' &&

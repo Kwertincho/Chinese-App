@@ -804,14 +804,100 @@ export function inferMorphologicalLinguistics(rawWord = {}) {
   };
 }
 
+const CORE_PRIORITY_EXCEPTIONS = new Set(['中国', '汉语', '中文', '英语']);
+const CORE_PRIORITY_POS_SET = new Set([
+  'particle',
+  'modal',
+  'conj',
+  'prep',
+  'pron',
+  'verb',
+  'adv',
+  'classifier'
+]);
+
+const PRIORITY_TIER_PRESETS = {
+  core: { tier: 'core', weight: 1.5, srsMultiplier: 0.85 },
+  standard: { tier: 'standard', weight: 1.0, srsMultiplier: 1.0 },
+  niche: { tier: 'niche', weight: 0.35, srsMultiplier: 1.75 }
+};
+
+/**
+ * Classifies a word into a pedagogical priority tier ('core' | 'standard' | 'niche')
+ * with its sampling weight and SRS interval multiplier.
+ *
+ * @param {any} enrichedWord
+ * @param {string | null} [userPriorityOverride]
+ * @returns {{ tier: 'core' | 'standard' | 'niche', weight: number, srsMultiplier: number }}
+ */
+export function computeWordPriorityMeta(enrichedWord, userPriorityOverride = null) {
+  if (
+    userPriorityOverride === 'core' ||
+    userPriorityOverride === 'standard' ||
+    userPriorityOverride === 'niche'
+  ) {
+    return { ...PRIORITY_TIER_PRESETS[userPriorityOverride] };
+  }
+
+  const safeWord = enrichedWord && typeof enrichedWord === 'object' ? enrichedWord : {};
+  const meta = safeWord.linguistics && typeof safeWord.linguistics === 'object'
+    ? safeWord.linguistics
+    : safeWord;
+
+  const hanzi = String(safeWord.hanzi || meta.hanzi || '').trim();
+  const pos = String(meta.pos || safeWord.pos || 'noun').trim();
+  const features = Array.isArray(meta.features)
+    ? meta.features
+    : Array.isArray(safeWord.features)
+    ? safeWord.features
+    : [];
+  const isSeparable = Boolean(meta.isSeparable || safeWord.isSeparable);
+  const rawFreq = meta.freqRank ?? safeWord.freqRank;
+  const freqRank =
+    typeof rawFreq === 'number' && Number.isFinite(rawFreq) && rawFreq > 0 ? rawFreq : null;
+
+  const isCoreException = CORE_PRIORITY_EXCEPTIONS.has(hanzi);
+
+  // 1. Check 'niche' (foreign countries, nationalities, non-core languages, or very rare freqRank > 4500)
+  if (!isCoreException) {
+    const hasNicheFeature = features.includes('country') || features.includes('language');
+    const hasNicheSuffix =
+      hanzi.length >= 2 &&
+      (hanzi.endsWith('国人') ||
+        hanzi.endsWith('国') ||
+        hanzi.endsWith('语') ||
+        hanzi.endsWith('文'));
+    const isLowFreqNiche = freqRank !== null && freqRank > 4500;
+
+    if (hasNicheFeature || hasNicheSuffix || isLowFreqNiche) {
+      return { ...PRIORITY_TIER_PRESETS.niche };
+    }
+  }
+
+  // 2. Check 'core' (high-utility grammar/function words, verbs, classifiers, separable verbs, or top 1200 frequency)
+  if (
+    isCoreException ||
+    CORE_PRIORITY_POS_SET.has(pos) ||
+    isSeparable ||
+    (freqRank !== null && freqRank <= 1200)
+  ) {
+    return { ...PRIORITY_TIER_PRESETS.core };
+  }
+
+  // 3. Default 'standard'
+  return { ...PRIORITY_TIER_PRESETS.standard };
+}
+
 /**
  * Resolves full linguistic metadata for a word in strict 4-tier priority order:
  * 1. Explicit `userOverrides[hanzi]` saved by the learner.
  * 2. Loaded `getLexiconEntry(hanzi)` from `/data/hsk_lexicon.json`.
  * 3. Built-in `CORE_SEMANTIC_ONTOLOGY[hanzi]`.
  * 4. Deterministic morphological & English-gloss inference rules.
+ *
+ * Also attaches pedagogical priority metadata (`priorityTier`, `priorityWeight`, `srsMultiplier`).
  */
-export function enrichWordEntry(rawWord, userOverrides = {}) {
+export function enrichWordEntry(rawWord, userOverrides = {}, priorityOverrides = {}) {
   const safeWord =
     typeof rawWord === 'string'
       ? { hanzi: rawWord.trim() }
@@ -885,7 +971,17 @@ export function enrichWordEntry(rawWord, userOverrides = {}) {
     ? 'core_ontology'
     : 'morphological_inference';
 
-  const linguistics = {
+  const manualPriorityOverride =
+    priorityOverrides && typeof priorityOverrides === 'object'
+      ? (hanzi && priorityOverrides[hanzi]) ||
+        (safeWord.id && priorityOverrides[safeWord.id]) ||
+        null
+      : typeof priorityOverrides === 'string'
+      ? priorityOverrides
+      : null;
+
+  const baseEnriched = {
+    hanzi,
     pos,
     features,
     valence,
@@ -897,6 +993,18 @@ export function enrichWordEntry(rawWord, userOverrides = {}) {
     freqRank,
     radical,
     enrichmentSource
+  };
+
+  const priorityMeta = computeWordPriorityMeta(
+    baseEnriched,
+    manualPriorityOverride || safeWord.priorityOverride || null
+  );
+
+  const linguistics = {
+    ...baseEnriched,
+    priorityTier: priorityMeta.tier,
+    priorityWeight: priorityMeta.weight,
+    srsMultiplier: priorityMeta.srsMultiplier
   };
 
   return {
@@ -916,6 +1024,10 @@ export function enrichWordEntry(rawWord, userOverrides = {}) {
     freqRank,
     radical,
     enrichmentSource,
+    priorityTier: priorityMeta.tier,
+    priorityWeight: priorityMeta.weight,
+    srsMultiplier: priorityMeta.srsMultiplier,
+    priorityOverride: manualPriorityOverride || safeWord.priorityOverride || null,
     linguistics
   };
 }
@@ -923,9 +1035,9 @@ export function enrichWordEntry(rawWord, userOverrides = {}) {
 /**
  * Enriches an array of vocabulary word entries using the 4-tier resolver.
  */
-export function enrichWordsCollection(words = [], userOverrides = {}) {
+export function enrichWordsCollection(words = [], userOverrides = {}, priorityOverrides = {}) {
   if (!Array.isArray(words)) return [];
-  return words.map((word) => enrichWordEntry(word, userOverrides));
+  return words.map((word) => enrichWordEntry(word, userOverrides, priorityOverrides));
 }
 
 const POS_DISPLAY_LABELS = {

@@ -4,6 +4,7 @@ import {
   KNOWN_CHARACTER_INFO,
   TONE_VOWEL_MAP,
   ADVANCED_MODE_UNLOCK_THRESHOLDS,
+  SRS_STABILITY_CONFIG,
   MODALITY_META,
   WRITING_MASTERY_STAGES,
   HANZI_WRITER_CDN
@@ -189,6 +190,153 @@ export function parsePinyinSyllablesWithTones(pinyin = '', hanzi = '') {
   });
 }
 
+export const CJK_SINGLE_CHAR_REGEX = /^[\u4e00-\u9fff]$/;
+
+/**
+ * Extracts strictly single CJK ideographs (/^[\u4e00-\u9fff]$/) for HanziWriter
+ * writing queues so alphanumeric entries like "3D打印机" or "AI小语" yield
+ * ['打', '印', '机'] and ['小', '语'] without passing non-CJK characters.
+ */
+export function extractWritableCjkChars(wordOrText) {
+  if (!wordOrText) return [];
+  if (typeof wordOrText === 'string') {
+    return Array.from(wordOrText.trim()).filter((ch) => CJK_SINGLE_CHAR_REGEX.test(ch));
+  }
+  if (Array.isArray(wordOrText.chars) && wordOrText.chars.length > 0) {
+    const filtered = wordOrText.chars
+      .map((c) => String(c || '').trim())
+      .filter((c) => CJK_SINGLE_CHAR_REGEX.test(c));
+    if (filtered.length > 0) return filtered;
+  }
+  const rawHanzi = String(wordOrText.hanzi || wordOrText.simplified || '').trim();
+  return Array.from(rawHanzi).filter((ch) => CJK_SINGLE_CHAR_REGEX.test(ch));
+}
+
+export const COURSE_HSK_FILTER_PILLS = [
+  { id: 'all', label: 'All' },
+  { id: 'hsk_1', label: 'HSK 1' },
+  { id: 'hsk_2', label: 'HSK 2' },
+  { id: 'hsk_3', label: 'HSK 3' },
+  { id: 'hsk_4', label: 'HSK 4' },
+  { id: 'hsk_5_plus', label: 'HSK 5+' },
+  { id: 'custom', label: 'Custom' }
+];
+
+export function getCourseHskBandNumber(course) {
+  if (!course || typeof course !== 'object') return null;
+  if (
+    course.hskBand !== undefined &&
+    course.hskBand !== null &&
+    String(course.hskBand).trim() !== ''
+  ) {
+    const match = String(course.hskBand).trim().match(/(\d+)/);
+    if (match) return Number(match[1]);
+  }
+  if (typeof course.hskLevelTag === 'string' && course.hskLevelTag.trim()) {
+    const match = course.hskLevelTag.match(/(\d+)/);
+    if (match) return Number(match[1]);
+  }
+  const idMatch = String(course.id || '').match(/hsk[_-]?(\d+)/i);
+  if (idMatch) return Number(idMatch[1]);
+  const nameMatch = String(course.courseName || '').match(/\bHSK\s*(\d+)/i);
+  if (nameMatch) return Number(nameMatch[1]);
+  return null;
+}
+
+export function matchesCourseHskFilter(course, filterId = 'all') {
+  if (!course) return false;
+  if (!filterId || filterId === 'all') return true;
+
+  const bandNum = getCourseHskBandNumber(course);
+  const idLower = String(course.id || '').toLowerCase();
+  const isCustomNotes =
+    idLower === 'preloaded_custom_notes' || idLower.includes('custom_notes');
+
+  if (filterId === 'custom') {
+    return (
+      isCustomNotes ||
+      course.sourceType === 'standard-json' ||
+      course.sourceType === 'built-in' ||
+      course.sourceType === 'custom' ||
+      (course.sourceType !== 'preloaded-hsk' &&
+        course.sourceType !== 'complete-hsk-vocabulary' &&
+        bandNum === null)
+    );
+  }
+
+  if (isCustomNotes) return false;
+  if (bandNum === null) return false;
+  if (filterId === 'hsk_1') return bandNum === 1;
+  if (filterId === 'hsk_2') return bandNum === 2;
+  if (filterId === 'hsk_3') return bandNum === 3;
+  if (filterId === 'hsk_4') return bandNum === 4;
+  if (filterId === 'hsk_5_plus') return bandNum >= 5;
+  return true;
+}
+
+export function getCanonicalCourseRank(course) {
+  if (!course || typeof course !== 'object') return 95;
+  const id = String(course.id || '').toLowerCase();
+  const name = String(course.courseName || '').toLowerCase();
+  const band = getCourseHskBandNumber(course);
+  const isOfficialPreloaded = id.startsWith('preloaded_new_hsk_');
+  const isCustomNotes =
+    id === 'preloaded_custom_notes' ||
+    id.includes('custom_notes') ||
+    name.includes('custom notes');
+  const isUserCustomDeck =
+    course.sourceType === 'custom' ||
+    course.sourceType === 'standard-json';
+
+  if (isCustomNotes) return 15;
+  if (id === 'preloaded_new_hsk_1') return 10;
+  if (band === 1 && !isUserCustomDeck) return 10;
+
+  if (id === 'preloaded_new_hsk_2' || (band === 2 && !isUserCustomDeck)) return 20;
+  if (id === 'preloaded_new_hsk_3' || (band === 3 && !isUserCustomDeck)) return 30;
+
+  if (
+    id === 'preloaded_new_hsk_4a' ||
+    /(?:^|[\s_-])4a(?:$|[\s_•\-)])/i.test(id) ||
+    /\b4a\b/i.test(name)
+  ) {
+    return 40;
+  }
+  if (
+    id === 'preloaded_new_hsk_4b' ||
+    /(?:^|[\s_-])4b(?:$|[\s_•\-)])/i.test(id) ||
+    /\b4b\b/i.test(name)
+  ) {
+    return 45;
+  }
+  if (band === 4 && !isUserCustomDeck) return 48;
+  if (band === 5 && !isUserCustomDeck) return 50;
+  if (band === 6 && !isUserCustomDeck) return 60;
+  if (band != null && band >= 7 && !isUserCustomDeck) return 70;
+
+  // User-created / manually imported custom courses (tie-broken by courseName)
+  if (!isOfficialPreloaded && course.sourceType !== 'preloaded-hsk') return 90;
+  return 90;
+}
+
+export function sortCoursesCanonically(courses = []) {
+  if (!Array.isArray(courses)) return [];
+  return [...courses].sort((a, b) => {
+    const rankDiff = getCanonicalCourseRank(a) - getCanonicalCourseRank(b);
+    if (rankDiff !== 0) return rankDiff;
+
+    const aOfficial = String(a?.id || '').toLowerCase().startsWith('preloaded_new_hsk_') ? 0 : 1;
+    const bOfficial = String(b?.id || '').toLowerCase().startsWith('preloaded_new_hsk_') ? 0 : 1;
+    if (aOfficial !== bOfficial) return aOfficial - bOfficial;
+
+    return String(a?.courseName || a?.id || '').localeCompare(
+      String(b?.courseName || b?.id || ''),
+      undefined,
+      { numeric: true, sensitivity: 'base' }
+    );
+  });
+}
+
 // ============================================================================
 // WORD ENTRY NORMALIZER, DICTATION CHECKER, SPEECH SIMILARITY & SENTENCE PUZZLE
 // ============================================================================
@@ -199,7 +347,7 @@ export function normalizeWordEntry(raw = {}, idx = 0) {
     return builtInMatch;
   }
 
-  const chars = Array.from(hanzi).filter((ch) => /[\u4e00-\u9fff]/.test(ch));
+  const chars = Array.from(hanzi).filter((ch) => CJK_SINGLE_CHAR_REGEX.test(ch));
   const pinyin = String(raw.pinyin || builtInMatch?.pinyin || hanzi).trim();
   const pinyinNum = String(
     raw.pinyinNum || builtInMatch?.pinyinNum || convertPinyinToNumeric(pinyin)
@@ -229,7 +377,7 @@ export function normalizeWordEntry(raw = {}, idx = 0) {
   return {
     id: raw.id || builtInMatch?.id || `word_${hanzi}_${idx}`,
     hanzi,
-    chars: chars.length > 0 ? chars : Array.from(hanzi),
+    chars,
     pinyin,
     pinyinNum,
     pinyinNumeric: raw.pinyinNumeric || builtInMatch?.pinyinNumeric || [pinyinNum],
@@ -246,7 +394,14 @@ export function normalizeWordEntry(raw = {}, idx = 0) {
     usageTip:
       raw.usageTip ||
       builtInMatch?.usageTip ||
-      `Practice writing and pronouncing "${hanzi}" (${pinyin}).`
+      `Practice writing and pronouncing "${hanzi}" (${pinyin}).`,
+    ...(raw.priorityTier ? { priorityTier: raw.priorityTier } : {}),
+    ...(typeof raw.priorityWeight === 'number' ? { priorityWeight: raw.priorityWeight } : {}),
+    ...(typeof raw.srsMultiplier === 'number' ? { srsMultiplier: raw.srsMultiplier } : {}),
+    ...(raw.priorityOverride ? { priorityOverride: raw.priorityOverride } : {}),
+    ...(raw.linguistics && typeof raw.linguistics === 'object'
+      ? { linguistics: raw.linguistics }
+      : {})
   };
 }
 
@@ -1465,6 +1620,10 @@ export function getWordSkillTelemetry(telemetryMap = {}, word = {}) {
     micro_reading: {
       mistakes: entry.micro_reading?.mistakes || 0,
       completions: entry.micro_reading?.completions || 0
+    },
+    confusable_chars: {
+      mistakes: entry.confusable_chars?.mistakes || 0,
+      completions: entry.confusable_chars?.completions || 0
     }
   };
 }
@@ -1499,17 +1658,29 @@ export function computeUnlockedWordsPool(courses = [], activeCourse = null, acti
         isDefaultUnit1 &&
         ((progress.unlockedStage || 1) > 1 || (progress.completedStages?.length || 0) > 0);
 
+      const hasRecordedLessonProgress = Boolean(
+        lp &&
+          ((lp.unlockedStage || 1) > 1 ||
+            (Array.isArray(lp.completedStages) && lp.completedStages.length > 0) ||
+            Object.values(lp.nodeLevels || {}).some((lv) => Number(lv) >= 1))
+      );
+
+      const hasMasteredWordInLesson = (lesson.words || []).some((w, wIdx) => {
+        const norm = normalizeWordEntry(w, wIdx);
+        return Boolean(norm.hanzi && getWordMasteryLevel(progress.mastery, norm) >= 1);
+      });
+
+      const isActiveCourse = Boolean(activeCourse?.id && course.id === activeCourse.id);
+      const isActiveCourseFirstOrSelectedLesson =
+        isActiveCourse && (lIdx === 0 || (activeLesson?.id && lesson.id === activeLesson.id));
+
+      // Strictly isolate inactive preloaded courses: never auto-unlock Lesson 1 of unstarted courses
       const isUnlockedOrStarted =
-        (course.id === activeCourse?.id && lIdx === 0) ||
-        lesson.id === activeLesson?.id ||
+        isActiveCourseFirstOrSelectedLesson ||
         hasDefaultProgress ||
         prevLessonCompleted ||
-        Boolean(
-          lp &&
-            ((lp.unlockedStage || 1) > 1 ||
-              (Array.isArray(lp.completedStages) && lp.completedStages.length > 0) ||
-              Object.values(lp.nodeLevels || {}).some((lv) => Number(lv) >= 1))
-        );
+        hasRecordedLessonProgress ||
+        hasMasteredWordInLesson;
 
       if (isUnlockedOrStarted) {
         (lesson.words || []).forEach((w, wIdx) => {
@@ -1864,6 +2035,46 @@ function shuffleArrayWithGuarantee(items = [], shiftFallback = 1) {
     return arr.map((_, idx) => items[(idx + offset) % items.length]);
   }
   return arr;
+}
+
+/**
+ * Samples up to `count` items without replacement using each word's
+ * `priorityWeight` (`word.priorityWeight || word.linguistics?.priorityWeight || 1.0`).
+ */
+export function sampleWeightedWordsWithoutReplacement(words = [], count = 1) {
+  if (!Array.isArray(words) || words.length === 0) return [];
+  const safeCount = Math.max(0, Math.min(words.length, Math.floor(Number(count) || 0)));
+  if (safeCount === 0) return [];
+
+  const pool = [...words];
+  const selected = [];
+
+  while (selected.length < safeCount && pool.length > 0) {
+    const weights = pool.map((w) => {
+      const rawW = Number(w?.priorityWeight ?? w?.linguistics?.priorityWeight ?? 1.0);
+      return Number.isFinite(rawW) && rawW > 0 ? rawW : 1.0;
+    });
+    const totalWeight = weights.reduce((acc, w) => acc + w, 0);
+
+    if (totalWeight <= 0) {
+      const idx = Math.floor(Math.random() * pool.length);
+      selected.push(pool.splice(idx, 1)[0]);
+      continue;
+    }
+
+    let r = Math.random() * totalWeight;
+    let chosenIdx = pool.length - 1;
+    for (let i = 0; i < pool.length; i++) {
+      r -= weights[i];
+      if (r <= 0) {
+        chosenIdx = i;
+        break;
+      }
+    }
+    selected.push(pool.splice(chosenIdx, 1)[0]);
+  }
+
+  return selected;
 }
 
 export function getNodeCompletionLevel(lessonProg, stageId) {
@@ -2333,9 +2544,35 @@ export function buildDynamicModalityQueue(
       baseReviewCount + extraNodeLevelReview
     );
 
-    // Pick distinct past-lesson words
-    const shuffledPast = shuffleArrayWithGuarantee(normalizedPastWords, cleanNodeLevel + 1);
-    const selectedReviewWords = shuffledPast.slice(0, reviewCount);
+    // Pick distinct past-lesson words using priorityWeight-weighted sampling without replacement
+    const unlockedWeightByHanzi = new Map();
+    if (Array.isArray(unlockedWordsPool)) {
+      unlockedWordsPool.forEach((uw) => {
+        if (uw?.hanzi) {
+          unlockedWeightByHanzi.set(uw.hanzi, uw);
+        }
+      });
+    }
+    const weightedPastCandidates = normalizedPastWords.map((pw) => {
+      const enrichedRef = unlockedWeightByHanzi.get(pw.hanzi);
+      if (!enrichedRef) return pw;
+      return {
+        ...pw,
+        priorityTier: pw.priorityTier || enrichedRef.priorityTier,
+        priorityWeight:
+          typeof pw.priorityWeight === 'number'
+            ? pw.priorityWeight
+            : enrichedRef.priorityWeight ?? enrichedRef.linguistics?.priorityWeight ?? 1.0,
+        srsMultiplier:
+          typeof pw.srsMultiplier === 'number'
+            ? pw.srsMultiplier
+            : enrichedRef.srsMultiplier ?? enrichedRef.linguistics?.srsMultiplier ?? 1.0
+      };
+    });
+    const selectedReviewWords = sampleWeightedWordsWithoutReplacement(
+      weightedPastCandidates,
+      reviewCount
+    );
     const insertSlots = [2, 5, 7];
 
     selectedReviewWords.forEach((normalizedRev, rIdx) => {
@@ -2730,8 +2967,53 @@ export function loadHanziWriterScript() {
 // ============================================================================
 // TEMPORAL SPACED REPETITION (SRS) FORGETTING CURVE HELPERS
 // ============================================================================
-export const MS_PER_DAY = 24 * 60 * 60 * 1000;
+export const MS_PER_HOUR = 60 * 60 * 1000;
+export const MS_PER_DAY = 24 * MS_PER_HOUR;
 export const SRS_ACTIVATION_MIN_WORDS = 10;
+
+function clampEaseFactor(rawEase) {
+  const minEase = SRS_STABILITY_CONFIG?.minEase ?? 1.3;
+  const maxEase = SRS_STABILITY_CONFIG?.maxEase ?? 2.5;
+  const defaultEase = SRS_STABILITY_CONFIG?.defaultEase ?? 2.0;
+  const num = Number(rawEase);
+  if (!Number.isFinite(num)) return defaultEase;
+  return Math.round(Math.max(minEase, Math.min(maxEase, num)) * 100) / 100;
+}
+
+/**
+ * Normalizes a legacy or upgraded SRS entry so optional stability & leech fields
+ * always exist with safe defaults.
+ */
+export function normalizeSrsEntry(rawEntry = null) {
+  if (!rawEntry || typeof rawEntry !== 'object') return null;
+  const easeFactor = clampEaseFactor(rawEntry.easeFactor);
+  const lapseCount = Math.max(0, Math.floor(Number(rawEntry.lapseCount) || 0));
+  const consecutiveCorrect = Math.max(0, Math.floor(Number(rawEntry.consecutiveCorrect) || 0));
+  const leechLapseMin = SRS_STABILITY_CONFIG?.leechLapseThreshold ?? 4;
+  const leechEaseMax = SRS_STABILITY_CONFIG?.leechEaseThreshold ?? 1.55;
+  const isLeech =
+    typeof rawEntry.isLeech === 'boolean'
+      ? rawEntry.isLeech
+      : lapseCount >= leechLapseMin && easeFactor <= leechEaseMax;
+  const nextDue =
+    typeof rawEntry.nextDueAt === 'number'
+      ? rawEntry.nextDueAt
+      : typeof rawEntry.nextReviewAt === 'number'
+      ? rawEntry.nextReviewAt
+      : 0;
+
+  return {
+    ...rawEntry,
+    lastReviewedAt: Number(rawEntry.lastReviewedAt) || 0,
+    nextReviewAt: nextDue,
+    nextDueAt: nextDue,
+    intervalDays: Number(rawEntry.intervalDays) || 0,
+    easeFactor,
+    lapseCount,
+    consecutiveCorrect,
+    isLeech
+  };
+}
 
 /**
  * Escalating review intervals (in days) mapped to the 0–10 word mastery scale:
@@ -2752,13 +3034,92 @@ export function getSrsIntervalDays(masteryLevel = 0) {
   return 30;
 }
 
-export function buildUpdatedSrsEntry(masteryLevel = 0, nowMs = Date.now()) {
-  const intervalDays = getSrsIntervalDays(masteryLevel);
+export function buildUpdatedSrsEntry(
+  masteryLevel = 0,
+  nowMs = Date.now(),
+  srsMultiplier = 1.0,
+  prevEntry = null,
+  outcome = 'pass'
+) {
+  const minEase = SRS_STABILITY_CONFIG?.minEase ?? 1.3;
+  const maxEase = SRS_STABILITY_CONFIG?.maxEase ?? 2.5;
+  const defaultEase = SRS_STABILITY_CONFIG?.defaultEase ?? 2.0;
+  const passDelta = SRS_STABILITY_CONFIG?.passEaseDelta ?? 0.1;
+  const failDelta = SRS_STABILITY_CONFIG?.failEaseDelta ?? -0.2;
+  const leechLapseMin = SRS_STABILITY_CONFIG?.leechLapseThreshold ?? 4;
+  const leechEaseMax = SRS_STABILITY_CONFIG?.leechEaseThreshold ?? 1.55;
+  const leechRecoveryStreak = SRS_STABILITY_CONFIG?.leechRecoveryStreak ?? 3;
+  const failMinHours = SRS_STABILITY_CONFIG?.failMinHours ?? 4;
+  const failMaxHours = SRS_STABILITY_CONFIG?.failMaxHours ?? 12;
+
+  const prev = normalizeSrsEntry(prevEntry);
+  const prevEase = prev ? prev.easeFactor : defaultEase;
+  const prevLapses = prev ? prev.lapseCount : 0;
+  const prevConsecutive = prev ? prev.consecutiveCorrect : 0;
+  const prevIsLeech = prev ? Boolean(prev.isLeech) : false;
+
+  const lv = Math.max(0, Math.min(10, Math.round(Number(masteryLevel) || 0)));
+  const mult =
+    typeof srsMultiplier === 'number' && Number.isFinite(srsMultiplier) && srsMultiplier > 0
+      ? srsMultiplier
+      : 1.0;
   const ts = Number.isFinite(Number(nowMs)) ? Number(nowMs) : Date.now();
+  const isFail = outcome === 'fail';
+
+  if (isFail) {
+    const newEase = clampEaseFactor(prevEase + failDelta);
+    const shouldIncrementLapse = lv >= 2 || prevLapses > 0;
+    const newLapseCount = shouldIncrementLapse ? prevLapses + 1 : prevLapses;
+    const newIsLeech =
+      prevIsLeech || (newLapseCount >= leechLapseMin && newEase <= leechEaseMax);
+
+    // Shorten nextDueAt so the failed word returns within 4–12 hours
+    const easeRange = Math.max(0.1, maxEase - minEase);
+    const easeRatio = Math.max(0, Math.min(1, (newEase - minEase) / easeRange));
+    const failHours = newIsLeech
+      ? failMinHours
+      : Math.max(
+          failMinHours,
+          Math.min(failMaxHours, Math.round(failMinHours + easeRatio * (failMaxHours - failMinHours)))
+        );
+    const nextDue = ts + failHours * MS_PER_HOUR;
+    const intervalDays = Math.round((failHours / 24) * 100) / 100;
+
+    return {
+      lastReviewedAt: ts,
+      nextReviewAt: nextDue,
+      nextDueAt: nextDue,
+      intervalDays,
+      easeFactor: newEase,
+      lapseCount: newLapseCount,
+      consecutiveCorrect: 0,
+      isLeech: newIsLeech
+    };
+  }
+
+  // Clean completion ('pass')
+  const newEase = clampEaseFactor(prevEase + passDelta);
+  const newConsecutive = prevConsecutive + 1;
+  const newIsLeech = prevIsLeech
+    ? newConsecutive >= leechRecoveryStreak
+      ? false
+      : true
+    : false;
+  const baseDays = getSrsIntervalDays(lv);
+  const easeScale = newEase / defaultEase;
+  const intervalDays =
+    baseDays === 0 ? 0 : Math.max(0.5, Math.round(baseDays * easeScale * mult * 10) / 10);
+  const nextDue = ts + intervalDays * MS_PER_DAY;
+
   return {
     lastReviewedAt: ts,
-    nextReviewAt: ts + intervalDays * MS_PER_DAY,
-    intervalDays
+    nextReviewAt: nextDue,
+    nextDueAt: nextDue,
+    intervalDays,
+    easeFactor: newEase,
+    lapseCount: prevLapses,
+    consecutiveCorrect: newConsecutive,
+    isLeech: newIsLeech
   };
 }
 
@@ -2766,15 +3127,30 @@ export function getWordSrsEntry(srsData = {}, word = null) {
   if (!srsData || typeof srsData !== 'object' || !word) return null;
   const byHanzi = word.hanzi ? srsData[word.hanzi] : null;
   const byId = word.id ? srsData[word.id] : null;
+  let picked = null;
   if (byHanzi && byId) {
-    return (byHanzi.lastReviewedAt || 0) >= (byId.lastReviewedAt || 0) ? byHanzi : byId;
+    picked = (byHanzi.lastReviewedAt || 0) >= (byId.lastReviewedAt || 0) ? byHanzi : byId;
+  } else {
+    picked = byHanzi || byId || null;
   }
-  return byHanzi || byId || null;
+  return normalizeSrsEntry(picked);
 }
 
-export function writeWordSrsEntry(srsMap, word, masteryLevel = 0, nowMs = Date.now()) {
+export function writeWordSrsEntry(
+  srsMap,
+  word,
+  masteryLevel = 0,
+  nowMs = Date.now(),
+  srsMultiplier,
+  outcome = 'pass'
+) {
   if (!srsMap || !word) return srsMap;
-  const entry = buildUpdatedSrsEntry(masteryLevel, nowMs);
+  const resolvedMult =
+    typeof srsMultiplier === 'number' && Number.isFinite(srsMultiplier) && srsMultiplier > 0
+      ? srsMultiplier
+      : Number(word?.srsMultiplier ?? word?.linguistics?.srsMultiplier ?? 1.0) || 1.0;
+  const prevEntry = getWordSrsEntry(srsMap, word);
+  const entry = buildUpdatedSrsEntry(masteryLevel, nowMs, resolvedMult, prevEntry, outcome);
   if (word.hanzi) srsMap[word.hanzi] = entry;
   if (word.id) srsMap[word.id] = entry;
   return srsMap;
@@ -2783,8 +3159,14 @@ export function writeWordSrsEntry(srsMap, word, masteryLevel = 0, nowMs = Date.n
 export function isWordSrsDue(srsData = {}, word = null, masteryLevel = 0, nowMs = Date.now()) {
   if (!word) return false;
   const entry = getWordSrsEntry(srsData, word);
-  if (entry && typeof entry.nextReviewAt === 'number') {
-    return entry.nextReviewAt <= nowMs;
+  const dueTs =
+    entry && typeof entry.nextDueAt === 'number' && entry.nextDueAt > 0
+      ? entry.nextDueAt
+      : entry && typeof entry.nextReviewAt === 'number' && entry.nextReviewAt > 0
+      ? entry.nextReviewAt
+      : null;
+  if (dueTs !== null) {
+    return dueTs <= nowMs;
   }
   // If a word already has Lv. 1+ mastery from prior sessions before SRS was tracked, treat it as due.
   return Number(masteryLevel) >= 1;
@@ -2792,10 +3174,51 @@ export function isWordSrsDue(srsData = {}, word = null, masteryLevel = 0, nowMs 
 
 export function getSrsOverdueMs(srsData = {}, word = null, nowMs = Date.now()) {
   const entry = getWordSrsEntry(srsData, word);
-  if (entry && typeof entry.nextReviewAt === 'number') {
-    return nowMs - entry.nextReviewAt;
+  const dueTs =
+    entry && typeof entry.nextDueAt === 'number' && entry.nextDueAt > 0
+      ? entry.nextDueAt
+      : entry && typeof entry.nextReviewAt === 'number' && entry.nextReviewAt > 0
+      ? entry.nextReviewAt
+      : null;
+  if (dueTs !== null) {
+    return nowMs - dueTs;
   }
   return 0;
+}
+
+/**
+ * Returns all unlocked words currently flagged as `isLeech`, sorted by `lapseCount`
+ * descending (tie-broken by lowest `easeFactor`).
+ */
+export function getLeechWords(unlockedWords = [], srsSchedule = {}) {
+  if (!Array.isArray(unlockedWords) || unlockedWords.length === 0) return [];
+  if (!srsSchedule || typeof srsSchedule !== 'object') return [];
+
+  const seen = new Set();
+  const flagged = [];
+
+  unlockedWords.forEach((word) => {
+    if (!word) return;
+    const key = word.hanzi || word.id;
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+
+    const entry = getWordSrsEntry(srsSchedule, word);
+    if (entry && entry.isLeech) {
+      flagged.push({
+        word,
+        lapseCount: entry.lapseCount || 0,
+        easeFactor: entry.easeFactor ?? 2.0
+      });
+    }
+  });
+
+  flagged.sort((a, b) => {
+    if (b.lapseCount !== a.lapseCount) return b.lapseCount - a.lapseCount;
+    return a.easeFactor - b.easeFactor;
+  });
+
+  return flagged.map((item) => item.word);
 }
 
 /**
@@ -4613,6 +5036,604 @@ export function validateNumbersTimeTypedInput(rawInput, challenge) {
 
   return false;
 }
+
+// ============================================================================
+// CONFUSABLE CHARACTERS TRAINER ENGINE (形近字 Visual Twins & 同音字 Homophones)
+// 100% Client-Side, Offline-Ready with Curated Sets + Dynamic Homophone Mining
+// ============================================================================
+
+export const CURATED_CONFUSABLE_GROUPS = [
+  {
+    id: 'ren_ru_ba',
+    chars: ['人', '入', '八'],
+    contrastType: 'visual',
+    contrastNote: '人 leans left-over-right, 入 hooks right-over-left ("enter"), and 八 keeps both strokes separated ("eight").'
+  },
+  {
+    id: 'da_tai_tian_fu',
+    chars: ['大', '太', '天', '夫'],
+    contrastType: 'visual',
+    contrastNote: 'All build on 大 (big): 太 adds a bottom dot ("too"), 天 adds a top bar ("sky/day"), 夫 pokes through the top ("husband").'
+  },
+  {
+    id: 'ri_mu_bai_bai',
+    chars: ['日', '目', '白', '百'],
+    contrastType: 'visual',
+    contrastNote: '日 (sun/day) has 1 inner bar, 目 (eye) has 2 inner bars, 白 (white) adds a top tick, 百 (hundred) adds a top bar over 白.'
+  },
+  {
+    id: 'mai_mai',
+    chars: ['买', '卖'],
+    contrastType: 'visual',
+    contrastNote: '卖 (sell, mài) has 十 on top of 买 (buy, mǎi) — think of adding extra goods on top to sell!'
+  },
+  {
+    id: 'qing_family',
+    chars: ['请', '清', '晴', '情'],
+    contrastType: 'visual',
+    contrastNote: 'Same phonetic component 青, different semantic radicals: 讠 speech (请 please), 氵 water (清 clear), 日 sun (晴 sunny), 忄 heart (情 feeling).'
+  },
+  {
+    id: 'ji_yi_si',
+    chars: ['己', '已', '巳'],
+    contrastType: 'visual',
+    contrastNote: 'Watch the left vertical stroke: 己 (self) is open, 已 (already) is half-closed, 巳 (6th earthly branch) is fully closed.'
+  },
+  {
+    id: 'wu_niu',
+    chars: ['午', '牛'],
+    contrastType: 'visual',
+    contrastNote: '午 (noon) stops cleanly at the top horizontal bar; 牛 (cow/ox) pokes its vertical stroke upward like horns.'
+  },
+  {
+    id: 'gan_qian_yu',
+    chars: ['干', '千', '于'],
+    contrastType: 'visual',
+    contrastNote: '干 has a flat top bar, 千 tilts the top stroke down-left (thousand), and 于 hooks left at the bottom.'
+  },
+  {
+    id: 'mu_ben_ti_xiu',
+    chars: ['木', '本', '体', '休'],
+    contrastType: 'visual',
+    contrastNote: '木 (tree) + root line = 本 (root/book measure); 亻+本 = 体 (body); 亻+木 = 休 (rest by a tree).'
+  },
+  {
+    id: 'wang_yu_zhu',
+    chars: ['王', '玉', '主'],
+    contrastType: 'visual',
+    contrastNote: '王 (king) has no dot, 玉 (jade) carries a gem dot on the side, 主 (host/main) wears a dot crown on top.'
+  },
+  {
+    id: 'men_wen_jian_wen',
+    chars: ['门', '问', '间', '闻'],
+    contrastType: 'visual',
+    contrastNote: 'Inside the 门 (door) frame: 口 mouth = 问 (ask), 日 sun = 间 (room/between), 耳 ear = 闻 (hear/smell).'
+  },
+  {
+    id: 'he_ke',
+    chars: ['喝', '渴'],
+    contrastType: 'visual',
+    contrastNote: 'Same right phonetic 曷: 口 (mouth) = 喝 (to drink), 氵 (water) = 渴 (thirsty).'
+  },
+  {
+    id: 'hua_huo',
+    chars: ['话', '活'],
+    contrastType: 'visual',
+    contrastNote: 'Same right component 舌 (tongue): 讠 (speech) = 话 (words/speech), 氵 (water) = 活 (to live/alive).'
+  },
+  {
+    id: 'gen_hen',
+    chars: ['跟', '很'],
+    contrastType: 'visual',
+    contrastNote: 'Same right component 艮: ⻊ (foot) = 跟 (follow/with), 彳 (step) = 很 (very).'
+  },
+  {
+    id: 'zhao_wo',
+    chars: ['找', '我'],
+    contrastType: 'visual',
+    contrastNote: '找 (look for) uses the 扌 (hand) radical on the left; 我 (I/me) has a top-left slanting stroke instead.'
+  },
+  {
+    id: 'kan_zhe',
+    chars: ['看', '着'],
+    contrastType: 'visual',
+    contrastNote: 'Both end in 目 (eye): 看 places 手 (hand) over eye to look; 着 has a sheep-horn top (aspect particle / touch).'
+  },
+  {
+    id: 'ta_ta_ta_de',
+    chars: ['他', '她', '它', '地'],
+    contrastType: 'homophone',
+    contrastNote: '他 (he, 亻 person), 她 (she, 女 woman), 它 (it, 宀 roof) all share tā; 地 (earth/adverbial -ly) uses 土 earth with 也.'
+  },
+  {
+    id: 'zuo_family',
+    chars: ['做', '作', '坐', '座'],
+    contrastType: 'homophone',
+    contrastNote: 'All pronounced zuò: 做 (do/make), 作 (work/compose), 坐 (sit — two people on earth 土), 座 (seat — under shelter 广).'
+  },
+  {
+    id: 'zai_zai',
+    chars: ['在', '再'],
+    contrastType: 'homophone',
+    contrastNote: 'Both pronounced zài: 在 marks location/ongoing action ("at/in"), while 再 means "again" (as in 再见).'
+  },
+  {
+    id: 'shi_family',
+    chars: ['是', '事', '市', '室'],
+    contrastType: 'homophone',
+    contrastNote: 'All pronounced shì: 是 (to be), 事 (matter/affair), 市 (city/market), 室 (room, under roof 宀).'
+  },
+  {
+    id: 'ji_ji',
+    chars: ['几', '机'],
+    contrastType: 'homophone',
+    contrastNote: '几 (jǐ, how many/a few) is the phonetic core of 机 (jī, machine/opportunity) with 木 (wood/framework) on the left.'
+  },
+  {
+    id: 'qi_qi',
+    chars: ['气', '汽'],
+    contrastType: 'homophone',
+    contrastNote: 'Both pronounced qì: 气 (air/energy/weather) vs 汽 (steam/vapor/motor, adding 氵 water radical).'
+  },
+  {
+    id: 'kuai_kuai',
+    chars: ['块', '快'],
+    contrastType: 'homophone',
+    contrastNote: 'Both pronounced kuài: 块 uses 土 (earth) for piece/yuan; 快 uses 忄 (heart) for fast/happy.'
+  },
+  {
+    id: 'na_na',
+    chars: ['哪', '那'],
+    contrastType: 'homophone',
+    contrastNote: '哪 (nǎ, which?) adds 口 (mouth) on the left to ask a question; 那 (nà, that) points without 口.'
+  }
+];
+
+const CONFUSABLE_CHAR_FALLBACK_INFO = {
+  人: { pinyin: 'rén', meaning: 'person / people', radical: '人 (Person)' },
+  入: { pinyin: 'rù', meaning: 'to enter', radical: '入 (Enter)' },
+  八: { pinyin: 'bā', meaning: 'eight', radical: '八 (Eight)' },
+  大: { pinyin: 'dà', meaning: 'big / large', radical: '大 (Big)' },
+  太: { pinyin: 'tài', meaning: 'too / extremely', radical: '大 (Big)' },
+  天: { pinyin: 'tiān', meaning: 'sky / day', radical: '大 (Big)' },
+  夫: { pinyin: 'fū', meaning: 'husband / man', radical: '大 (Big)' },
+  日: { pinyin: 'rì', meaning: 'sun / day', radical: '日 (Sun)' },
+  目: { pinyin: 'mù', meaning: 'eye / item', radical: '目 (Eye)' },
+  白: { pinyin: 'bái', meaning: 'white / clear', radical: '白 (White)' },
+  百: { pinyin: 'bǎi', meaning: 'hundred', radical: '白 (White)' },
+  买: { pinyin: 'mǎi', meaning: 'to buy', radical: '乙 (Second)' },
+  卖: { pinyin: 'mài', meaning: 'to sell', radical: '十 (Ten)' },
+  请: { pinyin: 'qǐng', meaning: 'please / to invite', radical: '讠 (Speech)' },
+  清: { pinyin: 'qīng', meaning: 'clear / pure', radical: '氵 (Water)' },
+  晴: { pinyin: 'qíng', meaning: 'sunny / clear sky', radical: '日 (Sun)' },
+  情: { pinyin: 'qíng', meaning: 'feeling / emotion', radical: '忄 (Heart)' },
+  己: { pinyin: 'jǐ', meaning: 'self / oneself', radical: '己 (Self)' },
+  已: { pinyin: 'yǐ', meaning: 'already', radical: '己 (Self)' },
+  巳: { pinyin: 'sì', meaning: '6th earthly branch (9–11 AM)', radical: '己 (Self)' },
+  午: { pinyin: 'wǔ', meaning: 'noon / midday', radical: '十 (Ten)' },
+  牛: { pinyin: 'niú', meaning: 'cow / ox / beef', radical: '牛 (Cow)' },
+  干: { pinyin: 'gān / gàn', meaning: 'dry / to do', radical: '干 (Dry)' },
+  千: { pinyin: 'qiān', meaning: 'thousand', radical: '十 (Ten)' },
+  于: { pinyin: 'yú', meaning: 'in / at / than', radical: '二 (Two)' },
+  木: { pinyin: 'mù', meaning: 'wood / tree', radical: '木 (Wood)' },
+  本: { pinyin: 'běn', meaning: 'root / measure word for books', radical: '木 (Wood)' },
+  体: { pinyin: 'tǐ', meaning: 'body / form', radical: '亻 (Person)' },
+  休: { pinyin: 'xiū', meaning: 'to rest', radical: '亻 (Person)' },
+  王: { pinyin: 'wáng', meaning: 'king / surname Wang', radical: '王 (Jade/King)' },
+  玉: { pinyin: 'yù', meaning: 'jade', radical: '玉 (Jade)' },
+  主: { pinyin: 'zhǔ', meaning: 'host / main / owner', radical: '丶 (Dot)' },
+  门: { pinyin: 'mén', meaning: 'door / gate', radical: '门 (Gate)' },
+  问: { pinyin: 'wèn', meaning: 'to ask', radical: '门 (Gate) + 口 (Mouth)' },
+  间: { pinyin: 'jiān', meaning: 'room / between', radical: '门 (Gate) + 日 (Sun)' },
+  闻: { pinyin: 'wén', meaning: 'to hear / news / smell', radical: '门 (Gate) + 耳 (Ear)' },
+  喝: { pinyin: 'hē', meaning: 'to drink', radical: '口 (Mouth)' },
+  渴: { pinyin: 'kě', meaning: 'thirsty', radical: '氵 (Water)' },
+  话: { pinyin: 'huà', meaning: 'words / speech / language', radical: '讠 (Speech)' },
+  活: { pinyin: 'huó', meaning: 'to live / alive / work', radical: '氵 (Water)' },
+  跟: { pinyin: 'gēn', meaning: 'with / to follow', radical: '⻊ (Foot)' },
+  很: { pinyin: 'hěn', meaning: 'very / quite', radical: '彳 (Step)' },
+  找: { pinyin: 'zhǎo', meaning: 'to look for / find', radical: '扌 (Hand)' },
+  我: { pinyin: 'wǒ', meaning: 'I / me', radical: '戈 (Halberd)' },
+  看: { pinyin: 'kàn', meaning: 'to look / watch / read', radical: '目 (Eye)' },
+  着: { pinyin: 'zhe / zháo', meaning: 'continuous particle / touch', radical: '目 (Eye)' },
+  他: { pinyin: 'tā', meaning: 'he / him', radical: '亻 (Person)' },
+  她: { pinyin: 'tā', meaning: 'she / her', radical: '女 (Woman)' },
+  它: { pinyin: 'tā', meaning: 'it', radical: '宀 (Roof)' },
+  地: { pinyin: 'dì / de', meaning: 'earth / adverbial -ly', radical: '土 (Earth)' },
+  做: { pinyin: 'zuò', meaning: 'to do / to make', radical: '亻 (Person)' },
+  作: { pinyin: 'zuò', meaning: 'to work / compose', radical: '亻 (Person)' },
+  坐: { pinyin: 'zuò', meaning: 'to sit / ride', radical: '土 (Earth)' },
+  座: { pinyin: 'zuò', meaning: 'seat / measure for buildings', radical: '广 (Shelter)' },
+  在: { pinyin: 'zài', meaning: 'at / in / ongoing action', radical: '土 (Earth)' },
+  再: { pinyin: 'zài', meaning: 'again / once more', radical: '冂 (Border)' },
+  是: { pinyin: 'shì', meaning: 'to be / yes', radical: '日 (Sun)' },
+  事: { pinyin: 'shì', meaning: 'matter / thing / affair', radical: '亅 (Hook)' },
+  市: { pinyin: 'shì', meaning: 'city / market', radical: '巾 (Cloth)' },
+  室: { pinyin: 'shì', meaning: 'room / chamber', radical: '宀 (Roof)' },
+  几: { pinyin: 'jǐ', meaning: 'how many / a few', radical: '几 (Table)' },
+  机: { pinyin: 'jī', meaning: 'machine / opportunity', radical: '木 (Wood)' },
+  气: { pinyin: 'qì', meaning: 'air / gas / weather / spirit', radical: '气 (Steam)' },
+  汽: { pinyin: 'qì', meaning: 'vapor / steam / motor', radical: '氵 (Water)' },
+  块: { pinyin: 'kuài', meaning: 'piece / lump / yuan', radical: '土 (Earth)' },
+  快: { pinyin: 'kuài', meaning: 'fast / quick / happy', radical: '忄 (Heart)' },
+  哪: { pinyin: 'nǎ', meaning: 'which?', radical: '口 (Mouth)' },
+  那: { pinyin: 'nà', meaning: 'that', radical: '阝 (City)' },
+  实: { pinyin: 'shí', meaning: 'real / solid / true', radical: '宀 (Roof)' },
+  读: { pinyin: 'dú', meaning: 'to read aloud', radical: '讠 (Speech)' },
+  生: { pinyin: 'shēng', meaning: 'life / to be born / student', radical: '生 (Life)' },
+  半: { pinyin: 'bàn', meaning: 'half', radical: '十 (Ten)' },
+  唱: { pinyin: 'chàng', meaning: 'to sing', radical: '口 (Mouth)' },
+  吃: { pinyin: 'chī', meaning: 'to eat', radical: '口 (Mouth)' },
+  甜: { pinyin: 'tián', meaning: 'sweet', radical: '舌 (Tongue)' },
+  说: { pinyin: 'shuō', meaning: 'to speak / say', radical: '讠 (Speech)' },
+  银: { pinyin: 'yín', meaning: 'silver / bank', radical: '钅 (Metal)' },
+  行: { pinyin: 'xíng / háng', meaning: 'walk / okay / row', radical: '行 (Walk)' },
+  钱: { pinyin: 'qián', meaning: 'money / coin', radical: '钅 (Metal)' },
+  戏: { pinyin: 'xì', meaning: 'play / drama / game', radical: '戈 (Halberd)' },
+  省: { pinyin: 'shěng', meaning: 'province / to save', radical: '目 (Eye)' },
+  真: { pinyin: 'zhēn', meaning: 'true / really', radical: '目 (Eye)' },
+  左: { pinyin: 'zuǒ', meaning: 'left', radical: '工 (Work)' },
+  右: { pinyin: 'yòu', meaning: 'right', radical: '口 (Mouth)' },
+  风: { pinyin: 'fēng', meaning: 'wind', radical: '风 (Wind)' },
+  凡: { pinyin: 'fán', meaning: 'ordinary / every', radical: '几 (Table)' },
+  水: { pinyin: 'shuǐ', meaning: 'water', radical: '水 (Water)' },
+  决: { pinyin: 'jué', meaning: 'to decide / definitely', radical: '冫 (Ice)' },
+  都: { pinyin: 'dōu', meaning: 'all / both', radical: '阝 (City)' },
+  吧: { pinyin: 'ba', meaning: 'suggestion particle', radical: '口 (Mouth)' }
+};
+
+const CONFUSABLE_PAIR_SUPPLEMENTS = {
+  mai_mai: ['实', '读'],
+  wu_niu: ['生', '半'],
+  he_ke: ['唱', '吃'],
+  hua_huo: ['甜', '说'],
+  gen_hen: ['银', '行'],
+  zhao_wo: ['钱', '戏'],
+  kan_zhe: ['省', '真'],
+  zai_zai: ['左', '右'],
+  ji_ji: ['风', '凡'],
+  qi_qi: ['风', '水'],
+  kuai_kuai: ['决', '地'],
+  na_na: ['都', '吧']
+};
+
+function resolveConfusableCharMetadata(char, unlockedByHanzi, masterLexiconMap = {}) {
+  const clean = String(char || '').trim();
+  const unlocked = unlockedByHanzi?.get(clean) || null;
+  const lex = masterLexiconMap?.[clean] || null;
+  const known = KNOWN_CHARACTER_INFO?.[clean] || null;
+  const fallback = CONFUSABLE_CHAR_FALLBACK_INFO?.[clean] || null;
+
+  const pinyin =
+    unlocked?.pinyin ||
+    lex?.pinyin ||
+    known?.pinyin ||
+    fallback?.pinyin ||
+    '';
+
+  const meaning =
+    unlocked?.meaning ||
+    unlocked?.english ||
+    lex?.meaning ||
+    known?.meaning ||
+    fallback?.meaning ||
+    'Mandarin character';
+
+  const radicalRaw =
+    known?.radical ||
+    fallback?.radical ||
+    lex?.radical ||
+    '';
+
+  const radical = radicalRaw ? String(radicalRaw) : 'Component';
+
+  return {
+    hanzi: clean,
+    pinyin,
+    meaning,
+    radical
+  };
+}
+
+function buildConfusableContextCloze(targetWord, targetHanzi) {
+  const cleanTarget = String(targetHanzi || '').trim();
+  if (!cleanTarget) return null;
+
+  const exHanzi = String(targetWord?.exampleHanzi || '').trim();
+  if (exHanzi && exHanzi.includes(cleanTarget)) {
+    return exHanzi.split(cleanTarget).join('[ ___ ]');
+  }
+
+  const wordHanzi = String(targetWord?.hanzi || '').trim();
+  if (wordHanzi.length > cleanTarget.length && wordHanzi.includes(cleanTarget)) {
+    const maskedWord = wordHanzi.split(cleanTarget).join('[ ___ ]');
+    const wordMeaning = targetWord?.meaning || targetWord?.english || '';
+    return wordMeaning ? `${maskedWord}  (${wordMeaning})` : maskedWord;
+  }
+
+  return null;
+}
+
+/**
+ * Builds anti-spoiler Confusable Characters drill items (形近字 visually similar &
+ * 同音字 homophones) from the learner's unlocked vocabulary + optional master lexicon.
+ * Returns up to `maxItems` items with 3–4 Hanzi-only options each and full contrast metadata.
+ */
+export function buildConfusableDrillItems(
+  unlockedWords = [],
+  masterLexiconMap = {},
+  maxItems = 8
+) {
+  const normalizedWords = (Array.isArray(unlockedWords) ? unlockedWords : [])
+    .filter((w) => w && typeof w.hanzi === 'string' && w.hanzi.trim().length > 0)
+    .map((w, idx) => normalizeWordEntry(w, idx));
+
+  if (normalizedWords.length === 0) return [];
+
+  const unlockedByHanzi = new Map();
+  const unlockedCharOwners = new Map();
+
+  normalizedWords.forEach((w) => {
+    const hz = w.hanzi.trim();
+    if (!unlockedByHanzi.has(hz)) {
+      unlockedByHanzi.set(hz, w);
+    }
+    const chars = Array.from(hz).filter((ch) => /[\u4e00-\u9fff]/.test(ch));
+    chars.forEach((ch) => {
+      const existing = unlockedCharOwners.get(ch);
+      if (!existing || (existing.hanzi.length > 1 && hz.length === 1)) {
+        unlockedCharOwners.set(ch, w);
+      }
+    });
+  });
+
+  const singleCharUnlockedList = normalizedWords.filter(
+    (w) => Array.from(w.hanzi.trim()).length === 1 && /[\u4e00-\u9fff]/.test(w.hanzi.trim())
+  );
+
+  const items = [];
+  const usedTargets = new Set();
+
+  const pickSupplementChars = (groupId, excludeSet, neededCount) => {
+    const chosen = [];
+    const preferredSupplements = CONFUSABLE_PAIR_SUPPLEMENTS[groupId] || [];
+    for (const ch of preferredSupplements) {
+      if (chosen.length >= neededCount) break;
+      if (!excludeSet.has(ch) && !chosen.includes(ch)) {
+        chosen.push(ch);
+      }
+    }
+    for (const w of singleCharUnlockedList) {
+      if (chosen.length >= neededCount) break;
+      const ch = w.hanzi.trim();
+      if (!excludeSet.has(ch) && !chosen.includes(ch)) {
+        chosen.push(ch);
+      }
+    }
+    for (const ch of Object.keys(CONFUSABLE_CHAR_FALLBACK_INFO)) {
+      if (chosen.length >= neededCount) break;
+      if (!excludeSet.has(ch) && !chosen.includes(ch)) {
+        chosen.push(ch);
+      }
+    }
+    return chosen;
+  };
+
+  const buildCuratedItemForChar = (group, targetChar, ownerWord) => {
+    if (!targetChar || usedTargets.has(targetChar)) return null;
+
+    const targetMeta = resolveConfusableCharMetadata(
+      targetChar,
+      unlockedByHanzi,
+      masterLexiconMap
+    );
+
+    const otherGroupChars = group.chars.filter((c) => c !== targetChar);
+    const unlockedTwins = otherGroupChars.filter(
+      (c) => unlockedByHanzi.has(c) || unlockedCharOwners.has(c)
+    );
+    const lockedTwins = otherGroupChars.filter((c) => !unlockedTwins.includes(c));
+    const orderedDistractors = [...unlockedTwins, ...lockedTwins].slice(0, 3);
+
+    const excludeSet = new Set([targetChar, ...orderedDistractors]);
+    if (orderedDistractors.length < 2) {
+      const extras = pickSupplementChars(group.id, excludeSet, 2 - orderedDistractors.length);
+      extras.forEach((ch) => orderedDistractors.push(ch));
+    }
+
+    const rawOptions = [
+      { ...targetMeta, isCorrect: true },
+      ...orderedDistractors.slice(0, 3).map((ch) => ({
+        ...resolveConfusableCharMetadata(ch, unlockedByHanzi, masterLexiconMap),
+        isCorrect: false
+      }))
+    ];
+
+    if (rawOptions.length < 3) return null;
+
+    const exactWordObj = unlockedByHanzi.get(targetChar) || {
+      ...ownerWord,
+      hanzi: targetChar,
+      chars: [targetChar],
+      pinyin: targetMeta.pinyin || ownerWord?.pinyin || '',
+      meaning: targetMeta.meaning || ownerWord?.meaning || '',
+      english: targetMeta.meaning || ownerWord?.english || ''
+    };
+
+    const contextCloze = buildConfusableContextCloze(ownerWord || exactWordObj, targetChar);
+
+    usedTargets.add(targetChar);
+    return {
+      id: `conf_${group.id}_${targetChar}`,
+      targetWord: exactWordObj,
+      contrastType: group.contrastType === 'homophone' ? 'homophone' : 'visual',
+      promptMeaning: targetMeta.meaning || exactWordObj.meaning || exactWordObj.english,
+      contextCloze,
+      options: shuffleList(rawOptions),
+      contrastNote: group.contrastNote
+    };
+  };
+
+  // Pass 1: Curated sets matching exact single-char unlocked words first
+  for (const group of CURATED_CONFUSABLE_GROUPS) {
+    const exactMatches = group.chars.filter((ch) => unlockedByHanzi.has(ch));
+    for (const ch of exactMatches) {
+      const built = buildCuratedItemForChar(group, ch, unlockedByHanzi.get(ch));
+      if (built) {
+        items.push(built);
+        break;
+      }
+    }
+  }
+
+  // Pass 2: Dynamic homophone / near-homophone mining across unlocked words
+  const tonelessBuckets = new Map();
+  normalizedWords.forEach((w) => {
+    const hz = w.hanzi.trim();
+    const baseKey = stripToneMarks(w.pinyin || '')
+      .toLowerCase()
+      .replace(/[^a-züv]/g, '');
+    if (!baseKey) return;
+    const bucketKey = `${Array.from(hz).length}::${baseKey}`;
+    if (!tonelessBuckets.has(bucketKey)) {
+      tonelessBuckets.set(bucketKey, []);
+    }
+    const list = tonelessBuckets.get(bucketKey);
+    if (!list.some((existing) => existing.hanzi === hz)) {
+      list.push(w);
+    }
+  });
+
+  tonelessBuckets.forEach((bucketWords, bucketKey) => {
+    if (bucketWords.length < 2) return;
+    const baseSyllable = bucketKey.split('::')[1] || '';
+    const targetWord = bucketWords.find((w) => !usedTargets.has(w.hanzi.trim()));
+    if (!targetWord) return;
+
+    const targetHz = targetWord.hanzi.trim();
+    const targetLen = Array.from(targetHz).length;
+    const homophoneTwins = bucketWords
+      .filter((w) => w.hanzi.trim() !== targetHz)
+      .slice(0, 3);
+
+    const distractorObjs = homophoneTwins.map((w) => {
+      const firstChar = Array.from(w.hanzi.trim())[0];
+      const meta = resolveConfusableCharMetadata(firstChar, unlockedByHanzi, masterLexiconMap);
+      return {
+        hanzi: w.hanzi.trim(),
+        pinyin: w.pinyin || meta.pinyin,
+        meaning: w.meaning || w.english || meta.meaning,
+        radical: targetLen === 1 ? meta.radical : Array.from(w.hanzi.trim()).join(' + '),
+        isCorrect: false
+      };
+    });
+
+    if (distractorObjs.length < 2) {
+      const usedOptHz = new Set([targetHz, ...distractorObjs.map((d) => d.hanzi)]);
+      const sameLenPool = normalizedWords.filter(
+        (w) =>
+          Array.from(w.hanzi.trim()).length === targetLen &&
+          !usedOptHz.has(w.hanzi.trim())
+      );
+      for (const cand of shuffleList(sameLenPool)) {
+        if (distractorObjs.length >= 2) break;
+        const candHz = cand.hanzi.trim();
+        const candFirst = Array.from(candHz)[0];
+        const candMeta = resolveConfusableCharMetadata(
+          candFirst,
+          unlockedByHanzi,
+          masterLexiconMap
+        );
+        usedOptHz.add(candHz);
+        distractorObjs.push({
+          hanzi: candHz,
+          pinyin: cand.pinyin || candMeta.pinyin,
+          meaning: cand.meaning || cand.english || candMeta.meaning,
+          radical: targetLen === 1 ? candMeta.radical : Array.from(candHz).join(' + '),
+          isCorrect: false
+        });
+      }
+    }
+
+    if (distractorObjs.length < 2) return;
+
+    const targetFirst = Array.from(targetHz)[0];
+    const targetFirstMeta = resolveConfusableCharMetadata(
+      targetFirst,
+      unlockedByHanzi,
+      masterLexiconMap
+    );
+
+    const targetOption = {
+      hanzi: targetHz,
+      pinyin: targetWord.pinyin || targetFirstMeta.pinyin,
+      meaning: targetWord.meaning || targetWord.english || targetFirstMeta.meaning,
+      radical: targetLen === 1 ? targetFirstMeta.radical : Array.from(targetHz).join(' + '),
+      isCorrect: true
+    };
+
+    const twinSummary = [targetOption, ...distractorObjs.slice(0, homophoneTwins.length)]
+      .map((o) => `${o.hanzi} (${o.pinyin}: ${o.meaning})`)
+      .join(' vs ');
+
+    usedTargets.add(targetHz);
+    items.push({
+      id: `conf_homo_${targetHz}_${baseSyllable}`,
+      targetWord,
+      contrastType: 'homophone',
+      promptMeaning: targetOption.meaning,
+      contextCloze: buildConfusableContextCloze(targetWord, targetHz),
+      options: shuffleList([targetOption, ...distractorObjs.slice(0, 3)]),
+      contrastNote: `Homophone contrast (${baseSyllable}): ${twinSummary}.`
+    });
+  });
+
+  // Pass 3: Curated sets matching characters embedded inside unlocked multi-char words
+  if (items.length < maxItems) {
+    for (const group of CURATED_CONFUSABLE_GROUPS) {
+      if (items.length >= maxItems) break;
+      const embeddedMatches = group.chars.filter(
+        (ch) => !usedTargets.has(ch) && unlockedCharOwners.has(ch)
+      );
+      for (const ch of embeddedMatches) {
+        const built = buildCuratedItemForChar(group, ch, unlockedCharOwners.get(ch));
+        if (built) {
+          items.push(built);
+          break;
+        }
+      }
+    }
+  }
+
+  // Pass 4: Secondary curated twins from groups where 2+ members are unlocked
+  if (items.length < maxItems) {
+    for (const group of CURATED_CONFUSABLE_GROUPS) {
+      if (items.length >= maxItems) break;
+      const remainingUnlocked = group.chars.filter(
+        (ch) => !usedTargets.has(ch) && (unlockedByHanzi.has(ch) || unlockedCharOwners.has(ch))
+      );
+      for (const ch of remainingUnlocked) {
+        if (items.length >= maxItems) break;
+        const owner = unlockedByHanzi.get(ch) || unlockedCharOwners.get(ch);
+        const built = buildCuratedItemForChar(group, ch, owner);
+        if (built) items.push(built);
+      }
+    }
+  }
+
+  // Interleave visual and homophone items cleanly, then cap to maxItems
+  const visualItems = items.filter((it) => it.contrastType === 'visual');
+  const homophoneItems = items.filter((it) => it.contrastType === 'homophone');
+  const interleaved = [];
+  const maxLen = Math.max(visualItems.length, homophoneItems.length);
+  for (let i = 0; i < maxLen; i++) {
+    if (visualItems[i]) interleaved.push(visualItems[i]);
+    if (homophoneItems[i]) interleaved.push(homophoneItems[i]);
+  }
+
+  return interleaved.slice(0, Math.max(1, maxItems));
+}
+
 
 
 

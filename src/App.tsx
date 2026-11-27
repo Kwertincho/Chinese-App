@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import {
   Volume2,
   VolumeX,
@@ -23,6 +23,7 @@ import {
   SLOW_SPEECH_RATE,
   getGlobalIsSlowMode,
   setGlobalIsSlowMode,
+  getGlobalPreferredVoiceURI,
   speakMandarinGlobal,
   soundFX
 } from './audio/soundEngine.js';
@@ -50,9 +51,13 @@ import {
   migrateLessonProgressNodeLevels,
   computeNodeLevelXpMultiplier,
   writeWordSrsEntry,
+  sampleWeightedWordsWithoutReplacement,
   SRS_ACTIVATION_MIN_WORDS,
   isWordSrsDue,
-  countWordsAtLeastLevel
+  countWordsAtLeastLevel,
+  buildConfusableDrillItems,
+  getCourseHskBandNumber,
+  sortCoursesCanonically
 } from './utils/mandarinHelpers.js';
 import {
   FlashcardStageModal,
@@ -73,13 +78,18 @@ import {
   LibraryView,
   ProfileView
 } from './components/TabViews.jsx';
+import { ShadowingAudioModal } from './components/ShadowingAudioModal.jsx';
 import { PWAInstallButton, OfflineIndicator } from './components/PWAInstallPrompt.jsx';
 import {
   loadStaticLinguisticData,
   getPreloadedCurriculum,
-  getLinguisticDataStatus
+  getMasterLexiconMap,
+  getLinguisticDataStatus,
+  getDataBaseUrl,
+  setDataBaseUrl,
+  DEFAULT_REMOTE_DATA_BASE_URL
 } from './engine/linguisticDataLoader.js';
-import { enrichWordsCollection } from './engine/lexiconEnricher.js';
+import { enrichWordEntry, enrichWordsCollection } from './engine/lexiconEnricher.js';
 import {
   generateGenerativeBatch,
   generateSentenceForWord,
@@ -160,6 +170,10 @@ export default function App() {
             parsed.wordLinguisticOverrides && typeof parsed.wordLinguisticOverrides === 'object'
               ? { ...parsed.wordLinguisticOverrides }
               : {},
+          wordPriorityOverrides:
+            parsed.wordPriorityOverrides && typeof parsed.wordPriorityOverrides === 'object'
+              ? { ...parsed.wordPriorityOverrides }
+              : {},
           mastery: { ...INITIAL_PROGRESS_STATE.mastery, ...(parsed.mastery || {}) },
           srsData:
             parsed.srsData && typeof parsed.srsData === 'object'
@@ -181,12 +195,14 @@ export default function App() {
       const saved = localStorage.getItem(STORAGE_KEY_COURSES);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) return parsed;
+        if (Array.isArray(parsed) && parsed.length > 0) {
+          return sortCoursesCanonically(parsed);
+        }
       }
     } catch (e) {
       // Ignore
     }
-    return DEFAULT_COURSES;
+    return sortCoursesCanonically(DEFAULT_COURSES);
   });
 
   // Custom Decks State
@@ -241,6 +257,7 @@ export default function App() {
 
   // Active Study / Game Modal State
   const [activeModal, setActiveModal] = useState<any>(null);
+  const [isShadowingOpen, setIsShadowingOpen] = useState(false);
 
   const [speakingState, setSpeakingState] = useState({
     active: false,
@@ -252,54 +269,105 @@ export default function App() {
   const [linguisticDataStatus, setLinguisticDataStatus] = useState(() =>
     getLinguisticDataStatus()
   );
+  const [isSyncingData, setIsSyncingData] = useState(false);
 
-  // Lazy non-blocking load of optional offline static linguistic data (/data/*.json)
+  const prunedCourseBandByIdRef = useRef<Record<string, number | null>>({});
+
+  const mergePreloadedCourses = useCallback((preloaded: any, forceRefresh = false) => {
+    if (!preloaded || !Array.isArray(preloaded.courses) || preloaded.courses.length === 0) {
+      return;
+    }
+    const incomingVersion = preloaded.version || null;
+    const incomingIds = new Set<string>(
+      preloaded.courses.map((c: any) => c?.id).filter(Boolean)
+    );
+
+    const isUserPreservedCourse = (c: any) =>
+      Boolean(c) &&
+      c.sourceType !== 'preloaded-hsk' &&
+      !String(c.id || '').startsWith('preloaded_') &&
+      !String(c.courseName || '').endsWith('• Gradual Path');
+
+    setCourses((prevCourses: any[]) => {
+      const userCourses: any[] = [];
+      const userCourseIds = new Set<string>();
+      const existingPreloadedById: Record<string, any> = {};
+
+      prevCourses.forEach((existingCourse: any) => {
+        if (!existingCourse?.id) return;
+        if (isUserPreservedCourse(existingCourse)) {
+          userCourses.push(existingCourse);
+          userCourseIds.add(existingCourse.id);
+          return;
+        }
+        existingPreloadedById[existingCourse.id] = existingCourse;
+        if (!incomingIds.has(existingCourse.id)) {
+          prunedCourseBandByIdRef.current[existingCourse.id] =
+            getCourseHskBandNumber(existingCourse);
+        }
+      });
+
+      // Rebuild preloaded courses in the exact canonical array order returned by hsk_curriculum.json
+      const canonicalPreloadedCourses: any[] = [];
+      preloaded.courses.forEach((preCourse: any) => {
+        if (!preCourse?.id || userCourseIds.has(preCourse.id)) return;
+        const stampedCourse = {
+          ...preCourse,
+          sourceType: 'preloaded-hsk',
+          curriculumVersion: incomingVersion || preCourse.curriculumVersion || null
+        };
+        const existingPre = existingPreloadedById[preCourse.id];
+        const shouldKeepExisting =
+          existingPre &&
+          existingPre.sourceType === 'preloaded-hsk' &&
+          !forceRefresh &&
+          (!incomingVersion || existingPre.curriculumVersion === incomingVersion) &&
+          existingPre.hskBand === stampedCourse.hskBand;
+
+        canonicalPreloadedCourses.push(shouldKeepExisting ? existingPre : stampedCourse);
+      });
+
+      const nextCourses = sortCoursesCanonically([...userCourses, ...canonicalPreloadedCourses]);
+      const didChange =
+        nextCourses.length !== prevCourses.length ||
+        nextCourses.some((course, idx) => course !== prevCourses[idx]);
+
+      return didChange ? nextCourses : prevCourses;
+    });
+  }, []);
+
+  // Smoothly switch activeCourseId if a superseded preloaded course was pruned on sync
+  useEffect(() => {
+    if (!Array.isArray(courses) || courses.length === 0) return;
+    if (courses.some((c: any) => c.id === activeCourseId)) return;
+
+    const prunedBand = prunedCourseBandByIdRef.current[activeCourseId];
+    const bandReplacement =
+      prunedBand != null
+        ? courses.find((c: any) => getCourseHskBandNumber(c) === prunedBand)
+        : null;
+    const replacement = bandReplacement || courses[0] || DEFAULT_COURSES[0];
+
+    if (replacement?.id) {
+      setActiveCourseId(replacement.id);
+      if (replacement.lessons?.[0]?.id) {
+        setActiveLessonId(replacement.lessons[0].id);
+      }
+    }
+  }, [courses, activeCourseId]);
+
+  // Lazy non-blocking load of optional offline static linguistic data (remote GitHub CDN -> /data/*.json)
   useEffect(() => {
     let cancelled = false;
     loadStaticLinguisticData().then((status) => {
       if (cancelled) return;
       setLinguisticDataStatus(status);
-
-      const preloaded = getPreloadedCurriculum();
-      if (preloaded && Array.isArray(preloaded.courses) && preloaded.courses.length > 0) {
-        const incomingVersion = preloaded.version || null;
-        setCourses((prevCourses: any[]) => {
-          const nextCourses = [...prevCourses];
-          let didChange = false;
-
-          preloaded.courses.forEach((preCourse: any) => {
-            if (!preCourse?.id) return;
-            const stampedCourse = {
-              ...preCourse,
-              sourceType: 'preloaded-hsk',
-              curriculumVersion: incomingVersion || preCourse.curriculumVersion || null
-            };
-            const existingIdx = nextCourses.findIndex((c: any) => c.id === preCourse.id);
-            if (existingIdx === -1) {
-              nextCourses.push(stampedCourse);
-              didChange = true;
-            } else {
-              const existingCourse = nextCourses[existingIdx];
-              // Never overwrite user-imported courses; only refresh preloaded-hsk if newer version exists
-              if (
-                existingCourse?.sourceType === 'preloaded-hsk' &&
-                incomingVersion &&
-                existingCourse.curriculumVersion !== incomingVersion
-              ) {
-                nextCourses[existingIdx] = stampedCourse;
-                didChange = true;
-              }
-            }
-          });
-
-          return didChange ? nextCourses : prevCourses;
-        });
-      }
+      mergePreloadedCourses(getPreloadedCurriculum(), false);
     });
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [mergePreloadedCourses]);
 
   // Sync progress, courses, and decks to localStorage
   useEffect(() => {
@@ -332,6 +400,45 @@ export default function App() {
       setToastBanner((prev) => (prev && Date.now() - prev.id >= 2900 ? null : prev));
     }, 3100);
   }, []);
+
+  const handleSyncLinguisticData = useCallback(
+    async (customUrl?: string) => {
+      if (typeof customUrl === 'string') {
+        setDataBaseUrl(customUrl);
+      }
+      setIsSyncingData(true);
+      try {
+        const status = await loadStaticLinguisticData({ forceRefresh: true });
+        setLinguisticDataStatus(status);
+        mergePreloadedCourses(getPreloadedCurriculum(), true);
+        const sourceLabel =
+          status.source === 'remote'
+            ? 'Remote CDN'
+            : status.source === 'local'
+            ? 'Local /data/'
+            : 'Built-in Fallback';
+        const versionLabel = status.curriculumVersion
+          ? `v${String(status.curriculumVersion).replace(/^v/i, '')}`
+          : 'built-in';
+        triggerToast(
+          `Data Synced • ${versionLabel} (${status.source})`,
+          `${sourceLabel} • ${status.lexiconCount.toLocaleString()} lexicon • ${status.preloadedCoursesCount} HSK course(s) • ${status.corpusCount} corpus`
+        );
+        return status;
+      } catch {
+        const fallbackStatus = getLinguisticDataStatus();
+        setLinguisticDataStatus(fallbackStatus);
+        triggerToast(
+          'Offline Fallback Active',
+          `Using cached/built-in datasets (${fallbackStatus.corpusCount} corpus sentences)`
+        );
+        return fallbackStatus;
+      } finally {
+        setIsSyncingData(false);
+      }
+    },
+    [mergePreloadedCourses, triggerToast]
+  );
 
   // Centralized Mandarin Speech wrapper
   const speakMandarin = useCallback((text: string, overrideRate: any = undefined) => {
@@ -435,12 +542,23 @@ export default function App() {
   // Enrich ONLY unlocked words (strictly isolating the silent master lexicon from exercise pools)
   const enrichedUnlockedWords = useMemo(() => {
     try {
-      return enrichWordsCollection(unlockedWords, progress.wordLinguisticOverrides);
+      return enrichWordsCollection(
+        unlockedWords,
+        progress.wordLinguisticOverrides,
+        progress.wordPriorityOverrides
+      );
     } catch (err) {
       console.warn('[App] enrichWordsCollection failed, falling back to raw unlocked words:', err);
       return Array.isArray(unlockedWords) ? unlockedWords : [];
     }
-  }, [unlockedWords, progress.wordLinguisticOverrides, linguisticDataStatus.loaded]);
+  }, [
+    unlockedWords,
+    progress.wordLinguisticOverrides,
+    progress.wordPriorityOverrides,
+    linguisticDataStatus.loaded,
+    linguisticDataStatus.lexiconCount,
+    linguisticDataStatus.lastSyncedAt
+  ]);
 
   // Memoized readiness metadata for Phase 3 & Phase 4 generative exercise modes
   const generativeReadiness = useMemo(() => {
@@ -751,10 +869,10 @@ export default function App() {
           completions: 0
         };
 
+        const prevLv = getWordMasteryLevel(prev.mastery, word);
         const nextMastery = { ...(prev.mastery || {}) };
         if (mistakesDelta > 0 && completionsDelta === 0) {
-          const curLv = getWordMasteryLevel(nextMastery, word);
-          const nextLv = Math.max(0, Math.min(10, curLv - 1));
+          const nextLv = Math.max(0, Math.min(10, prevLv - 1));
           if (word.id) nextMastery[word.id] = nextLv;
           if (word.hanzi) nextMastery[word.hanzi] = nextLv;
         }
@@ -762,7 +880,24 @@ export default function App() {
         const nextSrsData = { ...(prev.srsData || {}) };
         if (mistakesDelta > 0 || completionsDelta > 0) {
           const updatedLv = getWordMasteryLevel(nextMastery, word);
-          writeWordSrsEntry(nextSrsData, word, updatedLv, Date.now());
+          const outcome = mistakesDelta > 0 ? 'fail' : 'pass';
+          const srsMasteryLv = outcome === 'fail' ? Math.max(prevLv, updatedLv) : updatedLv;
+          const enrichedForSrs =
+            typeof word.srsMultiplier === 'number'
+              ? word
+              : enrichWordEntry(
+                  word,
+                  prev.wordLinguisticOverrides,
+                  prev.wordPriorityOverrides
+                );
+          writeWordSrsEntry(
+            nextSrsData,
+            enrichedForSrs,
+            srsMasteryLv,
+            Date.now(),
+            enrichedForSrs.srsMultiplier,
+            outcome
+          );
         }
 
         return {
@@ -835,7 +970,18 @@ export default function App() {
           const nextLv = Math.max(0, Math.min(10, curLv + masteryStep));
           if (w.id) nextMastery[w.id] = nextLv;
           if (w.hanzi) nextMastery[w.hanzi] = nextLv;
-          writeWordSrsEntry(nextSrsData, w, nextLv, reviewTimestamp);
+          const enrichedForSrs =
+            typeof w.srsMultiplier === 'number'
+              ? w
+              : enrichWordEntry(w, prev.wordLinguisticOverrides, prev.wordPriorityOverrides);
+          writeWordSrsEntry(
+            nextSrsData,
+            enrichedForSrs,
+            nextLv,
+            reviewTimestamp,
+            enrichedForSrs.srsMultiplier,
+            'pass'
+          );
         });
 
         const prevLessonProg = prev.lessonProgress?.[lessonKey] || {
@@ -1019,6 +1165,36 @@ export default function App() {
     });
   }, []);
 
+  const handleCycleWordPriority = useCallback((word: any) => {
+    const hanziKey = String(typeof word === 'string' ? word : word?.hanzi || word?.id || '').trim();
+    if (!hanziKey) return;
+    soundFX.playPop();
+    setProgress((prev: any) => {
+      const nextPriorityOverrides = { ...(prev.wordPriorityOverrides || {}) };
+      const currentOverride = nextPriorityOverrides[hanziKey] || null;
+      // Cycle: auto (null) -> core -> niche -> standard -> auto (null)
+      const nextState =
+        currentOverride === null
+          ? 'core'
+          : currentOverride === 'core'
+          ? 'niche'
+          : currentOverride === 'niche'
+          ? 'standard'
+          : null;
+
+      if (nextState === null) {
+        delete nextPriorityOverrides[hanziKey];
+      } else {
+        nextPriorityOverrides[hanziKey] = nextState;
+      }
+
+      return {
+        ...prev,
+        wordPriorityOverrides: nextPriorityOverrides
+      };
+    });
+  }, []);
+
   const handleSetDailyGoalXp = useCallback(
     (newTarget: number) => {
       const cleanTarget = Math.max(10, Number(newTarget) || 30);
@@ -1051,11 +1227,14 @@ export default function App() {
     const currentNodeLevel = getNodeCompletionLevel(currentLessonProg, stage.id);
 
     // Run 2+ adds +1 past-lesson review item to non-writing nodes (strictly excluding writing)
+    const enrichedPastLessonWords = pastLessonWords.map((pw: any) =>
+      enrichWordEntry(pw, progress.wordLinguisticOverrides, progress.wordPriorityOverrides)
+    );
     const wordsWithRun2Review =
-      currentNodeLevel >= 1 && pastLessonWords.length > 0
+      currentNodeLevel >= 1 && enrichedPastLessonWords.length > 0
         ? [
             ...targetWords,
-            pastLessonWords[Math.floor(Math.random() * pastLessonWords.length)]
+            ...sampleWeightedWordsWithoutReplacement(enrichedPastLessonWords, 1)
           ]
         : targetWords;
 
@@ -1079,9 +1258,9 @@ export default function App() {
             ? `${stage.badgeText} • Active Recall`
             : `${stage.badgeText} • Context Mastery`,
           activeLessonIndex,
-          pastLessonWords,
+          enrichedPastLessonWords,
           currentNodeLevel,
-          unlockedWords,
+          enrichedUnlockedWords,
           generativeReadiness
         );
         setActiveModal({
@@ -1161,9 +1340,9 @@ export default function App() {
         modalitiesForNode,
         stage.badgeText,
         activeLessonIndex,
-        pastLessonWords,
+        enrichedPastLessonWords,
         currentNodeLevel,
-        unlockedWords,
+        enrichedUnlockedWords,
         generativeReadiness
       );
       setActiveModal({
@@ -1267,6 +1446,20 @@ export default function App() {
           triggerToast(
             'Corpus Immersion Locked',
             `Unlocks at 6 i+0 sentences (${corpusStats?.i0Count || 0}/6 ready).`
+          );
+          return;
+        }
+      } else if (modeKey === 'confusable_chars') {
+        const previewConfusable = buildConfusableDrillItems(
+          unlockedWords,
+          getMasterLexiconMap(),
+          8
+        );
+        if (previewConfusable.length < 3) {
+          soundFX.playMistake();
+          triggerToast(
+            'Confusable Twins Locked',
+            `Unlocks at 3 confusable sets (${previewConfusable.length}/3 ready).`
           );
           return;
         }
@@ -1501,6 +1694,24 @@ export default function App() {
               });
             }
           }
+        } else if (modeKey === 'confusable_chars') {
+          const confusableItems = buildConfusableDrillItems(
+            unlockedWords,
+            getMasterLexiconMap(),
+            8
+          );
+          confusableItems.slice(0, 8).forEach((item: any, idx: number) => {
+            queue.push({
+              stepId: `conf_${item.id || idx}_${idx}`,
+              word: item.targetWord || pool[idx % pool.length] || activeWords[0],
+              modality: 'confusable_chars',
+              confusableItem: item,
+              reason:
+                item.contrastType === 'homophone'
+                  ? '同音字 • Homophones'
+                  : '形近字 • Visual Twins'
+            });
+          });
         }
       } catch (err) {
         console.warn('[App] handleLaunchGenerativeDrill failed:', modeKey, err);
@@ -1522,7 +1733,12 @@ export default function App() {
         questModeKey: modeKey,
         sessionConfig: {
           title: modeMeta.label,
-          badgeText: srsDueWords.length > 0 ? 'SRS-Weighted Lab' : 'Generative Grammar Lab',
+          badgeText:
+            modeKey === 'confusable_chars'
+              ? 'Visual & Homophone Contrast'
+              : srsDueWords.length > 0
+              ? 'SRS-Weighted Lab'
+              : 'Generative Grammar Lab',
           xpReward: 30,
           queue
         }
@@ -1531,6 +1747,7 @@ export default function App() {
     [
       generativeReadiness,
       corpusStats,
+      unlockedWords,
       enrichedUnlockedWords,
       progress?.mastery,
       progress?.srsData,
@@ -1927,8 +2144,13 @@ export default function App() {
               enrichedUnlockedWords={enrichedUnlockedWords}
               generativeReadiness={generativeReadiness}
               corpusStats={corpusStats}
+              linguisticDataStatus={linguisticDataStatus}
               speakMandarin={speakMandarin}
               speakingState={speakingState}
+              onOpenShadowing={() => {
+                soundFX.playPop();
+                setIsShadowingOpen(true);
+              }}
               onLaunchGenerativeDrill={handleLaunchGenerativeDrill}
               onLaunchSmartReviewSession={(queue: any, filterLabel: string) => {
                 soundFX.playPop();
@@ -1940,6 +2162,95 @@ export default function App() {
                     title: 'Smart Review Arena',
                     badgeText: filterLabel,
                     xpReward: 25,
+                    queue
+                  }
+                });
+              }}
+              onLaunchLeechRemediation={(leechPool: any[]) => {
+                const safeLeeches = Array.isArray(leechPool) ? leechPool.filter(Boolean) : [];
+                if (safeLeeches.length === 0) {
+                  triggerToast('Memory Stable!', 'No leech words currently need remediation.');
+                  return;
+                }
+                soundFX.playPop();
+                const openClozeUnlocked = Boolean(generativeReadiness?.open_cloze?.unlocked);
+                const activeModes = [
+                  'listening',
+                  'reverse_meaning_mc',
+                  'cloze',
+                  'writing',
+                  ...(openClozeUnlocked ? ['open_cloze'] : [])
+                ];
+
+                // Pre-generate optional open_cloze items focused on the leech words when unlocked
+                const openClozeByHanzi: Record<string, any> = {};
+                if (openClozeUnlocked && enrichedUnlockedWords.length > 0) {
+                  try {
+                    const enrichedLeeches = safeLeeches.map((w: any) =>
+                      enrichWordEntry(
+                        w,
+                        progress.wordLinguisticOverrides,
+                        progress.wordPriorityOverrides
+                      )
+                    );
+                    const batch = generateGenerativeBatch(enrichedUnlockedWords, {
+                      count: Math.min(8, Math.max(4, safeLeeches.length * 2)),
+                      focusWords: enrichedLeeches,
+                      mode: 'open_cloze'
+                    });
+                    (Array.isArray(batch) ? batch : []).forEach((item: any) => {
+                      const targetH = item?.targetWord?.hanzi;
+                      if (targetH && !openClozeByHanzi[targetH]) {
+                        openClozeByHanzi[targetH] = item;
+                      }
+                    });
+                    enrichedLeeches.forEach((lw: any) => {
+                      if (lw?.hanzi && !openClozeByHanzi[lw.hanzi]) {
+                        const single = generateSentenceForWord(enrichedUnlockedWords, lw);
+                        if (single && single.targetWord?.hanzi) {
+                          openClozeByHanzi[lw.hanzi] = single;
+                        }
+                      }
+                    });
+                  } catch {
+                    // Gracefully fall back to standard high-retention modalities
+                  }
+                }
+
+                // Focus exclusively on flagged leech words across high-retention active modalities
+                const targetSteps = Math.min(10, Math.max(safeLeeches.length * 2, 4));
+                const queue: any[] = [];
+                for (let i = 0; i < targetSteps; i++) {
+                  const targetWord = safeLeeches[i % safeLeeches.length];
+                  const preferredMode = activeModes[i % activeModes.length];
+                  const genItem =
+                    preferredMode === 'open_cloze'
+                      ? openClozeByHanzi[targetWord.hanzi] || null
+                      : null;
+                  const finalModality =
+                    preferredMode === 'open_cloze' && !genItem ? 'cloze' : preferredMode;
+                  const meta = (MODALITY_META as any)[finalModality] || {
+                    shortLabel: finalModality
+                  };
+                  queue.push({
+                    stepId: `leech_${targetWord.hanzi || targetWord.id}_${finalModality}_${i}`,
+                    word: targetWord,
+                    modality: finalModality,
+                    ...(genItem ? { generativeItem: genItem } : {}),
+                    reason: `Leech Attack • ${meta.shortLabel}`
+                  });
+                }
+
+                setActiveModal({
+                  type: 'mixed_session',
+                  stageId: null,
+                  questModeKey: 'smart_review',
+                  sessionConfig: {
+                    title: 'Leech Remediation • 难点攻坚',
+                    badgeText: `${safeLeeches.length} Stubborn Word${
+                      safeLeeches.length === 1 ? '' : 's'
+                    }`,
+                    xpReward: 35,
                     queue
                   }
                 });
@@ -2111,11 +2422,18 @@ export default function App() {
               activeCourse={activeCourse}
               customDecks={customDecks}
               linguisticDataStatus={linguisticDataStatus}
+              isSyncingData={isSyncingData}
+              onSyncLinguisticData={handleSyncLinguisticData}
               onSaveWordLinguisticOverride={handleSaveWordLinguisticOverride}
+              onCycleWordPriority={handleCycleWordPriority}
               isSlowMode={progress.isSlowMode}
               onSetSlowMode={handleSetSlowMode}
               speakMandarin={speakMandarin}
               speakingState={speakingState}
+              onOpenShadowing={() => {
+                soundFX.playPop();
+                setIsShadowingOpen(true);
+              }}
               onAddWordsToDeck={(deckName: string, newRawWords: any[]) => {
                 setCustomDecks((prev: any[]) => {
                   const normalizedNew = newRawWords.map((w, idx) =>
@@ -2144,7 +2462,7 @@ export default function App() {
                 });
               }}
               onAddImportedCourse={(newCourse: any, switchToMap = false) => {
-                setCourses((prev: any[]) => [...prev, newCourse]);
+                setCourses((prev: any[]) => sortCoursesCanonically([...prev, newCourse]));
                 setActiveCourseId(newCourse.id);
                 if (newCourse.lessons?.[0]?.id) {
                   setActiveLessonId(newCourse.lessons[0].id);
@@ -2193,7 +2511,8 @@ export default function App() {
                   progress: {
                     ...progress,
                     srsData: progress.srsData || {},
-                    wordLinguisticOverrides: progress.wordLinguisticOverrides || {}
+                    wordLinguisticOverrides: progress.wordLinguisticOverrides || {},
+                    wordPriorityOverrides: progress.wordPriorityOverrides || {}
                   },
                   courses,
                   customDecks
@@ -2223,6 +2542,11 @@ export default function App() {
                       typeof parsedBackup.progress.wordLinguisticOverrides === 'object'
                         ? { ...parsedBackup.progress.wordLinguisticOverrides }
                         : prev.wordLinguisticOverrides || {},
+                    wordPriorityOverrides:
+                      parsedBackup.progress.wordPriorityOverrides &&
+                      typeof parsedBackup.progress.wordPriorityOverrides === 'object'
+                        ? { ...parsedBackup.progress.wordPriorityOverrides }
+                        : prev.wordPriorityOverrides || {},
                     srsData:
                       parsedBackup.progress.srsData &&
                       typeof parsedBackup.progress.srsData === 'object'
@@ -2246,7 +2570,7 @@ export default function App() {
                   }));
                 }
                 if (Array.isArray(parsedBackup.courses) && parsedBackup.courses.length > 0) {
-                  setCourses(parsedBackup.courses);
+                  setCourses(sortCoursesCanonically(parsedBackup.courses));
                 }
                 if (Array.isArray(parsedBackup.customDecks)) {
                   setCustomDecks(parsedBackup.customDecks);
@@ -2303,6 +2627,11 @@ export default function App() {
               courses={courses}
               customDecks={customDecks}
               currentLevel={currentLevel}
+              linguisticDataStatus={linguisticDataStatus}
+              isSyncingData={isSyncingData}
+              onSyncLinguisticData={handleSyncLinguisticData}
+              defaultDataBaseUrl={DEFAULT_REMOTE_DATA_BASE_URL}
+              getDataBaseUrl={getDataBaseUrl}
               onToggleSpeed={handleToggleSpeed}
               speakMandarin={speakMandarin}
               onExportAllData={() => {
@@ -2311,7 +2640,8 @@ export default function App() {
                   progress: {
                     ...progress,
                     srsData: progress.srsData || {},
-                    wordLinguisticOverrides: progress.wordLinguisticOverrides || {}
+                    wordLinguisticOverrides: progress.wordLinguisticOverrides || {},
+                    wordPriorityOverrides: progress.wordPriorityOverrides || {}
                   },
                   courses,
                   customDecks
@@ -2337,6 +2667,11 @@ export default function App() {
                       typeof parsedBackup.progress.wordLinguisticOverrides === 'object'
                         ? { ...parsedBackup.progress.wordLinguisticOverrides }
                         : prev.wordLinguisticOverrides || {},
+                    wordPriorityOverrides:
+                      parsedBackup.progress.wordPriorityOverrides &&
+                      typeof parsedBackup.progress.wordPriorityOverrides === 'object'
+                        ? { ...parsedBackup.progress.wordPriorityOverrides }
+                        : prev.wordPriorityOverrides || {},
                     srsData:
                       parsedBackup.progress.srsData &&
                       typeof parsedBackup.progress.srsData === 'object'
@@ -2360,7 +2695,7 @@ export default function App() {
                   }));
                 }
                 if (Array.isArray(parsedBackup?.courses) && parsedBackup.courses.length > 0) {
-                  setCourses(parsedBackup.courses);
+                  setCourses(sortCoursesCanonically(parsedBackup.courses));
                 }
                 if (Array.isArray(parsedBackup?.customDecks)) {
                   setCustomDecks(parsedBackup.customDecks);
@@ -2385,6 +2720,7 @@ export default function App() {
                   },
                   wordNotes: {},
                   wordLinguisticOverrides: {},
+                  wordPriorityOverrides: {},
                   completedStrokeRules: [],
                   lessonProgress: {},
                   mastery: {
@@ -2720,6 +3056,16 @@ export default function App() {
             }
           />
         )}
+
+        <ShadowingAudioModal
+          isOpen={isShadowingOpen}
+          onClose={() => setIsShadowingOpen(false)}
+          enrichedUnlockedWords={enrichedUnlockedWords}
+          activeLessonWords={activeWords}
+          srsSchedule={progress.srsData || (progress as any).srsSchedule || {}}
+          speechRate={NORMAL_SPEECH_RATE}
+          selectedVoiceURI={getGlobalPreferredVoiceURI()}
+        />
       </div>
     </div>
   );

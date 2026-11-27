@@ -1,4 +1,4 @@
-const CACHE_NAME = 'hanzi-app-cache-v5';
+const CACHE_NAME = 'hanzi-app-cache-v6';
 
 const CORE_ASSETS = [
   '/',
@@ -70,6 +70,69 @@ self.addEventListener('fetch', (event) => {
     return;
   }
 
+  // Offline linguistic datasets (/data/*.json, jsDelivr gh/*/hanziapp-data*/*.json, and *.github.io/hanziapp-data/*.json)
+  const isLocalDataJson =
+    url.origin === self.location.origin &&
+    url.pathname.startsWith('/data/') &&
+    url.pathname.endsWith('.json');
+  const isJsDelivrDataRepoJson =
+    url.hostname === 'cdn.jsdelivr.net' &&
+    /\/gh\/[^/]+\/hanziapp-data[^/]*\/.*\.json$/i.test(url.pathname);
+  const isGithubPagesDataRepoJson =
+    url.hostname.endsWith('.github.io') &&
+    /\/hanziapp-data[^/]*\/.*\.json$/i.test(url.pathname);
+
+  const isStaticLinguisticData =
+    isLocalDataJson || isJsDelivrDataRepoJson || isGithubPagesDataRepoJson;
+
+  if (isStaticLinguisticData) {
+    const cleanCacheKey = `${url.origin}${url.pathname}`;
+    const isForceRefresh = url.searchParams.has('t');
+
+    if (isForceRefresh) {
+      // Network-first when ?t= forceRefresh is active; update cache under the clean base URL
+      event.respondWith(
+        fetch(request)
+          .then((response) => {
+            const contentType = (response.headers.get('content-type') || '').toLowerCase();
+            if (response && response.status === 200 && !contentType.includes('text/html')) {
+              const clone = response.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(cleanCacheKey, clone));
+            }
+            return response;
+          })
+          .catch(async () => {
+            return (await caches.match(cleanCacheKey)) || (await caches.match(request));
+          })
+      );
+      return;
+    }
+
+    // Cache-first with background refresh & clean base URL storage
+    event.respondWith(
+      caches.match(cleanCacheKey).then(async (cachedClean) => {
+        const cached = cachedClean || (await caches.match(request));
+        const fetchAndCache = fetch(request)
+          .then((response) => {
+            const contentType = (response.headers.get('content-type') || '').toLowerCase();
+            if (response && response.status === 200 && !contentType.includes('text/html')) {
+              const clone = response.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(cleanCacheKey, clone));
+            }
+            return response;
+          })
+          .catch(() => cached);
+
+        if (cached) {
+          event.waitUntil(fetchAndCache);
+          return cached;
+        }
+        return fetchAndCache;
+      })
+    );
+    return;
+  }
+
   // Cache-first strategy for HanziWriter CDN scripts, character stroke JSONs, and Google Fonts
   const isCacheFirstCDN =
     url.hostname.includes('cdn.jsdelivr.net') ||
@@ -89,36 +152,6 @@ self.addEventListener('fetch', (event) => {
             return response;
           })
           .catch(() => cached);
-      })
-    );
-    return;
-  }
-
-  // Cache-first (with background update & network fallback) for static offline linguistic datasets (/data/*.json)
-  const isStaticLinguisticData =
-    url.origin === self.location.origin &&
-    url.pathname.startsWith('/data/') &&
-    url.pathname.endsWith('.json');
-
-  if (isStaticLinguisticData) {
-    event.respondWith(
-      caches.match(request).then((cached) => {
-        const fetchAndCache = fetch(request)
-          .then((response) => {
-            const contentType = (response.headers.get('content-type') || '').toLowerCase();
-            if (response && response.status === 200 && contentType.includes('application/json')) {
-              const clone = response.clone();
-              caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
-            }
-            return response;
-          })
-          .catch(() => cached);
-
-        if (cached) {
-          event.waitUntil(fetchAndCache);
-          return cached;
-        }
-        return fetchAndCache;
       })
     );
     return;

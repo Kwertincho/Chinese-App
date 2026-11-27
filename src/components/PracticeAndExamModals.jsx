@@ -47,7 +47,10 @@ import {
   canExposeAudioBeforeAnswer,
   highlightRadicalOutlineStrokes,
   getWritingStageMeta,
-  loadHanziWriterScript
+  loadHanziWriterScript,
+  buildConfusableDrillItems,
+  CJK_SINGLE_CHAR_REGEX,
+  extractWritableCjkChars
 } from '../utils/mandarinHelpers.js';
 import {
   ChaoToneVisualizer,
@@ -605,6 +608,255 @@ export function DialogueQaExerciseCard({
               charClassName="text-sm font-bold text-white"
               onInspectOpenChange={onInspectOpenChange}
             />
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ============================================================================
+// CONFUSABLE CHARACTERS EXERCISE CARD (形近字 Visual Twins & 同音字 Homophones)
+// Strict Anti-Spoiler: NO Pinyin & NO Audio before answering.
+// Post-Answer: Full side-by-side comparison cards + MandarinAudioControls +
+// InteractiveExampleText character inspector.
+// ============================================================================
+function ConfusableCharsExerciseCard({
+  item,
+  masteryMap = {},
+  courseWords = [],
+  lessonPool = [],
+  selectedHanzi,
+  isCompleted,
+  cardAnim = 'idle',
+  isSlowMode,
+  onSetSlowMode,
+  speakMandarin,
+  speakingState,
+  onSelectOption,
+  onContinue = null,
+  onInspectOpenChange = null
+}) {
+  if (!item || !Array.isArray(item.options) || item.options.length === 0) {
+    return null;
+  }
+
+  const isHomophone = item.contrastType === 'homophone';
+  const selectedOpt = item.options.find((o) => o.hanzi === selectedHanzi) || null;
+  const correctOpt = item.options.find((o) => o.isCorrect) || item.options[0];
+  const isSelectedCorrect = Boolean(selectedOpt?.isCorrect);
+  const targetWord = item.targetWord || {};
+
+  const inspectSentence =
+    (typeof targetWord.exampleHanzi === 'string' && targetWord.exampleHanzi.trim()) ||
+    item.options.map((o) => o.hanzi).join(' · ');
+
+  const audioText =
+    (typeof targetWord.exampleHanzi === 'string' && targetWord.exampleHanzi.trim()) ||
+    correctOpt?.hanzi ||
+    targetWord.hanzi ||
+    '';
+
+  const clozeParts =
+    typeof item.contextCloze === 'string' && item.contextCloze.includes('[ ___ ]')
+      ? item.contextCloze.split('[ ___ ]')
+      : null;
+
+  return (
+    <div
+      className={`my-auto rounded-3xl bg-slate-800/90 border p-4 space-y-3.5 shadow-xl transition-all ${
+        cardAnim === 'wrong'
+          ? 'border-rose-500 animate-game-shake'
+          : cardAnim === 'correct'
+          ? 'border-emerald-400 animate-game-green-pulse'
+          : 'border-teal-500/40'
+      }`}
+    >
+      {/* Anti-Spoiler Header: NO audio controls before answering */}
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <div className="flex items-center gap-1.5 flex-wrap">
+          <span className="text-[10px] font-extrabold uppercase tracking-wider px-2.5 py-1 rounded-full bg-teal-500/20 text-teal-300 border border-teal-400/40 inline-flex items-center gap-1">
+            <Eye className="w-3 h-3" />
+            <span>
+              {isHomophone ? (
+                <>
+                  Homophones • <span className="font-hanzi">同音字</span>
+                </>
+              ) : (
+                <>
+                  Visual Twins • <span className="font-hanzi">形近字</span>
+                </>
+              )}
+            </span>
+          </span>
+        </div>
+        {!isCompleted && (
+          <span className="font-clarity text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+            No Pinyin • Visual Discrimination
+          </span>
+        )}
+      </div>
+
+      {/* Prompt Box: Target English Meaning + Optional [ ___ ] Context Cloze */}
+      <div className="rounded-2xl bg-slate-950/90 border border-slate-800 p-4 space-y-2 text-center">
+        <span className="font-clarity text-[10px] font-extrabold uppercase tracking-wider text-teal-300 block">
+          Select the exact character for:
+        </span>
+        <div className="font-clarity text-xl font-black text-white leading-snug">
+          {item.promptMeaning}
+        </div>
+        {item.contextCloze && (
+          <div className="pt-2 border-t border-slate-800/80">
+            <div className="font-hanzi text-lg font-bold text-slate-100 leading-relaxed">
+              {clozeParts
+                ? clozeParts.map((part, pIdx) => (
+                    <React.Fragment key={pIdx}>
+                      <span>{part}</span>
+                      {pIdx < clozeParts.length - 1 && (
+                        <span className="inline-block mx-1 px-2 py-0.5 rounded-md bg-teal-500/20 border border-teal-400/50 text-teal-200 font-clarity text-sm font-black align-middle">
+                          {isCompleted ? correctOpt?.hanzi : '___'}
+                        </span>
+                      )}
+                    </React.Fragment>
+                  ))
+                : item.contextCloze}
+            </div>
+          </div>
+        )}
+      </div>
+
+      {/* 3–4 Large Hanzi-Only Buttons (ZERO Pinyin, ZERO English before answering) */}
+      <div className="grid grid-cols-2 gap-3">
+        {item.options.map((opt) => {
+          const isSelected = selectedHanzi === opt.hanzi;
+          let btnClass =
+            'bg-slate-900/95 hover:bg-slate-800 border-slate-700 hover:border-teal-400/70 text-white';
+
+          if (isCompleted && opt.isCorrect) {
+            btnClass =
+              'bg-emerald-500/20 border-emerald-400 text-emerald-200 shadow-lg shadow-emerald-950/40';
+          } else if (isCompleted && isSelected && !opt.isCorrect) {
+            btnClass = 'bg-rose-500/20 border-rose-500 text-rose-200';
+          } else if (isCompleted) {
+            btnClass = 'bg-slate-900/60 border-slate-800 text-slate-400 opacity-65';
+          }
+
+          return (
+            <button
+              key={opt.hanzi}
+              type="button"
+              disabled={isCompleted}
+              onClick={() => onSelectOption(opt, item)}
+              className={`game-btn-3d relative min-h-[76px] px-3 py-3 rounded-2xl border-2 flex items-center justify-center transition-all ${btnClass}`}
+            >
+              <span className="font-hanzi text-3xl font-black tracking-wide leading-none">
+                {opt.hanzi}
+              </span>
+              {isCompleted && opt.isCorrect && (
+                <Check className="w-4 h-4 text-emerald-400 absolute top-2 right-2" />
+              )}
+              {isCompleted && isSelected && !opt.isCorrect && (
+                <X className="w-4 h-4 text-rose-400 absolute top-2 right-2" />
+              )}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Post-Answer Side-by-Side Contrast Cards + Audio + Interactive Character Inspector */}
+      {isCompleted && (
+        <div
+          className={`rounded-2xl p-3.5 text-xs space-y-3 border ${
+            isSelectedCorrect
+              ? 'bg-emerald-500/15 border-emerald-400/50 text-emerald-100'
+              : 'bg-rose-500/15 border-rose-400/50 text-rose-100'
+          }`}
+        >
+          <div className="flex items-start justify-between gap-2">
+            <div className="min-w-0 flex-1 space-y-1">
+              <p className="font-black text-sm">
+                {isSelectedCorrect
+                  ? `✓ Sharp Eyes! ${correctOpt.hanzi} (${correctOpt.pinyin})`
+                  : `✗ Confusable Twin — Correct: ${correctOpt.hanzi} (${correctOpt.pinyin})`}
+              </p>
+              {item.contrastNote && (
+                <p className="font-clarity text-[11px] text-slate-200 leading-relaxed">
+                  {item.contrastNote}
+                </p>
+              )}
+            </div>
+            {audioText && (
+              <MandarinAudioControls
+                text={audioText}
+                isSlowMode={isSlowMode}
+                onSetSlowMode={onSetSlowMode}
+                speakMandarin={speakMandarin}
+                speakingState={speakingState}
+                size="sm"
+              />
+            )}
+          </div>
+
+          {/* Side-by-Side Comparison Cards for All Options in the Set */}
+          <div className="grid grid-cols-2 gap-2">
+            {item.options.map((opt) => (
+              <div
+                key={`cmp_${opt.hanzi}`}
+                className={`rounded-xl p-2.5 border space-y-1 ${
+                  opt.isCorrect
+                    ? 'bg-emerald-950/60 border-emerald-400/60'
+                    : selectedHanzi === opt.hanzi
+                    ? 'bg-rose-950/50 border-rose-400/50'
+                    : 'bg-slate-950/80 border-slate-700/70'
+                }`}
+              >
+                <div className="flex items-baseline justify-between gap-1.5">
+                  <span className="font-hanzi text-2xl font-black text-white leading-none">
+                    {opt.hanzi}
+                  </span>
+                  <span className="font-pinyin text-xs font-bold text-rose-300 truncate">
+                    {opt.pinyin || '—'}
+                  </span>
+                </div>
+                <div className="font-clarity text-[11px] font-bold text-slate-100 leading-snug">
+                  {opt.meaning}
+                </div>
+                <div className="font-clarity text-[10px] text-teal-300/90 leading-snug">
+                  Radical: <span className="font-hanzi">{opt.radical || 'Component'}</span>
+                </div>
+              </div>
+            ))}
+          </div>
+
+          {/* Interactive Example Text (Tap any Hanzi to inspect strokes/radicals) */}
+          <div className="pt-2 border-t border-white/10 flex items-center justify-between gap-2 flex-wrap">
+            <div className="min-w-0 flex-1">
+              <span className="font-clarity text-[10px] uppercase tracking-wider font-bold text-slate-300 block mb-1">
+                Tap any character to inspect strokes &amp; radical:
+              </span>
+              <InteractiveExampleText
+                sentence={inspectSentence}
+                speakMandarin={speakMandarin}
+                masteryMap={masteryMap}
+                courseWords={
+                  Array.isArray(courseWords) && courseWords.length > 0
+                    ? courseWords
+                    : lessonPool
+                }
+                charClassName="text-base font-bold text-white"
+                onInspectOpenChange={onInspectOpenChange}
+              />
+            </div>
+            {onContinue && (
+              <button
+                type="button"
+                onClick={onContinue}
+                className="game-btn-3d px-3 py-1.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-clarity text-xs font-black inline-flex items-center gap-1 shrink-0"
+              >
+                <span>Next</span>
+                <ChevronRight className="w-3.5 h-3.5" />
+              </button>
+            )}
           </div>
         </div>
       )}
@@ -1441,10 +1693,11 @@ export function AdaptiveMixedSessionModal({
   const [selectedSentenceTiles, setSelectedSentenceTiles] = useState([]);
   const [sentenceCheckStatus, setSentenceCheckStatus] = useState(null);
 
-  // Sub-state for 'cloze', 'classifier_drill', and 'dialogue_qa' modalities
+  // Sub-state for 'cloze', 'classifier_drill', 'dialogue_qa', and 'confusable_chars' modalities
   const [clozeSelectedId, setClozeSelectedId] = useState(null);
   const [classifierSelectedId, setClassifierSelectedId] = useState(null);
   const [dialogueSelectedId, setDialogueSelectedId] = useState(null);
+  const [confusableSelectedHanzi, setConfusableSelectedHanzi] = useState(null);
   const [showPinyinHint, setShowPinyinHint] = useState(false);
   const [isInspectingExample, setIsInspectingExample] = useState(false);
 
@@ -1457,7 +1710,8 @@ export function AdaptiveMixedSessionModal({
   const isPinyinMeaningComboStep =
     currentModality === 'meaning_mc' && stepIdx % 2 === 1;
   const isReverseMeaningStep = currentModality === 'reverse_meaning_mc';
-  const currentChar = currentWord.chars?.[charIndex] || currentWord.chars?.[0] || currentWord.hanzi[0];
+  const currentWordChars = useMemo(() => extractWritableCjkChars(currentWord), [currentWord]);
+  const currentChar = currentWordChars[charIndex] || currentWordChars[0] || '';
   const masteryLv = getWordMasteryLevel(progress?.mastery, currentWord);
   const masteryTierMeta = getMasteryTierMeta(masteryLv);
   const writingConfig = getAdaptiveWritingConfig(masteryLv, nodeLevel);
@@ -1582,7 +1836,10 @@ export function AdaptiveMixedSessionModal({
   }, [isGenerativeModality, currentItem, currentModality, currentWord, enrichedUnlockedWords, lessonWordPool, stepIdx]);
 
   const effectiveModality =
-    isGenerativeModality && !activeGenerativeItem ? 'meaning_mc' : currentModality;
+    (isGenerativeModality && !activeGenerativeItem) ||
+    (currentModality === 'writing' && currentWordChars.length === 0)
+      ? 'meaning_mc'
+      : currentModality;
 
   const liveSessionRef = useRef({
     queue,
@@ -1595,6 +1852,7 @@ export function AdaptiveMixedSessionModal({
     combo,
     wordWritingXpAwarded,
     currentWord,
+    currentWordChars,
     currentModality,
     isPinyinMeaningComboStep,
     charIndex,
@@ -1612,6 +1870,7 @@ export function AdaptiveMixedSessionModal({
     combo,
     wordWritingXpAwarded,
     currentWord,
+    currentWordChars,
     currentModality,
     isPinyinMeaningComboStep,
     charIndex,
@@ -1871,6 +2130,7 @@ export function AdaptiveMixedSessionModal({
     setClozeSelectedId(null);
     setClassifierSelectedId(null);
     setDialogueSelectedId(null);
+    setConfusableSelectedHanzi(null);
 
     // FUTURE-PROOF ANTI-SPOILER GUARDRAIL:
     // Always check canExposeAudioBeforeAnswer(...) before auto-playing audio on mount.
@@ -2031,6 +2291,7 @@ export function AdaptiveMixedSessionModal({
             maxCombo: liveMax,
             charIndex: liveCharIdx,
             currentWord: liveWord,
+            currentWordChars: liveWordChars,
             writingConfig: liveWritingCfg,
             onRecordSkillEvent: recordEvt
           } = liveSessionRef.current;
@@ -2043,7 +2304,7 @@ export function AdaptiveMixedSessionModal({
             }, 600);
           } else {
             setWriterModeStatus('completed');
-            const isFinalChar = liveCharIdx >= (liveWord.chars?.length || 1) - 1;
+            const isFinalChar = liveCharIdx >= Math.max(1, liveWordChars?.length || 1) - 1;
 
             setCompletedCharsInWord((prev) => {
               const next = prev.includes(liveCharIdx) ? prev : [...prev, liveCharIdx];
@@ -2093,10 +2354,12 @@ export function AdaptiveMixedSessionModal({
 
   useEffect(() => {
     if (
-      currentModality !== 'writing' ||
+      effectiveModality !== 'writing' ||
       scriptStatus !== 'ready' ||
       !writerTargetRef.current ||
-      !window.HanziWriter
+      !window.HanziWriter ||
+      !currentChar ||
+      !CJK_SINGLE_CHAR_REGEX.test(currentChar)
     ) {
       return;
     }
@@ -2172,7 +2435,7 @@ export function AdaptiveMixedSessionModal({
       if (writerTargetRef.current) writerTargetRef.current.innerHTML = '';
       writerInstanceRef.current = null;
     };
-  }, [currentModality, scriptStatus, stepIdx, charIndex, charStage, currentChar, startWriterQuiz]);
+  }, [effectiveModality, scriptStatus, stepIdx, charIndex, charStage, currentChar, startWriterQuiz]);
 
   const handleWatchWriterAnimation = () => {
     const writer = writerInstanceRef.current;
@@ -2766,7 +3029,7 @@ export function AdaptiveMixedSessionModal({
         )}
 
         {/* MODALITY 2: WRITING */}
-        {currentModality === 'writing' && (
+        {effectiveModality === 'writing' && (
           <div className="my-auto flex flex-col items-center space-y-2.5 py-2">
             <div className="w-full rounded-2xl bg-slate-800/80 border border-slate-700 p-3 flex items-center justify-between gap-2">
               <div className="min-w-0">
@@ -2775,7 +3038,7 @@ export function AdaptiveMixedSessionModal({
                 </span>
                 <div className="flex items-center flex-wrap gap-2 mt-0.5">
                   <span className="font-hanzi text-xl font-black text-white">
-                    {hideWritingHanzi ? '？'.repeat(currentWord.chars?.length || 1) : currentWord.hanzi}
+                    {hideWritingHanzi ? '？'.repeat(currentWordChars.length || 1) : currentWord.hanzi}
                   </span>
                   {hideWritingPinyin ? (
                     isMasteryTrial ? (
@@ -2801,7 +3064,7 @@ export function AdaptiveMixedSessionModal({
                 </div>
               </div>
               <div className="flex items-center gap-1.5 shrink-0">
-                {(currentWord.chars || [currentWord.hanzi]).map((ch, idx) => {
+                {currentWordChars.map((ch, idx) => {
                   const isDone = completedCharsInWord.includes(idx);
                   const isActive = idx === charIndex;
                   const isLocked =
@@ -2977,7 +3240,7 @@ export function AdaptiveMixedSessionModal({
                     } else {
                       const next = [...completedCharsInWord, charIndex];
                       setCompletedCharsInWord(next);
-                      if (next.length >= (currentWord.chars?.length || 1)) {
+                      if (next.length >= Math.max(1, currentWordChars.length)) {
                         setStepCompleted(true);
                         scheduleNextQueueItem(1200, bonusXp, maxCombo);
                       } else {
@@ -3646,6 +3909,61 @@ export function AdaptiveMixedSessionModal({
           />
         )}
 
+        {/* MODALITY 8B: CONFUSABLE CHARACTERS (形近字 Visual Twins & 同音字 Homophones) */}
+        {currentModality === 'confusable_chars' && (
+          <ConfusableCharsExerciseCard
+            item={
+              currentItem?.confusableItem ||
+              buildConfusableDrillItems(lessonWordPool, {}, 1)[0] ||
+              null
+            }
+            masteryMap={progress?.mastery}
+            courseWords={
+              Array.isArray(courseWords) && courseWords.length > 0
+                ? courseWords
+                : lessonWordPool
+            }
+            lessonPool={lessonWordPool}
+            selectedHanzi={confusableSelectedHanzi}
+            isCompleted={stepCompleted}
+            cardAnim={cardAnim}
+            isSlowMode={isSlowMode}
+            onSetSlowMode={onSetSlowMode}
+            speakMandarin={speakMandarin}
+            speakingState={speakingState}
+            onContinue={advanceMixedStepNow}
+            onInspectOpenChange={setIsInspectingExample}
+            onSelectOption={(opt, confItem) => {
+              if (stepCompleted) return;
+              setConfusableSelectedHanzi(opt.hanzi);
+              setStepCompleted(true);
+              const spokenTarget =
+                confItem?.targetWord?.hanzi ||
+                confItem?.options?.find((o) => o.isCorrect)?.hanzi ||
+                opt.hanzi;
+              if (opt.isCorrect) {
+                setCardAnim('correct');
+                setTimeout(() => setCardAnim('idle'), 500);
+                onRecordSkillEvent?.(currentWord, 'confusable_chars', {
+                  mistakesDelta: 0,
+                  completionsDelta: 1
+                });
+                const { nextBonus, nextMax } = awardComboXp(5);
+                speakMandarin(spokenTarget);
+                scheduleNextQueueItem(3000, nextBonus, nextMax);
+              } else {
+                registerMistakeFeedback();
+                onRecordSkillEvent?.(currentWord, 'confusable_chars', {
+                  mistakesDelta: 1,
+                  completionsDelta: 0
+                });
+                speakMandarin(spokenTarget);
+                scheduleNextQueueItem(3600, bonusXp, maxCombo);
+              }
+            }}
+          />
+        )}
+
         {/* MODALITY 9: EN -> ZH TRANSLATION PRODUCTION */}
         {effectiveModality === 'translation_prod' && activeGenerativeItem && (
           <TranslationExerciseCard
@@ -4256,7 +4574,15 @@ export function RuleExampleMiniPlayer({ rule, speakMandarin }) {
   }, []);
 
   useEffect(() => {
-    if (scriptStatus !== 'ready' || !containerRef.current || !window.HanziWriter) return;
+    if (
+      scriptStatus !== 'ready' ||
+      !containerRef.current ||
+      !window.HanziWriter ||
+      !currentExample?.char ||
+      !CJK_SINGLE_CHAR_REGEX.test(currentExample.char)
+    ) {
+      return;
+    }
     const containerEl = containerRef.current;
     containerEl.innerHTML = '';
     writerRef.current = null;
@@ -4536,7 +4862,15 @@ export function StrokeRuleIntuitionModal({
   );
 
   useEffect(() => {
-    if (scriptStatus !== 'ready' || !writerTargetRef.current || !window.HanziWriter) return;
+    if (
+      scriptStatus !== 'ready' ||
+      !writerTargetRef.current ||
+      !window.HanziWriter ||
+      !currentChar ||
+      !CJK_SINGLE_CHAR_REGEX.test(currentChar)
+    ) {
+      return;
+    }
     const containerEl = writerTargetRef.current;
 
     if (writerInstanceRef.current?.cancelQuiz) {
