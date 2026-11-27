@@ -56,6 +56,27 @@ import {
   SessionTimerBadge,
   InteractiveExampleText
 } from './SharedHudAndAudio.jsx';
+import {
+  TranslationExerciseCard,
+  OpenClozeCard,
+  SyntaxTransformCard,
+  ErrorSpotterCard
+} from './GenerativeExerciseCards.jsx';
+import {
+  ContextualWritingCard,
+  GrammarLabCard,
+  MicroReadingCard,
+  adaptContextualWritingItem,
+  normalizeGrammarLabItem,
+  buildParticleContrastLabItem
+} from './Phase4GenerativeCards.jsx';
+import {
+  generateSentenceForWord,
+  generateSyntaxTransformItem,
+  generateErrorSpotterItem,
+  generateSeparableVerbLabItem,
+  generateMicroReadingPassage
+} from '../engine/grammarEngine.js';
 
 export function ClozeExerciseCard({
   word,
@@ -1341,6 +1362,7 @@ export function HskMockExamModal({
 export function AdaptiveMixedSessionModal({
   sessionConfig,
   courseWords,
+  enrichedUnlockedWords,
   progress,
   wordNotes = {},
   onSaveWordNote,
@@ -1487,6 +1509,80 @@ export function AdaptiveMixedSessionModal({
       Array.isArray(courseWords) && courseWords.length > 0 ? courseWords : lessonWordPool;
     return getUnlockedDialoguePairs(sourcePool);
   }, [courseWords, lessonWordPool]);
+
+  const isGenerativeModality =
+    currentModality === 'translation_prod' ||
+    currentModality === 'open_cloze' ||
+    currentModality === 'syntax_transform' ||
+    currentModality === 'error_spotter' ||
+    currentModality === 'contextual_writing' ||
+    currentModality === 'grammar_lab' ||
+    currentModality === 'micro_reading';
+
+  const activeGenerativeItem = useMemo(() => {
+    if (!isGenerativeModality) return null;
+    if (currentItem?.generativeItem) {
+      if (currentModality === 'contextual_writing') {
+        return adaptContextualWritingItem(currentItem.generativeItem);
+      }
+      if (currentModality === 'grammar_lab') {
+        return normalizeGrammarLabItem(currentItem.generativeItem);
+      }
+      return currentItem.generativeItem;
+    }
+    const pool =
+      Array.isArray(enrichedUnlockedWords) && enrichedUnlockedWords.length > 0
+        ? enrichedUnlockedWords
+        : lessonWordPool;
+    try {
+      if (currentModality === 'translation_prod' || currentModality === 'open_cloze') {
+        return (
+          generateSentenceForWord(currentWord, pool) ||
+          generateSentenceForWord(null, pool)
+        );
+      }
+      if (currentModality === 'syntax_transform') {
+        return (
+          generateSyntaxTransformItem(pool, currentWord) ||
+          generateSyntaxTransformItem(pool, null)
+        );
+      }
+      if (currentModality === 'error_spotter') {
+        return (
+          generateErrorSpotterItem(pool, currentWord) ||
+          generateErrorSpotterItem(pool, null)
+        );
+      }
+      if (currentModality === 'contextual_writing') {
+        const directSentence = generateSentenceForWord(currentWord, pool);
+        const adaptedDirect = adaptContextualWritingItem(directSentence);
+        if (adaptedDirect) return adaptedDirect;
+        const fallbackSentence = generateSentenceForWord(null, pool);
+        return adaptContextualWritingItem(fallbackSentence);
+      }
+      if (currentModality === 'grammar_lab') {
+        const sepItem = generateSeparableVerbLabItem(pool);
+        const normalizedSep = normalizeGrammarLabItem(sepItem);
+        if (normalizedSep) return normalizedSep;
+        for (let attempt = 0; attempt < 6; attempt++) {
+          const sent = generateSentenceForWord(attempt === 0 ? currentWord : null, pool);
+          const particleItem = buildParticleContrastLabItem(sent, pool);
+          if (particleItem) return particleItem;
+        }
+        return null;
+      }
+      if (currentModality === 'micro_reading') {
+        return generateMicroReadingPassage(pool);
+      }
+      return null;
+    } catch (err) {
+      console.warn('[AdaptiveMixedSessionModal] Generative item fallback triggered:', currentModality, err);
+      return null;
+    }
+  }, [isGenerativeModality, currentItem, currentModality, currentWord, enrichedUnlockedWords, lessonWordPool, stepIdx]);
+
+  const effectiveModality =
+    isGenerativeModality && !activeGenerativeItem ? 'meaning_mc' : currentModality;
 
   const liveSessionRef = useRef({
     queue,
@@ -2265,7 +2361,64 @@ export function AdaptiveMixedSessionModal({
     }
   };
 
-  const modalityInfo = MODALITY_META[currentModality] || MODALITY_META.recognition;
+  const handleGenerativeCardResult = useCallback(
+    ({ isCorrect, item }) => {
+      if (stepCompleted) return;
+      setStepCompleted(true);
+      const spokenHanzi =
+        item?.expectedSentence?.hanzi ||
+        item?.correctedHanzi ||
+        item?.completedHanzi ||
+        item?.targetHanzi ||
+        item?.fullHanzi ||
+        (Array.isArray(item?.sentences)
+          ? item.sentences.map((s) => s?.hanzi || '').join('')
+          : '') ||
+        item?.hanzi ||
+        currentWord?.hanzi ||
+        '';
+      const correctDelayMs = currentModality === 'micro_reading' ? 2600 : 1700;
+      const wrongDelayMs = currentModality === 'micro_reading' ? 3200 : 2400;
+
+      if (isCorrect) {
+        setCardAnim('correct');
+        setTimeout(() => setCardAnim('idle'), 500);
+        onRecordSkillEvent?.(currentWord, currentModality, {
+          mistakesDelta: 0,
+          completionsDelta: 1
+        });
+        const { nextBonus, nextMax } = awardComboXp(6);
+        if (spokenHanzi) {
+          speakMandarin(spokenHanzi);
+        }
+        scheduleNextQueueItem(correctDelayMs, nextBonus, nextMax);
+      } else {
+        registerMistakeFeedback();
+        onRecordSkillEvent?.(currentWord, currentModality, {
+          mistakesDelta: 1,
+          completionsDelta: 0
+        });
+        if (spokenHanzi && currentModality === 'grammar_lab') {
+          speakMandarin(spokenHanzi);
+        }
+        scheduleNextQueueItem(wrongDelayMs, bonusXp, maxCombo);
+      }
+    },
+    [
+      stepCompleted,
+      currentWord,
+      currentModality,
+      onRecordSkillEvent,
+      awardComboXp,
+      speakMandarin,
+      scheduleNextQueueItem,
+      registerMistakeFeedback,
+      bonusXp,
+      maxCombo
+    ]
+  );
+
+  const modalityInfo = MODALITY_META[effectiveModality] || MODALITY_META.recognition;
   const currentWritingStageMeta = getWritingStageMeta(charStage);
   const isCurrentWritingCharDone =
     (charStage === 3 && writerModeStatus === 'completed') ||
@@ -2349,9 +2502,9 @@ export function AdaptiveMixedSessionModal({
         </div>
 
         {/* MODALITY 1: RECOGNITION, MEANING MC & REVERSE MEANING MC (4 OPTIONS) */}
-        {(currentModality === 'recognition' ||
-          currentModality === 'meaning_mc' ||
-          currentModality === 'reverse_meaning_mc') && (
+        {(effectiveModality === 'recognition' ||
+          effectiveModality === 'meaning_mc' ||
+          effectiveModality === 'reverse_meaning_mc') && (
           <div className="my-auto space-y-3.5 py-3">
             <div
               onClick={() => {
@@ -3490,6 +3643,163 @@ export function AdaptiveMixedSessionModal({
                 scheduleNextQueueItem(2100, bonusXp, maxCombo);
               }
             }}
+          />
+        )}
+
+        {/* MODALITY 9: EN -> ZH TRANSLATION PRODUCTION */}
+        {effectiveModality === 'translation_prod' && activeGenerativeItem && (
+          <TranslationExerciseCard
+            item={activeGenerativeItem}
+            masteryLv={masteryLv}
+            masteryMap={progress?.mastery}
+            courseWords={
+              Array.isArray(courseWords) && courseWords.length > 0
+                ? courseWords
+                : lessonWordPool
+            }
+            nodeLevel={nodeLevel}
+            isCompleted={stepCompleted}
+            cardAnim={cardAnim}
+            isSlowMode={isSlowMode}
+            onSetSlowMode={onSetSlowMode}
+            speakMandarin={speakMandarin}
+            speakingState={speakingState}
+            onResult={handleGenerativeCardResult}
+            onInspectOpenChange={setIsInspectingExample}
+          />
+        )}
+
+        {/* MODALITY 10: FREE-TEXT OPEN CLOZE (自由填空) */}
+        {effectiveModality === 'open_cloze' && activeGenerativeItem && (
+          <OpenClozeCard
+            item={activeGenerativeItem}
+            masteryLv={masteryLv}
+            masteryMap={progress?.mastery}
+            courseWords={
+              Array.isArray(courseWords) && courseWords.length > 0
+                ? courseWords
+                : lessonWordPool
+            }
+            nodeLevel={nodeLevel}
+            isCompleted={stepCompleted}
+            cardAnim={cardAnim}
+            isSlowMode={isSlowMode}
+            onSetSlowMode={onSetSlowMode}
+            speakMandarin={speakMandarin}
+            speakingState={speakingState}
+            onResult={handleGenerativeCardResult}
+            onInspectOpenChange={setIsInspectingExample}
+          />
+        )}
+
+        {/* MODALITY 11: SYNTACTIC TRANSFORMATION (句型转换) */}
+        {effectiveModality === 'syntax_transform' && activeGenerativeItem && (
+          <SyntaxTransformCard
+            item={activeGenerativeItem}
+            masteryLv={masteryLv}
+            masteryMap={progress?.mastery}
+            courseWords={
+              Array.isArray(courseWords) && courseWords.length > 0
+                ? courseWords
+                : lessonWordPool
+            }
+            nodeLevel={nodeLevel}
+            isCompleted={stepCompleted}
+            cardAnim={cardAnim}
+            isSlowMode={isSlowMode}
+            onSetSlowMode={onSetSlowMode}
+            speakMandarin={speakMandarin}
+            speakingState={speakingState}
+            onResult={handleGenerativeCardResult}
+            onInspectOpenChange={setIsInspectingExample}
+          />
+        )}
+
+        {/* MODALITY 12: SENTENCE ERROR SPOTTER (病句修改) */}
+        {effectiveModality === 'error_spotter' && activeGenerativeItem && (
+          <ErrorSpotterCard
+            item={activeGenerativeItem}
+            masteryLv={masteryLv}
+            masteryMap={progress?.mastery}
+            courseWords={
+              Array.isArray(courseWords) && courseWords.length > 0
+                ? courseWords
+                : lessonWordPool
+            }
+            nodeLevel={nodeLevel}
+            isCompleted={stepCompleted}
+            cardAnim={cardAnim}
+            isSlowMode={isSlowMode}
+            onSetSlowMode={onSetSlowMode}
+            speakMandarin={speakMandarin}
+            speakingState={speakingState}
+            onResult={handleGenerativeCardResult}
+            onInspectOpenChange={setIsInspectingExample}
+          />
+        )}
+
+        {/* MODALITY 13: CONTEXTUAL WRITING (语境书写 + HanziWriter) */}
+        {effectiveModality === 'contextual_writing' && activeGenerativeItem && (
+          <ContextualWritingCard
+            item={activeGenerativeItem}
+            masteryLv={masteryLv}
+            masteryMap={progress?.mastery}
+            courseWords={
+              Array.isArray(courseWords) && courseWords.length > 0
+                ? courseWords
+                : lessonWordPool
+            }
+            nodeLevel={nodeLevel}
+            isCompleted={stepCompleted}
+            cardAnim={cardAnim}
+            isSlowMode={isSlowMode}
+            onSetSlowMode={onSetSlowMode}
+            speakMandarin={speakMandarin}
+            speakingState={speakingState}
+            onResult={handleGenerativeCardResult}
+            onInspectOpenChange={setIsInspectingExample}
+          />
+        )}
+
+        {/* MODALITY 14: SEPARABLE VERBS (离合词) & ASPECT/PARTICLE LAB */}
+        {effectiveModality === 'grammar_lab' && activeGenerativeItem && (
+          <GrammarLabCard
+            item={activeGenerativeItem}
+            masteryMap={progress?.mastery}
+            courseWords={
+              Array.isArray(courseWords) && courseWords.length > 0
+                ? courseWords
+                : lessonWordPool
+            }
+            isCompleted={stepCompleted}
+            cardAnim={cardAnim}
+            isSlowMode={isSlowMode}
+            onSetSlowMode={onSetSlowMode}
+            speakMandarin={speakMandarin}
+            speakingState={speakingState}
+            onResult={handleGenerativeCardResult}
+            onInspectOpenChange={setIsInspectingExample}
+          />
+        )}
+
+        {/* MODALITY 15: MICRO-READING MINI-PASSAGE COMPREHENSION (短文阅读) */}
+        {effectiveModality === 'micro_reading' && activeGenerativeItem && (
+          <MicroReadingCard
+            item={activeGenerativeItem}
+            masteryMap={progress?.mastery}
+            courseWords={
+              Array.isArray(courseWords) && courseWords.length > 0
+                ? courseWords
+                : lessonWordPool
+            }
+            isCompleted={stepCompleted}
+            cardAnim={cardAnim}
+            isSlowMode={isSlowMode}
+            onSetSlowMode={onSetSlowMode}
+            speakMandarin={speakMandarin}
+            speakingState={speakingState}
+            onResult={handleGenerativeCardResult}
+            onInspectOpenChange={setIsInspectingExample}
           />
         )}
 

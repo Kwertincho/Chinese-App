@@ -1,4 +1,4 @@
-const CACHE_NAME = 'hanzi-app-cache-v4';
+const CACHE_NAME = 'hanzi-app-cache-v5';
 
 const CORE_ASSETS = [
   '/',
@@ -89,6 +89,36 @@ self.addEventListener('fetch', (event) => {
             return response;
           })
           .catch(() => cached);
+      })
+    );
+    return;
+  }
+
+  // Cache-first (with background update & network fallback) for static offline linguistic datasets (/data/*.json)
+  const isStaticLinguisticData =
+    url.origin === self.location.origin &&
+    url.pathname.startsWith('/data/') &&
+    url.pathname.endsWith('.json');
+
+  if (isStaticLinguisticData) {
+    event.respondWith(
+      caches.match(request).then((cached) => {
+        const fetchAndCache = fetch(request)
+          .then((response) => {
+            const contentType = (response.headers.get('content-type') || '').toLowerCase();
+            if (response && response.status === 200 && contentType.includes('application/json')) {
+              const clone = response.clone();
+              caches.open(CACHE_NAME).then((cache) => cache.put(request, clone));
+            }
+            return response;
+          })
+          .catch(() => cached);
+
+        if (cached) {
+          event.waitUntil(fetchAndCache);
+          return cached;
+        }
+        return fetchAndCache;
       })
     );
     return;

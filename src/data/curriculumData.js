@@ -316,6 +316,41 @@ export const MODALITY_META = {
     label: 'Conversational Q&A (问答)',
     shortLabel: '问答',
     badgeClass: 'bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/40'
+  },
+  translation_prod: {
+    label: 'EN → ZH Translation',
+    shortLabel: 'Translate',
+    badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40'
+  },
+  open_cloze: {
+    label: 'Open Cloze • 自由填空',
+    shortLabel: 'Open Cloze',
+    badgeClass: 'bg-cyan-500/20 text-cyan-300 border-cyan-500/40'
+  },
+  syntax_transform: {
+    label: 'Syntax Transform • 句型转换',
+    shortLabel: 'Transform',
+    badgeClass: 'bg-violet-500/20 text-violet-300 border-violet-500/40'
+  },
+  error_spotter: {
+    label: 'Error Spotter • 病句修改',
+    shortLabel: 'Error Fix',
+    badgeClass: 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+  },
+  contextual_writing: {
+    label: 'Contextual Writing • 语境书写',
+    shortLabel: 'Context Write',
+    badgeClass: 'bg-rose-500/20 text-rose-300 border-rose-500/40'
+  },
+  grammar_lab: {
+    label: 'Separables & Particles • 离合词',
+    shortLabel: 'Grammar Lab',
+    badgeClass: 'bg-fuchsia-500/20 text-fuchsia-300 border-fuchsia-500/40'
+  },
+  micro_reading: {
+    label: 'Micro-Reading • 短文阅读',
+    shortLabel: 'Micro-Read',
+    badgeClass: 'bg-amber-500/20 text-amber-300 border-amber-500/40'
   }
 };
 
@@ -1175,6 +1210,7 @@ export const INITIAL_PROGRESS_STATE = {
     claimedIds: []
   },
   wordNotes: {},
+  wordLinguisticOverrides: {},
   unlockedStage: 1,
   completedStages: [],
   completedStrokeRules: [],

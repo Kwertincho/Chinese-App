@@ -1437,6 +1437,34 @@ export function getWordSkillTelemetry(telemetryMap = {}, word = {}) {
     dialogue_qa: {
       mistakes: entry.dialogue_qa?.mistakes || 0,
       completions: entry.dialogue_qa?.completions || 0
+    },
+    translation_prod: {
+      mistakes: entry.translation_prod?.mistakes || 0,
+      completions: entry.translation_prod?.completions || 0
+    },
+    open_cloze: {
+      mistakes: entry.open_cloze?.mistakes || 0,
+      completions: entry.open_cloze?.completions || 0
+    },
+    syntax_transform: {
+      mistakes: entry.syntax_transform?.mistakes || 0,
+      completions: entry.syntax_transform?.completions || 0
+    },
+    error_spotter: {
+      mistakes: entry.error_spotter?.mistakes || 0,
+      completions: entry.error_spotter?.completions || 0
+    },
+    contextual_writing: {
+      mistakes: entry.contextual_writing?.mistakes || 0,
+      completions: entry.contextual_writing?.completions || 0
+    },
+    grammar_lab: {
+      mistakes: entry.grammar_lab?.mistakes || 0,
+      completions: entry.grammar_lab?.completions || 0
+    },
+    micro_reading: {
+      mistakes: entry.micro_reading?.mistakes || 0,
+      completions: entry.micro_reading?.completions || 0
     }
   };
 }
@@ -1905,6 +1933,16 @@ export function computeNodeLevelXpMultiplier(currentNodeLevel = 0) {
   return 1.0;
 }
 
+/**
+ * @param {any[]} [words]
+ * @param {string[]} [allowedModalities]
+ * @param {string} [badgeText]
+ * @param {number} [lessonIndex]
+ * @param {any[]} [pastLessonWords]
+ * @param {number} [nodeLevel]
+ * @param {any[]} [unlockedWordsPool]
+ * @param {any} [generativeReadiness]
+ */
 export function buildDynamicModalityQueue(
   words = UNIT_1_WORDS,
   allowedModalities = ['recognition'],
@@ -1912,7 +1950,8 @@ export function buildDynamicModalityQueue(
   lessonIndex = 0,
   pastLessonWords = [],
   nodeLevel = 0,
-  unlockedWordsPool = []
+  unlockedWordsPool = [],
+  generativeReadiness
 ) {
   const cleanNodeLevel = Math.max(0, Math.floor(Number(nodeLevel) || 0));
   const safeWords =
@@ -1950,6 +1989,45 @@ export function buildDynamicModalityQueue(
     baseModes.push('reverse_meaning_mc');
   }
 
+  // Phase 4 Adventure Map Run 2 & Run 3 Generative Modality Integration (strictly gated on generativeReadiness)
+  const isPureWritingOnly = rawBaseModes.every((m) => m === 'writing');
+  const hasWritingInNode = rawBaseModes.includes('writing');
+  const isMeaningOrMultiNode =
+    rawBaseModes.includes('meaning_mc') ||
+    rawBaseModes.includes('reverse_meaning_mc') ||
+    rawBaseModes.length > 1;
+
+  if (generativeReadiness && !isPureWritingOnly) {
+    if (cleanNodeLevel === 1) {
+      // Run 2: include open_cloze in Meaning Quiz, Skill Mix & Gauntlet; include contextual_writing alongside writing in Skill Mix & Gauntlet
+      if (isMeaningOrMultiNode && generativeReadiness.open_cloze?.unlocked && !baseModes.includes('open_cloze')) {
+        baseModes.push('open_cloze');
+      }
+      if (
+        hasWritingInNode &&
+        rawBaseModes.length > 1 &&
+        generativeReadiness.contextual_writing?.unlocked &&
+        !baseModes.includes('contextual_writing')
+      ) {
+        baseModes.push('contextual_writing');
+      }
+    } else if (cleanNodeLevel >= 2) {
+      // Run 3 MAX Trial: mix unlocked generative modes into Discovery, Meaning Quiz, Skill Mix & Gauntlet
+      const run3GenerativeCandidates = [
+        'translation_prod',
+        'open_cloze',
+        'syntax_transform',
+        'error_spotter',
+        'contextual_writing'
+      ];
+      run3GenerativeCandidates.forEach((gMode) => {
+        if (generativeReadiness[gMode]?.unlocked && !baseModes.includes(gMode)) {
+          baseModes.push(gMode);
+        }
+      });
+    }
+  }
+
   const effectiveUnlockedPool =
     Array.isArray(unlockedWordsPool) && unlockedWordsPool.length > 0
       ? unlockedWordsPool
@@ -1958,10 +2036,22 @@ export function buildDynamicModalityQueue(
   const classifierGate = getClassifierDrillUnlockStatus(effectiveUnlockedPool);
   const dialogueGate = getDialogueQaUnlockStatus(effectiveUnlockedPool);
 
-  // Strictly enforce minimum vocabulary gates if classifier_drill / dialogue_qa were requested
+  // Strictly enforce minimum vocabulary gates if classifier_drill / dialogue_qa or generative modes were requested
+  const GENERATIVE_GATE_KEYS = new Set([
+    'translation_prod',
+    'open_cloze',
+    'syntax_transform',
+    'error_spotter',
+    'contextual_writing',
+    'grammar_lab',
+    'micro_reading'
+  ]);
   const gatedModes = baseModes.filter((m) => {
     if (m === 'classifier_drill') return classifierGate.unlocked;
     if (m === 'dialogue_qa') return dialogueGate.unlocked;
+    if (GENERATIVE_GATE_KEYS.has(m)) {
+      return Boolean(generativeReadiness?.[m]?.unlocked);
+    }
     return true;
   });
 
@@ -1992,8 +2082,13 @@ export function buildDynamicModalityQueue(
   const coreModes = modes.filter((m) => m !== 'classifier_drill' && m !== 'dialogue_qa');
   const rawActiveCoreModes = coreModes.length > 0 ? coreModes : modes;
 
-  // On Run 3 MAX Trial (nodeLevel >= 2), prioritize active-production/context modalities
+  // On Run 3 MAX Trial (nodeLevel >= 2), prioritize active-production/context & unlocked generative modalities
   const RUN3_PRIORITY_ORDER = [
+    'translation_prod',
+    'open_cloze',
+    'syntax_transform',
+    'error_spotter',
+    'contextual_writing',
     'cloze',
     'sentence_builder',
     'reverse_meaning_mc',
@@ -2203,10 +2298,15 @@ export function buildDynamicModalityQueue(
         )
       : [];
 
-    // Strictly exclude 'writing' from allowed review modalities
+    // Strictly exclude 'writing' and 'contextual_writing' from allowed review modalities
     const validReviewModes = modes
       .map((m) => (m === 'recognition' ? 'meaning_mc' : m))
-      .filter((m) => m !== 'writing' && NON_WRITING_REVIEW_MODALITIES.includes(m));
+      .filter(
+        (m) =>
+          m !== 'writing' &&
+          m !== 'contextual_writing' &&
+          NON_WRITING_REVIEW_MODALITIES.includes(m)
+      );
     if (cleanNodeLevel >= 1 && !validReviewModes.includes('reverse_meaning_mc')) {
       validReviewModes.push('reverse_meaning_mc');
     }
@@ -2239,11 +2339,13 @@ export function buildDynamicModalityQueue(
     const insertSlots = [2, 5, 7];
 
     selectedReviewWords.forEach((normalizedRev, rIdx) => {
-      // Strictly never 'writing'
+      // Strictly never 'writing' or 'contextual_writing'
       const chosenReviewModality =
         reviewModePool[(rIdx + cleanNodeLevel + Math.floor(Math.random() * reviewModePool.length)) % reviewModePool.length];
       let safeReviewModality =
-        chosenReviewModality === 'writing' ? 'meaning_mc' : chosenReviewModality;
+        chosenReviewModality === 'writing' || chosenReviewModality === 'contextual_writing'
+          ? 'meaning_mc'
+          : chosenReviewModality;
       let revClassifierItem = null;
       let revDialoguePair = null;
       let revStepWord = normalizedRev;

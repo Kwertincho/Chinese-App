@@ -35,7 +35,12 @@ import {
   Swords,
   Clock,
   Trash2,
-  MessageSquare
+  MessageSquare,
+  Languages,
+  ArrowRight,
+  AlertTriangle,
+  FlaskConical,
+  ScrollText
 } from 'lucide-react';
 import {
   soundFX,
@@ -55,6 +60,10 @@ import {
   ADVANCED_MODE_UNLOCK_THRESHOLDS,
   getPlayerTitle
 } from '../data/curriculumData.js';
+import {
+  enrichWordEntry,
+  getLinguisticBadgeSummary
+} from '../engine/lexiconEnricher.js';
 import {
   stripToneMarks,
   parsePinyinSyllablesWithTones,
@@ -883,6 +892,9 @@ export function SmartReviewArenaView({
   allUniqueWordsArray,
   unlockedWords,
   unlockedWordsCount = 3,
+  enrichedUnlockedWords,
+  generativeReadiness,
+  corpusStats,
   speakMandarin,
   speakingState,
   onLaunchSmartReviewSession,
@@ -894,9 +906,11 @@ export function SmartReviewArenaView({
   onLaunchToneSandhiDrill,
   onLaunchHskMockExam,
   onLaunchBlitzMatch,
+  onLaunchGenerativeDrill,
   onLaunchActivity,
   triggerToast
 }) {
+  const safeCorpusStats = corpusStats || { totalCorpusSentences: 0, i0Count: 0, i1Count: 0 };
   const [reviewFilter, setReviewFilter] = useState('all_weak');
 
   const isSentenceBuilderUnlocked =
@@ -1176,6 +1190,18 @@ export function SmartReviewArenaView({
       if (!candidate) break;
 
       const preferredModes = getPreferredModalitiesForMastery(candidate.mastery);
+      const unlockedLv7GenerativeModes =
+        candidate.mastery >= 7
+          ? [
+              ...(generativeReadiness?.contextual_writing?.unlocked
+                ? ['contextual_writing']
+                : []),
+              ...(generativeReadiness?.translation_prod?.unlocked
+                ? ['translation_prod']
+                : []),
+              ...(generativeReadiness?.open_cloze?.unlocked ? ['open_cloze'] : [])
+            ]
+          : [];
       const candidateModes = Array.from(
         new Set([
           ...allowedModes,
@@ -1183,7 +1209,8 @@ export function SmartReviewArenaView({
             ? [
                 'writing',
                 ...(isClozeUnlocked ? ['cloze'] : []),
-                ...(isSentenceBuilderUnlocked ? ['sentence_builder'] : [])
+                ...(isSentenceBuilderUnlocked ? ['sentence_builder'] : []),
+                ...unlockedLv7GenerativeModes
               ]
             : [])
         ])
@@ -1192,7 +1219,12 @@ export function SmartReviewArenaView({
       const getModeWeightScore = (mode) => {
         const telemetry = candidate.telemetry[mode] || { mistakes: 0, completions: 0 };
         const prefIdx = preferredModes.indexOf(mode);
-        const tierPreferenceBonus = prefIdx !== -1 ? (preferredModes.length - prefIdx) * 4 + 6 : 0;
+        const tierPreferenceBonus =
+          prefIdx !== -1
+            ? (preferredModes.length - prefIdx) * 4 + 6
+            : candidate.mastery >= 7 && unlockedLv7GenerativeModes.includes(mode)
+            ? 14
+            : 0;
         const mistakeWeight = (telemetry.mistakes || 0) * 5;
         const completionPenalty = (telemetry.completions || 0) * 1.5;
         return tierPreferenceBonus + mistakeWeight - completionPenalty;
@@ -1292,7 +1324,8 @@ export function SmartReviewArenaView({
     isClassifierUnlocked,
     isDialogueQaUnlocked,
     classifierStatus.items,
-    dialogueStatus.pairs
+    dialogueStatus.pairs,
+    generativeReadiness
   ]);
 
   return (
@@ -1807,6 +1840,187 @@ export function SmartReviewArenaView({
           )}
         </button>
 
+        {/* Generative Grammar & Production Lab (Phase 3-5 Gated Launch Grid) */}
+        <div className="pt-2 border-t border-slate-800 space-y-2.5">
+          <div className="flex items-center justify-between gap-2 flex-wrap">
+            <span className="text-[10px] font-extrabold uppercase tracking-wider text-amber-300 flex items-center gap-1.5">
+              <Sparkles className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span>Generative Grammar &amp; Production Lab</span>
+            </span>
+            <span className="text-[10px] font-bold text-slate-400">
+              {generativeReadiness?.activeSchemasCount ?? 0} Patterns Active
+            </span>
+          </div>
+
+          {/* Bilingual Corpus (i+0 / i+1) Counter Pill */}
+          <div className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-[2px] bg-slate-950/90 border border-emerald-500/35">
+            <span className="font-clarity text-[10px] font-extrabold uppercase tracking-wider text-emerald-300 flex items-center gap-1.5">
+              <BookOpen className="w-3 h-3 text-emerald-400 shrink-0" />
+              <span>Bilingual Corpus (i+0 / i+1)</span>
+            </span>
+            <span className="font-clarity text-[10px] font-bold text-emerald-200">
+              {safeCorpusStats.i0Count} i+0 Ready • {safeCorpusStats.i1Count} i+1
+            </span>
+          </div>
+
+          <div className="grid grid-cols-2 gap-2.5">
+            {[
+              {
+                modeKey: 'translation_prod',
+                tag: 'EN → ZH',
+                title: 'EN → ZH Translation',
+                subtitle: 'Blocks or Pinyin/Hanzi',
+                icon: Languages,
+                unlockedClass:
+                  'bg-gradient-to-br from-amber-500/20 to-orange-500/20 hover:from-amber-500/30 hover:to-orange-500/30 border-amber-400/60',
+                tagClass: 'text-amber-300',
+                iconClass: 'text-amber-400'
+              },
+              {
+                modeKey: 'open_cloze',
+                tag: '自由填空',
+                title: 'Open Cloze',
+                subtitle: 'Free-Text Grammar Fill',
+                icon: Sparkles,
+                unlockedClass:
+                  'bg-gradient-to-br from-cyan-500/20 to-sky-500/20 hover:from-cyan-500/30 hover:to-sky-500/30 border-cyan-400/60',
+                tagClass: 'text-cyan-300 font-hanzi',
+                iconClass: 'text-cyan-400'
+              },
+              {
+                modeKey: 'syntax_transform',
+                tag: '句型转换',
+                title: 'Syntax Transform',
+                subtitle: 'Negate • Question • Past',
+                icon: ArrowRight,
+                unlockedClass:
+                  'bg-gradient-to-br from-violet-500/20 to-indigo-500/20 hover:from-violet-500/30 hover:to-indigo-500/30 border-violet-400/60',
+                tagClass: 'text-violet-300 font-hanzi',
+                iconClass: 'text-violet-400'
+              },
+              {
+                modeKey: 'error_spotter',
+                tag: '病句修改',
+                title: 'Error Spotter',
+                subtitle: 'Spot & Fix L2 Bugs',
+                icon: AlertTriangle,
+                unlockedClass:
+                  'bg-gradient-to-br from-rose-500/20 to-pink-500/20 hover:from-rose-500/30 hover:to-pink-500/30 border-rose-400/60',
+                tagClass: 'text-rose-300 font-hanzi',
+                iconClass: 'text-rose-400'
+              },
+              {
+                modeKey: 'contextual_writing',
+                tag: '语境书写',
+                title: 'Contextual Writing',
+                subtitle: 'Deduce & Draw in Context',
+                icon: PenTool,
+                unlockedClass:
+                  'bg-gradient-to-br from-red-500/20 to-amber-500/20 hover:from-red-500/30 hover:to-amber-500/30 border-rose-400/60',
+                tagClass: 'text-rose-300 font-hanzi',
+                iconClass: 'text-rose-400'
+              },
+              {
+                modeKey: 'grammar_lab',
+                tag: '离合词',
+                title: 'Separables & Particles',
+                subtitle: '离合词 & Aspect Lab',
+                icon: FlaskConical,
+                unlockedClass:
+                  'bg-gradient-to-br from-fuchsia-500/20 to-purple-500/20 hover:from-fuchsia-500/30 hover:to-purple-500/30 border-fuchsia-400/60',
+                tagClass: 'text-fuchsia-300 font-hanzi',
+                iconClass: 'text-fuchsia-400'
+              },
+              {
+                modeKey: 'micro_reading',
+                tag: '短文阅读',
+                title: 'Micro-Reading',
+                subtitle: '3-Sentence Story Q&A',
+                icon: ScrollText,
+                unlockedClass:
+                  'bg-gradient-to-br from-amber-500/20 to-yellow-500/20 hover:from-amber-500/30 hover:to-yellow-500/30 border-amber-400/60',
+                tagClass: 'text-amber-300 font-hanzi',
+                iconClass: 'text-amber-400'
+              },
+              {
+                modeKey: 'corpus_immersion',
+                tag: '语料沉浸',
+                title: 'i+0 Corpus Immersion',
+                subtitle: 'Natural Sentence Mix',
+                icon: BookMarked,
+                customStatus: {
+                  unlocked: safeCorpusStats.i0Count >= 6,
+                  detailProgressText: `Unlocks at 6 i+0 sentences (${safeCorpusStats.i0Count}/6 ready)`
+                },
+                unlockedClass:
+                  'bg-gradient-to-br from-emerald-500/20 to-teal-500/20 hover:from-emerald-500/30 hover:to-teal-500/30 border-emerald-400/60',
+                tagClass: 'text-emerald-300 font-hanzi',
+                iconClass: 'text-emerald-400'
+              }
+            ].map((card) => {
+              const status = card.customStatus ||
+                generativeReadiness?.[card.modeKey] || {
+                  unlocked: false,
+                  detailProgressText: `Unlock more vocabulary words (${unlockedWordsCount} unlocked).`
+                };
+              const isModeUnlocked = Boolean(status.unlocked);
+              const IconComp = card.icon;
+
+              return (
+                <button
+                  key={card.modeKey}
+                  type="button"
+                  onClick={() => {
+                    if (!isModeUnlocked) {
+                      soundFX.playMistake();
+                      triggerToast?.(
+                        `Mode Locked (${card.title})`,
+                        status.detailProgressText || 'Unlock more vocabulary words to activate this lab.'
+                      );
+                      return;
+                    }
+                    onLaunchGenerativeDrill?.(card.modeKey);
+                  }}
+                  className={`game-btn-3d p-3 rounded-[2px] border-2 text-left flex flex-col justify-between transition-all cursor-pointer ${
+                    isModeUnlocked
+                      ? card.unlockedClass
+                      : 'bg-slate-900/80 border-slate-800 opacity-75'
+                  }`}
+                >
+                  <div className="flex items-center justify-between gap-1">
+                    <span
+                      className={`text-[10px] font-black uppercase ${
+                        isModeUnlocked ? card.tagClass : 'text-slate-500'
+                      }`}
+                    >
+                      {card.tag}
+                    </span>
+                    {isModeUnlocked ? (
+                      <IconComp className={`w-3.5 h-3.5 shrink-0 ${card.iconClass}`} />
+                    ) : (
+                      <Lock className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+                    )}
+                  </div>
+                  <div className="mt-1.5">
+                    <div className="text-xs font-black text-white leading-tight">
+                      {card.title}
+                    </div>
+                    {isModeUnlocked ? (
+                      <div className="font-clarity text-[10px] text-slate-300 mt-0.5 leading-snug">
+                        {card.subtitle}
+                      </div>
+                    ) : (
+                      <div className="font-clarity text-[10px] font-bold text-amber-300 mt-0.5 leading-snug">
+                        {status.detailProgressText}
+                      </div>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+        </div>
+
         {/* 40+ Words: HSK Mock Exam Mode */}
         <button
           type="button"
@@ -1979,11 +2193,25 @@ export function SmartReviewArenaView({
 // ============================================================================
 // TAB 3: LIBRARY & ORTHOGRAPHY STUDIO VIEW
 // ============================================================================
+const QUICK_ADD_CATEGORY_PRESETS = {
+  verb: { pos: 'verb', features: ['action'] },
+  noun_person: { pos: 'noun', features: ['human'] },
+  noun_place: { pos: 'place', features: ['place'] },
+  noun_language: { pos: 'noun', features: ['language', 'learnable'] },
+  noun_food_drink: { pos: 'noun', features: ['food', 'drink', 'buyable'] },
+  noun_object: { pos: 'noun', features: ['object', 'buyable'] },
+  time: { pos: 'time', features: ['time'] },
+  adj: { pos: 'adj', features: ['adj', 'gradable'] },
+  expression: { pos: 'expression', features: ['clause'] }
+};
+
 export function LibraryView({
   progress,
   courses,
   activeCourse,
   customDecks,
+  linguisticDataStatus = { loaded: false, lexiconCount: 0, preloadedCoursesCount: 0 },
+  onSaveWordLinguisticOverride,
   isSlowMode,
   onSetSlowMode,
   speakMandarin,
@@ -2021,6 +2249,7 @@ export function LibraryView({
   const [singlePinyin, setSinglePinyin] = useState('');
   const [singleMeaning, setSingleMeaning] = useState('');
   const [singleExample, setSingleExample] = useState('');
+  const [singleCategory, setSingleCategory] = useState('auto');
   const [singleDeckName, setSingleDeckName] = useState('Custom Vocabulary');
   const [customNewDeckName, setCustomNewDeckName] = useState('');
 
@@ -2063,10 +2292,15 @@ export function LibraryView({
       }
     ]);
 
+    if (singleCategory !== 'auto' && QUICK_ADD_CATEGORY_PRESETS[singleCategory]) {
+      onSaveWordLinguisticOverride?.({ hanzi: h }, QUICK_ADD_CATEGORY_PRESETS[singleCategory]);
+    }
+
     setSingleHanzi('');
     setSinglePinyin('');
     setSingleMeaning('');
     setSingleExample('');
+    setSingleCategory('auto');
     setQuickAddOpen(false);
     triggerToast(`Added "${h}" (${p})`, `Saved to deck "${finalDeck}"`);
   };
@@ -3256,12 +3490,21 @@ export function LibraryView({
           </div>
 
           <div className="space-y-2.5">
-            <h2 className="text-xs font-extrabold uppercase tracking-wider text-slate-300">
-              Vocabulary Reference ({filteredWordsList.length})
-            </h2>
+            <div className="flex items-center justify-between gap-2 flex-wrap">
+              <h2 className="text-xs font-extrabold uppercase tracking-wider text-slate-300">
+                Vocabulary Reference ({filteredWordsList.length})
+              </h2>
+              {linguisticDataStatus?.lexiconCount > 0 && (
+                <span className="font-clarity text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-400/30">
+                  HSK Lexicon • {linguisticDataStatus.lexiconCount.toLocaleString()} entries
+                </span>
+              )}
+            </div>
             {filteredWordsList.slice(0, vocabVisibleCount).map((word, idx) => {
               const masteryLv = getWordMasteryLevel(progress.mastery, word);
               const tierTitle = getMasteryTierMeta(masteryLv).tier;
+              const enrichedWord = enrichWordEntry(word, progress.wordLinguisticOverrides);
+              const linguisticBadges = getLinguisticBadgeSummary(enrichedWord);
               return (
                 <div
                   key={`${word.id}_${idx}`}
@@ -3306,6 +3549,24 @@ export function LibraryView({
                       />
                     </div>
                   </div>
+                  {linguisticBadges.length > 0 && (
+                    <div className="flex items-center gap-1.5 overflow-x-auto no-scrollbar pt-0.5">
+                      {linguisticBadges.map((badge, bIdx) => (
+                        <span
+                          key={`${word.id}_lb_${bIdx}`}
+                          className={`font-clarity shrink-0 whitespace-nowrap text-[10px] font-bold px-2 py-0.5 rounded-[2px] border ${
+                            badge.includes('Separable')
+                              ? 'bg-amber-500/15 text-amber-300 border-amber-400/35'
+                              : badge.startsWith('CL:')
+                              ? 'bg-emerald-500/15 text-emerald-300 border-emerald-400/35'
+                              : 'bg-slate-900/90 text-sky-300 border-slate-700'
+                          }`}
+                        >
+                          {badge}
+                        </span>
+                      ))}
+                    </div>
+                  )}
                   <div className="flex items-center justify-between gap-2 text-[10px] text-slate-400 border-t border-slate-800 pt-1.5">
                     <ScrollingText text={word.sourceBadge} className="flex-1" />
                   </div>
@@ -3585,7 +3846,7 @@ export function LibraryView({
       {/* MODAL 1: QUICK ADD SINGLE WORD */}
       {quickAddOpen && (
         <div className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-sm flex items-center justify-center p-4">
-          <div className="w-full max-w-sm rounded-3xl bg-slate-900 border border-slate-700 p-5 space-y-4 shadow-2xl">
+          <div className="w-full max-w-sm max-h-[90vh] overflow-y-auto rounded-3xl bg-slate-900 border border-slate-700 p-5 space-y-4 shadow-2xl">
             <div className="flex items-center justify-between border-b border-slate-800 pb-3">
               <div>
                 <span className="text-[10px] font-extrabold uppercase text-rose-400">
@@ -3656,6 +3917,28 @@ export function LibraryView({
                   placeholder="e.g. 他是我的好朋友。"
                   className="font-hanzi w-full bg-slate-950 border border-slate-700 focus:border-rose-500 rounded-xl px-3.5 py-2.5 text-xs text-white outline-none"
                 />
+              </div>
+
+              <div>
+                <label className="text-xs font-bold text-slate-300 block mb-1">
+                  Category (for Sentence Engine)
+                </label>
+                <select
+                  value={singleCategory}
+                  onChange={(e) => setSingleCategory(e.target.value)}
+                  className="font-clarity w-full bg-slate-950 border border-slate-700 focus:border-rose-500 rounded-xl px-3.5 py-2.5 text-xs font-bold text-white outline-none"
+                >
+                  <option value="auto">Auto-detect from HSK Lexicon &amp; Rules</option>
+                  <option value="verb">Action / Verb</option>
+                  <option value="noun_person">Person / Nationality / Role</option>
+                  <option value="noun_place">Place / Country / Location</option>
+                  <option value="noun_language">Language</option>
+                  <option value="noun_food_drink">Food or Drink</option>
+                  <option value="noun_object">Object / Item</option>
+                  <option value="time">Time / Date</option>
+                  <option value="adj">Adjective / Description</option>
+                  <option value="expression">Full Phrase / Expression</option>
+                </select>
               </div>
 
               <div>

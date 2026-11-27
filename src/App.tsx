@@ -34,6 +34,7 @@ import {
   STORAGE_KEY_COURSES,
   STORAGE_KEY_DECKS,
   INITIAL_PROGRESS_STATE,
+  MODALITY_META,
   getPlayerTitle,
   computePlayerLevelProgress
 } from './data/curriculumData.js';
@@ -48,7 +49,10 @@ import {
   getNodeCompletionLevel,
   migrateLessonProgressNodeLevels,
   computeNodeLevelXpMultiplier,
-  writeWordSrsEntry
+  writeWordSrsEntry,
+  SRS_ACTIVATION_MIN_WORDS,
+  isWordSrsDue,
+  countWordsAtLeastLevel
 } from './utils/mandarinHelpers.js';
 import {
   FlashcardStageModal,
@@ -70,6 +74,35 @@ import {
   ProfileView
 } from './components/TabViews.jsx';
 import { PWAInstallButton, OfflineIndicator } from './components/PWAInstallPrompt.jsx';
+import {
+  loadStaticLinguisticData,
+  getPreloadedCurriculum,
+  getLinguisticDataStatus
+} from './engine/linguisticDataLoader.js';
+import { enrichWordsCollection } from './engine/lexiconEnricher.js';
+import {
+  generateGenerativeBatch,
+  generateSentenceForWord,
+  generateSyntaxTransformItem,
+  generateErrorSpotterItem,
+  generateSeparableVerbLabItem,
+  generateMicroReadingPassage
+} from './engine/grammarEngine.js';
+import {
+  adaptContextualWritingItem,
+  normalizeGrammarLabItem,
+  buildParticleContrastLabItem
+} from './components/Phase4GenerativeCards.jsx';
+import {
+  getGenerativeEngineReadiness,
+  createLockedGenerativeReadiness
+} from './engine/translationGrader.js';
+import {
+  getCorpusReadinessStats,
+  mineCorpusSentences,
+  minedSentenceToOpenClozeItem,
+  minedSentenceToTranslationItem
+} from './engine/corpusMiner.js';
 
 export { speakMandarinGlobal };
 
@@ -123,6 +156,10 @@ export default function App() {
               : { date: null, seconds: 0 },
           lessonProgress: migratedLessonProgress,
           wordNotes: { ...(parsed.wordNotes || {}) },
+          wordLinguisticOverrides:
+            parsed.wordLinguisticOverrides && typeof parsed.wordLinguisticOverrides === 'object'
+              ? { ...parsed.wordLinguisticOverrides }
+              : {},
           mastery: { ...INITIAL_PROGRESS_STATE.mastery, ...(parsed.mastery || {}) },
           srsData:
             parsed.srsData && typeof parsed.srsData === 'object'
@@ -212,6 +249,57 @@ export default function App() {
   });
   const [toastBanner, setToastBanner] = useState<{ id: number; title: string; subtitle: string } | null>(null);
   const [confirmResetOpen, setConfirmResetOpen] = useState(false);
+  const [linguisticDataStatus, setLinguisticDataStatus] = useState(() =>
+    getLinguisticDataStatus()
+  );
+
+  // Lazy non-blocking load of optional offline static linguistic data (/data/*.json)
+  useEffect(() => {
+    let cancelled = false;
+    loadStaticLinguisticData().then((status) => {
+      if (cancelled) return;
+      setLinguisticDataStatus(status);
+
+      const preloaded = getPreloadedCurriculum();
+      if (preloaded && Array.isArray(preloaded.courses) && preloaded.courses.length > 0) {
+        const incomingVersion = preloaded.version || null;
+        setCourses((prevCourses: any[]) => {
+          const nextCourses = [...prevCourses];
+          let didChange = false;
+
+          preloaded.courses.forEach((preCourse: any) => {
+            if (!preCourse?.id) return;
+            const stampedCourse = {
+              ...preCourse,
+              sourceType: 'preloaded-hsk',
+              curriculumVersion: incomingVersion || preCourse.curriculumVersion || null
+            };
+            const existingIdx = nextCourses.findIndex((c: any) => c.id === preCourse.id);
+            if (existingIdx === -1) {
+              nextCourses.push(stampedCourse);
+              didChange = true;
+            } else {
+              const existingCourse = nextCourses[existingIdx];
+              // Never overwrite user-imported courses; only refresh preloaded-hsk if newer version exists
+              if (
+                existingCourse?.sourceType === 'preloaded-hsk' &&
+                incomingVersion &&
+                existingCourse.curriculumVersion !== incomingVersion
+              ) {
+                nextCourses[existingIdx] = stampedCourse;
+                didChange = true;
+              }
+            }
+          });
+
+          return didChange ? nextCourses : prevCourses;
+        });
+      }
+    });
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   // Sync progress, courses, and decks to localStorage
   useEffect(() => {
@@ -343,6 +431,36 @@ export default function App() {
     () => computeUnlockedWordsPool(courses, activeCourse, activeLesson, progress),
     [courses, activeCourse, activeLesson, progress]
   );
+
+  // Enrich ONLY unlocked words (strictly isolating the silent master lexicon from exercise pools)
+  const enrichedUnlockedWords = useMemo(() => {
+    try {
+      return enrichWordsCollection(unlockedWords, progress.wordLinguisticOverrides);
+    } catch (err) {
+      console.warn('[App] enrichWordsCollection failed, falling back to raw unlocked words:', err);
+      return Array.isArray(unlockedWords) ? unlockedWords : [];
+    }
+  }, [unlockedWords, progress.wordLinguisticOverrides, linguisticDataStatus.loaded]);
+
+  // Memoized readiness metadata for Phase 3 & Phase 4 generative exercise modes
+  const generativeReadiness = useMemo(() => {
+    try {
+      return getGenerativeEngineReadiness(enrichedUnlockedWords);
+    } catch (err) {
+      console.warn('[App] getGenerativeEngineReadiness failed, using locked fallback:', err);
+      return createLockedGenerativeReadiness(unlockedWordsCount);
+    }
+  }, [enrichedUnlockedWords, unlockedWordsCount]);
+
+  // Memoized bilingual corpus i+0 / i+1 readiness statistics
+  const corpusStats = useMemo(() => {
+    try {
+      return getCorpusReadinessStats(enrichedUnlockedWords);
+    } catch (err) {
+      console.warn('[App] getCorpusReadinessStats failed:', err);
+      return { totalCorpusSentences: 0, i0Count: 0, i1Count: 0 };
+    }
+  }, [enrichedUnlockedWords, linguisticDataStatus.corpusCount]);
 
   const todayCalendarDate = getLocalIsoDate();
   const dailyQuests = useMemo(
@@ -881,6 +999,26 @@ export default function App() {
     });
   }, []);
 
+  const handleSaveWordLinguisticOverride = useCallback((word: any, overrideObj: any) => {
+    const hanziKey = String(typeof word === 'string' ? word : word?.hanzi || '').trim();
+    if (!hanziKey) return;
+    setProgress((prev: any) => {
+      const nextOverrides = { ...(prev.wordLinguisticOverrides || {}) };
+      if (!overrideObj || typeof overrideObj !== 'object') {
+        delete nextOverrides[hanziKey];
+      } else {
+        nextOverrides[hanziKey] = {
+          ...(nextOverrides[hanziKey] || {}),
+          ...overrideObj
+        };
+      }
+      return {
+        ...prev,
+        wordLinguisticOverrides: nextOverrides
+      };
+    });
+  }, []);
+
   const handleSetDailyGoalXp = useCallback(
     (newTarget: number) => {
       const cleanTarget = Math.max(10, Number(newTarget) || 30);
@@ -943,7 +1081,8 @@ export default function App() {
           activeLessonIndex,
           pastLessonWords,
           currentNodeLevel,
-          unlockedWords
+          unlockedWords,
+          generativeReadiness
         );
         setActiveModal({
           type: 'mixed_session',
@@ -1024,7 +1163,8 @@ export default function App() {
         activeLessonIndex,
         pastLessonWords,
         currentNodeLevel,
-        unlockedWords
+        unlockedWords,
+        generativeReadiness
       );
       setActiveModal({
         type: 'mixed_session',
@@ -1118,6 +1258,287 @@ export default function App() {
     dailyQuestState.completedIds?.includes(q.id)
   ).length;
   const isAllDailyQuestsDone = completedDailyQuestsCount >= 3;
+
+  const handleLaunchGenerativeDrill = useCallback(
+    (modeKey: string) => {
+      if (modeKey === 'corpus_immersion') {
+        if ((corpusStats?.i0Count || 0) < 6) {
+          soundFX.playMistake();
+          triggerToast(
+            'Corpus Immersion Locked',
+            `Unlocks at 6 i+0 sentences (${corpusStats?.i0Count || 0}/6 ready).`
+          );
+          return;
+        }
+      } else {
+        const modeStatus = (generativeReadiness as any)?.[modeKey];
+        if (!modeStatus?.unlocked) {
+          soundFX.playMistake();
+          triggerToast(
+            'Generative Mode Locked',
+            modeStatus?.detailProgressText || 'Unlock more vocabulary words to activate this lab.'
+          );
+          return;
+        }
+      }
+
+      const pool = Array.isArray(enrichedUnlockedWords) ? enrichedUnlockedWords : [];
+      if (pool.length === 0) return;
+
+      const nowMs = Date.now();
+      const learnedCount = countWordsAtLeastLevel(progress?.mastery, allUniqueWordsArray, 1);
+      const srsActive = learnedCount >= SRS_ACTIVATION_MIN_WORDS;
+      const srsDueHanziSet = new Set<string>();
+      const srsDueWords: any[] = [];
+
+      if (srsActive) {
+        pool.forEach((w: any) => {
+          const lv = getWordMasteryLevel(progress?.mastery, w);
+          if (isWordSrsDue(progress?.srsData, w, lv, nowMs)) {
+            if (w?.hanzi) srsDueHanziSet.add(w.hanzi);
+            srsDueWords.push(w);
+          }
+        });
+      }
+
+      const focusWords = [...srsDueWords, ...activeWords];
+      const modeMeta =
+        modeKey === 'corpus_immersion'
+          ? {
+              label: 'Corpus Immersion (i+0)',
+              shortLabel: 'Corpus i+0'
+            }
+          : (MODALITY_META as any)[modeKey] || {
+              label: 'Generative Grammar Drill',
+              shortLabel: 'Grammar'
+            };
+      const queue: any[] = [];
+
+      try {
+        if (modeKey === 'corpus_immersion') {
+          const minedList = mineCorpusSentences(pool, {
+            mode: 'i0_only',
+            srsDueHanziSet,
+            limit: 6
+          });
+          minedList.forEach((mined: any, idx: number) => {
+            const preferOpenCloze = idx % 2 === 0;
+            let chosenModality = preferOpenCloze ? 'open_cloze' : 'translation_prod';
+            let genItem = preferOpenCloze
+              ? minedSentenceToOpenClozeItem(mined, pool)
+              : minedSentenceToTranslationItem(mined, pool);
+            if (!genItem) {
+              chosenModality = preferOpenCloze ? 'translation_prod' : 'open_cloze';
+              genItem = preferOpenCloze
+                ? minedSentenceToTranslationItem(mined, pool)
+                : minedSentenceToOpenClozeItem(mined, pool);
+            }
+            if (genItem) {
+              queue.push({
+                stepId: `corp_imm_${mined.id}_${idx}`,
+                word: genItem.targetWord || pool[idx % pool.length] || activeWords[0],
+                modality: chosenModality,
+                generativeItem: genItem,
+                reason: `Corpus Immersion (i+0) • ${
+                  chosenModality === 'open_cloze' ? 'Open Cloze' : 'EN → ZH'
+                }`
+              });
+            }
+          });
+        } else if (modeKey === 'translation_prod' || modeKey === 'open_cloze') {
+          const batch = generateGenerativeBatch(pool, {
+            count: 6,
+            focusWords,
+            srsDueHanziSet,
+            mode: modeKey
+          });
+          batch.forEach((genItem: any, idx: number) => {
+            queue.push({
+              stepId: `${modeKey}_${genItem.id}_${idx}`,
+              word: genItem.targetWord || pool[idx % pool.length] || activeWords[0],
+              modality: modeKey,
+              generativeItem: genItem,
+              reason: `${modeMeta.shortLabel} • ${genItem.grammarPoint?.title || 'Grammar Pattern'}`
+            });
+          });
+        } else if (modeKey === 'syntax_transform') {
+          const seenTargets = new Set<string>();
+          const anchorPool = [...srsDueWords, ...pool];
+          for (let attempt = 0; attempt < 24 && queue.length < 6; attempt++) {
+            const focusWord = anchorPool.length > 0 ? anchorPool[attempt % anchorPool.length] : null;
+            const xform =
+              generateSyntaxTransformItem(pool, focusWord) ||
+              generateSyntaxTransformItem(pool, null);
+            const keyHanzi = xform?.expectedSentence?.hanzi || '';
+            if (xform && keyHanzi && !seenTargets.has(keyHanzi)) {
+              seenTargets.add(keyHanzi);
+              queue.push({
+                stepId: `xform_${xform.id}_${queue.length}`,
+                word:
+                  xform.expectedSentence?.targetWord ||
+                  focusWord ||
+                  pool[queue.length % pool.length] ||
+                  activeWords[0],
+                modality: 'syntax_transform',
+                generativeItem: xform,
+                reason: `Transform • ${xform.targetGrammarPoint?.title || 'Sentence Syntax'}`
+              });
+            }
+          }
+        } else if (modeKey === 'error_spotter') {
+          const seenBroken = new Set<string>();
+          const anchorPool = [...srsDueWords, ...pool];
+          for (let attempt = 0; attempt < 24 && queue.length < 6; attempt++) {
+            const focusWord = anchorPool.length > 0 ? anchorPool[attempt % anchorPool.length] : null;
+            const errItem =
+              generateErrorSpotterItem(pool, focusWord) ||
+              generateErrorSpotterItem(pool, null);
+            const keyBroken = errItem?.brokenHanzi || '';
+            if (errItem && keyBroken && !seenBroken.has(keyBroken)) {
+              seenBroken.add(keyBroken);
+              const tokenWord =
+                errItem.correctedTokens?.find((t: any) => t?.isTarget)?.sourceWord ||
+                focusWord ||
+                pool[queue.length % pool.length] ||
+                activeWords[0];
+              queue.push({
+                stepId: `err_${errItem.id}_${queue.length}`,
+                word: tokenWord,
+                modality: 'error_spotter',
+                generativeItem: errItem,
+                reason: 'Error Spotter • 病句修改'
+              });
+            }
+          }
+        } else if (modeKey === 'contextual_writing') {
+          const seenTargets = new Set<string>();
+          const batch = generateGenerativeBatch(pool, {
+            count: 10,
+            focusWords,
+            srsDueHanziSet
+          });
+          for (let i = 0; i < batch.length && queue.length < 5; i++) {
+            const adapted = adaptContextualWritingItem(batch[i]);
+            const targetKey = `${adapted?.targetWord?.hanzi || ''}__${adapted?.hanzi || ''}`;
+            if (adapted && adapted.targetWord?.hanzi && !seenTargets.has(targetKey)) {
+              seenTargets.add(targetKey);
+              queue.push({
+                stepId: `ctxw_${adapted.id || i}_${queue.length}`,
+                word: adapted.targetWord,
+                modality: 'contextual_writing',
+                generativeItem: adapted,
+                reason: `Context Write • ${adapted.grammarPoint?.title || 'Hanzi in Context'}`
+              });
+            }
+          }
+          // Top up to 4-5 items if batch had fewer contiguous targets
+          const anchorPool = [...srsDueWords, ...pool];
+          for (let attempt = 0; attempt < 16 && queue.length < 4; attempt++) {
+            const focusWord = anchorPool.length > 0 ? anchorPool[attempt % anchorPool.length] : null;
+            const sent = generateSentenceForWord(focusWord, pool) || generateSentenceForWord(null, pool);
+            const adapted = adaptContextualWritingItem(sent);
+            const targetKey = `${adapted?.targetWord?.hanzi || ''}__${adapted?.hanzi || ''}`;
+            if (adapted && adapted.targetWord?.hanzi && !seenTargets.has(targetKey)) {
+              seenTargets.add(targetKey);
+              queue.push({
+                stepId: `ctxw_top_${queue.length}_${attempt}`,
+                word: adapted.targetWord,
+                modality: 'contextual_writing',
+                generativeItem: adapted,
+                reason: `Context Write • ${adapted.grammarPoint?.title || 'Hanzi in Context'}`
+              });
+            }
+          }
+        } else if (modeKey === 'grammar_lab') {
+          const seenCompleted = new Set<string>();
+          // First pull separable verb (离合词) drills when unlocked
+          for (let attempt = 0; attempt < 16 && queue.length < 6; attempt++) {
+            const rawSep = generateSeparableVerbLabItem(pool);
+            const normSep = normalizeGrammarLabItem(rawSep);
+            const key = normSep?.completedHanzi || '';
+            if (normSep && key && !seenCompleted.has(key)) {
+              seenCompleted.add(key);
+              queue.push({
+                stepId: `glab_sep_${queue.length}_${attempt}`,
+                word: normSep.targetWord || pool[queue.length % pool.length] || activeWords[0],
+                modality: 'grammar_lab',
+                generativeItem: normSep,
+                reason: `Grammar Lab • ${normSep.ruleTitle || '离合词'}`
+              });
+            }
+          }
+          // Fill remaining slots (up to 6) with aspect & negation particle contrast drills
+          const anchorPool = [...srsDueWords, ...pool];
+          for (let attempt = 0; attempt < 24 && queue.length < 6; attempt++) {
+            const focusWord = anchorPool.length > 0 ? anchorPool[attempt % anchorPool.length] : null;
+            const sent = generateSentenceForWord(focusWord, pool) || generateSentenceForWord(null, pool);
+            const particleLab = buildParticleContrastLabItem(sent, pool);
+            const key = particleLab?.completedHanzi || '';
+            if (particleLab && key && !seenCompleted.has(key)) {
+              seenCompleted.add(key);
+              queue.push({
+                stepId: `glab_part_${queue.length}_${attempt}`,
+                word: particleLab.targetWord || focusWord || pool[queue.length % pool.length] || activeWords[0],
+                modality: 'grammar_lab',
+                generativeItem: particleLab,
+                reason: `Grammar Lab • ${particleLab.ruleTitle || 'Aspect & Particles'}`
+              });
+            }
+          }
+        } else if (modeKey === 'micro_reading') {
+          const seenPassages = new Set<string>();
+          for (let attempt = 0; attempt < 12 && queue.length < 3; attempt++) {
+            const passage = generateMicroReadingPassage(pool);
+            const key = passage?.fullHanzi || '';
+            if (passage && key && !seenPassages.has(key)) {
+              seenPassages.add(key);
+              queue.push({
+                stepId: `mread_${passage.id || queue.length}_${attempt}`,
+                word: passage.protagonist || pool[queue.length % pool.length] || activeWords[0],
+                modality: 'micro_reading',
+                generativeItem: passage,
+                reason: `Micro-Reading • ${passage.title || 'Short Story'}`
+              });
+            }
+          }
+        }
+      } catch (err) {
+        console.warn('[App] handleLaunchGenerativeDrill failed:', modeKey, err);
+      }
+
+      if (queue.length === 0) {
+        soundFX.playMistake();
+        triggerToast(
+          'Not Enough Grammar Variety Yet',
+          'Unlock a few more words to build a full generative drill session.'
+        );
+        return;
+      }
+
+      soundFX.playPop();
+      setActiveModal({
+        type: 'mixed_session',
+        stageId: null,
+        questModeKey: modeKey,
+        sessionConfig: {
+          title: modeMeta.label,
+          badgeText: srsDueWords.length > 0 ? 'SRS-Weighted Lab' : 'Generative Grammar Lab',
+          xpReward: 30,
+          queue
+        }
+      });
+    },
+    [
+      generativeReadiness,
+      corpusStats,
+      enrichedUnlockedWords,
+      progress?.mastery,
+      progress?.srsData,
+      allUniqueWordsArray,
+      activeWords,
+      triggerToast
+    ]
+  );
 
   if (showTitleScreen) {
     return (
@@ -1503,8 +1924,12 @@ export default function App() {
               allUniqueWordsArray={allUniqueWordsArray}
               unlockedWords={unlockedWords}
               unlockedWordsCount={unlockedWordsCount}
+              enrichedUnlockedWords={enrichedUnlockedWords}
+              generativeReadiness={generativeReadiness}
+              corpusStats={corpusStats}
               speakMandarin={speakMandarin}
               speakingState={speakingState}
+              onLaunchGenerativeDrill={handleLaunchGenerativeDrill}
               onLaunchSmartReviewSession={(queue: any, filterLabel: string) => {
                 soundFX.playPop();
                 setActiveModal({
@@ -1685,6 +2110,8 @@ export default function App() {
               courses={courses}
               activeCourse={activeCourse}
               customDecks={customDecks}
+              linguisticDataStatus={linguisticDataStatus}
+              onSaveWordLinguisticOverride={handleSaveWordLinguisticOverride}
               isSlowMode={progress.isSlowMode}
               onSetSlowMode={handleSetSlowMode}
               speakMandarin={speakMandarin}
@@ -1765,7 +2192,8 @@ export default function App() {
                   exportedAt: new Date().toISOString(),
                   progress: {
                     ...progress,
-                    srsData: progress.srsData || {}
+                    srsData: progress.srsData || {},
+                    wordLinguisticOverrides: progress.wordLinguisticOverrides || {}
                   },
                   courses,
                   customDecks
@@ -1790,6 +2218,11 @@ export default function App() {
                   setProgress((prev: any) => ({
                     ...prev,
                     ...parsedBackup.progress,
+                    wordLinguisticOverrides:
+                      parsedBackup.progress.wordLinguisticOverrides &&
+                      typeof parsedBackup.progress.wordLinguisticOverrides === 'object'
+                        ? { ...parsedBackup.progress.wordLinguisticOverrides }
+                        : prev.wordLinguisticOverrides || {},
                     srsData:
                       parsedBackup.progress.srsData &&
                       typeof parsedBackup.progress.srsData === 'object'
@@ -1877,7 +2310,8 @@ export default function App() {
                   exportedAt: new Date().toISOString(),
                   progress: {
                     ...progress,
-                    srsData: progress.srsData || {}
+                    srsData: progress.srsData || {},
+                    wordLinguisticOverrides: progress.wordLinguisticOverrides || {}
                   },
                   courses,
                   customDecks
@@ -1898,6 +2332,11 @@ export default function App() {
                   setProgress((prev: any) => ({
                     ...prev,
                     ...parsedBackup.progress,
+                    wordLinguisticOverrides:
+                      parsedBackup.progress.wordLinguisticOverrides &&
+                      typeof parsedBackup.progress.wordLinguisticOverrides === 'object'
+                        ? { ...parsedBackup.progress.wordLinguisticOverrides }
+                        : prev.wordLinguisticOverrides || {},
                     srsData:
                       parsedBackup.progress.srsData &&
                       typeof parsedBackup.progress.srsData === 'object'
@@ -1945,6 +2384,7 @@ export default function App() {
                     claimedIds: []
                   },
                   wordNotes: {},
+                  wordLinguisticOverrides: {},
                   completedStrokeRules: [],
                   lessonProgress: {},
                   mastery: {
@@ -2164,6 +2604,7 @@ export default function App() {
           <AdaptiveMixedSessionModal
             sessionConfig={activeModal.sessionConfig}
             courseWords={allUniqueWordsArray}
+            enrichedUnlockedWords={enrichedUnlockedWords}
             progress={progress}
             wordNotes={progress.wordNotes}
             onSaveWordNote={handleSaveWordNote}
