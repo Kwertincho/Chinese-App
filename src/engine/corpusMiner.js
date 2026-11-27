@@ -684,12 +684,38 @@ function normalizeCorpusKey(hanzi = '') {
     .replace(/[\s，。！？、,.!?；;：“”"'（）()]/g, '');
 }
 
-function isValidCorpusEntry(entry) {
-  if (!entry || typeof entry !== 'object') return false;
-  if (typeof entry.hanzi !== 'string' || !entry.hanzi.trim()) return false;
-  if (typeof entry.english !== 'string' || !entry.english.trim()) return false;
-  if (!Array.isArray(entry.tokens) || entry.tokens.length === 0) return false;
-  return entry.tokens.every((t) => typeof t === 'string' && t.trim().length > 0);
+function normalizeExternalCorpusEntry(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const hanzi = String(raw.hanzi || raw.zh || raw.chinese || '').trim();
+  const english = String(raw.english || raw.en || raw.translation || '').trim();
+  if (!hanzi || !english) return null;
+
+  const rawTokens = Array.isArray(raw.tokens)
+    ? raw.tokens.map((t) => String(t || '').trim()).filter(Boolean)
+    : [];
+  const tokens =
+    rawTokens.length > 0
+      ? rawTokens
+      : Array.from(hanzi).filter((ch) => /[\u4e00-\u9fff]/.test(ch));
+
+  if (tokens.length === 0) return null;
+
+  const rawLevelNum = Number(
+    raw.hskLevel ??
+      (typeof raw.level === 'string'
+        ? raw.level.match(/(\d+)/)?.[1]
+        : raw.level)
+  );
+
+  return {
+    id: raw.id ? String(raw.id) : null,
+    hanzi,
+    pinyin: typeof raw.pinyin === 'string' ? raw.pinyin.trim() : '',
+    english,
+    tokens,
+    hskLevel: Number.isFinite(rawLevelNum) && rawLevelNum > 0 ? rawLevelNum : 1,
+    topic: typeof raw.topic === 'string' && raw.topic.trim() ? raw.topic.trim() : 'general'
+  };
 }
 
 /**
@@ -749,22 +775,21 @@ export function registerExternalCorpusSentences(externalSentences = []) {
   let addedCount = 0;
 
   for (let i = 0; i < externalSentences.length; i++) {
-    const raw = externalSentences[i];
-    if (!isValidCorpusEntry(raw)) continue;
+    const normalized = normalizeExternalCorpusEntry(externalSentences[i]);
+    if (!normalized) continue;
 
-    const cleanHanzi = raw.hanzi.trim();
-    const normKey = normalizeCorpusKey(cleanHanzi);
+    const normKey = normalizeCorpusKey(normalized.hanzi);
     if (!normKey || seenKeys.has(normKey)) continue;
 
     seenKeys.add(normKey);
     merged.push({
-      id: String(raw.id || `ext_corp_${merged.length + 1}`),
-      hanzi: cleanHanzi,
-      pinyin: typeof raw.pinyin === 'string' ? raw.pinyin.trim() : '',
-      english: raw.english.trim(),
-      tokens: raw.tokens.map((t) => t.trim()).filter(Boolean),
-      hskLevel: Number.isFinite(Number(raw.hskLevel)) ? Number(raw.hskLevel) : 1,
-      topic: typeof raw.topic === 'string' && raw.topic.trim() ? raw.topic.trim() : 'general'
+      id: normalized.id || `ext_corp_${merged.length + 1}`,
+      hanzi: normalized.hanzi,
+      pinyin: normalized.pinyin,
+      english: normalized.english,
+      tokens: normalized.tokens,
+      hskLevel: normalized.hskLevel,
+      topic: normalized.topic
     });
     addedCount += 1;
   }
@@ -778,6 +803,14 @@ export function registerExternalCorpusSentences(externalSentences = []) {
 
 export function getCorpusSentenceCount() {
   return activeCorpusSentences.length;
+}
+
+/**
+ * Returns a shallow copy of every currently loaded bilingual corpus sentence
+ * (built-in starter corpus + any synced external corpus_hsk.json entries).
+ */
+export function getAllCorpusSentences() {
+  return [...activeCorpusSentences];
 }
 
 // ============================================================================
@@ -996,6 +1029,24 @@ export function getCorpusReadinessStats(unlockedWords = []) {
   }
 
   return { totalCorpusSentences, i0Count, i1Count };
+}
+
+/**
+ * Returns every loaded corpus sentence annotated with learner comprehensibility:
+ * `{ ...sentence, inputLevel: 'i+0' | 'i+1' | 'i+2+', unknownTokens: string[] }`.
+ */
+export function annotateCorpusReadiness(unlockedWords = []) {
+  const unlockedSet = buildUnlockedTokenSet(unlockedWords);
+  return activeCorpusSentences.map((sentence) => {
+    const { unknownTokens } = evaluateSentenceComprehensibility(sentence, unlockedSet);
+    const inputLevel =
+      unknownTokens.length === 0 ? 'i+0' : unknownTokens.length === 1 ? 'i+1' : 'i+2+';
+    return {
+      ...sentence,
+      inputLevel,
+      unknownTokens
+    };
+  });
 }
 
 // ============================================================================

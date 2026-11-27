@@ -6,15 +6,14 @@ import {
   Star,
   Lock,
   CheckCircle2,
-  Check,
   X,
   RotateCcw,
-  Trophy,
   Sparkles,
   ChevronLeft,
   ChevronRight,
   ChevronDown,
   Eye,
+  EyeOff,
   Play,
   Layers,
   PenTool,
@@ -30,8 +29,6 @@ import {
   BookMarked,
   Info,
   Zap,
-  Crown,
-  Award,
   Target,
   Swords,
   Clock,
@@ -44,7 +41,8 @@ import {
   ScrollText,
   Pencil,
   Tag,
-  LayoutGrid
+  LayoutGrid,
+  Compass
 } from 'lucide-react';
 import {
   soundFX,
@@ -68,6 +66,7 @@ import {
   enrichWordEntry,
   getLinguisticBadgeSummary
 } from '../engine/lexiconEnricher.js';
+import { annotateCorpusReadiness } from '../engine/corpusMiner.js';
 import {
   stripToneMarks,
   parsePinyinSyllablesWithTones,
@@ -95,7 +94,10 @@ import {
   COURSE_HSK_FILTER_PILLS,
   matchesCourseHskFilter,
   getCourseHskBandNumber,
-  sortCoursesCanonically
+  sortCourseLessonsNumerically,
+  sortCoursesCanonically,
+  isWordDiscovered,
+  rankWeakestDiscoveredWords
 } from '../utils/mandarinHelpers.js';
 import { getMasterLexiconMap } from '../engine/linguisticDataLoader.js';
 import {
@@ -104,17 +106,18 @@ import {
   MasterySegmentedBar,
   PixelFlameSprite,
   PixelCoinSprite,
-  PixelGemSprite,
   PixelCrownSprite,
   PixelPadlockSprite,
   PixelBlockGauge,
-  ScrollingText
+  ScrollingText,
+  InteractiveExampleText
 } from './SharedHudAndAudio.jsx';
 import {
   RuleExampleMiniPlayer,
   StrokeRuleIntuitionModal
 } from './PracticeAndExamModals.jsx';
 import { PhoneticsStudioView } from './PhoneticsStudioView.jsx';
+import { StudyModesHub } from './StudyModesHub.jsx';
 
 function getLocalIsoDate(date = new Date()) {
   const year = date.getFullYear();
@@ -132,19 +135,13 @@ export function ProgressionMapView({
   activeCourse,
   activeLesson,
   activeWords,
-  dailyQuests,
-  dailyQuestState = {},
-  onJumpToQuest,
-  onClaimQuestReward,
-  onClaimDailyChest,
   onSelectCourseAndLesson,
   speakMandarin,
   onSelectStageNode,
-  onOpenLibraryImporter
+  onOpenLibraryImporter,
+  onOpenModesGuide
 }) {
-  const safeDailyQuests = Array.isArray(dailyQuests) ? dailyQuests : [];
   const [selectedStagePreview, setSelectedStagePreview] = useState(null);
-  const [questsExpanded, setQuestsExpanded] = useState(true);
   const [courseBandFilter, setCourseBandFilter] = useState('all');
   const [lessonPage, setLessonPage] = useState(0);
 
@@ -159,7 +156,10 @@ export function ProgressionMapView({
   );
 
   const MAP_UNITS_PER_PAGE = 15;
-  const activeCourseLessons = Array.isArray(activeCourse?.lessons) ? activeCourse.lessons : [];
+  const activeCourseLessons = useMemo(
+    () => sortCourseLessonsNumerically(activeCourse)?.lessons || [],
+    [activeCourse]
+  );
   const shouldPaginateLessons = activeCourseLessons.length > 20;
   const totalLessonPages = shouldPaginateLessons
     ? Math.max(1, Math.ceil(activeCourseLessons.length / MAP_UNITS_PER_PAGE))
@@ -274,243 +274,39 @@ export function ProgressionMapView({
     stagesList.find((s) => s.id === (selectedStagePreview || currentLessonProg.unlockedStage)) ||
     stagesList[0];
 
-  const completedQuestsCount = safeDailyQuests.filter(
-    (q) => dailyQuestState.completedIds?.includes(q.id)
-  ).length;
-  const allThreeQuestsDone = completedQuestsCount >= 3;
-  const chestClaimed = Boolean(dailyQuestState.bonusChestClaimed);
-  const unclaimedReadyCount =
-    safeDailyQuests.filter(
-      (q) =>
-        dailyQuestState.completedIds?.includes(q.id) &&
-        !dailyQuestState.claimedIds?.includes(q.id)
-    ).length + (allThreeQuestsDone && !chestClaimed ? 1 : 0);
-
   const mapHeightPx = Math.max(630, (stagesList.length - 1) * 152 + 175);
 
   return (
     <div className="p-4 space-y-4">
-      {/* COMPACT COLLAPSIBLE DAILY QUESTS WIDGET (WITH +25 XP COMPLETION CHEST) */}
-      <div
-        className={`rounded-[2px] bg-slate-900 border-2 p-3.5 space-y-2.5 transition-all ${
-          allThreeQuestsDone
-            ? 'border-amber-400 shadow-[0_0_20px_rgba(251,191,36,0.18)]'
-            : 'border-amber-500'
-        }`}
-      >
-        <button
-          type="button"
-          onClick={() => {
-            soundFX.playPop();
-            setQuestsExpanded((prev) => !prev);
-          }}
-          className="w-full flex items-center justify-between gap-2 text-left"
-        >
-          <div className="flex items-center gap-2 min-w-0">
-            <div
-              className={`w-8 h-8 rounded-[2px] border-2 flex items-center justify-center shrink-0 ${
-                allThreeQuestsDone
-                  ? 'bg-amber-400 text-slate-950 border-amber-200'
-                  : 'bg-amber-500/20 border-amber-400 text-amber-300'
-              }`}
-            >
-              <PixelGemSprite className="w-4 h-4" />
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5 flex-wrap">
-                <span className="font-pixel-header text-[10px] uppercase text-amber-300">
-                  Daily Quests
-                </span>
-                {allThreeQuestsDone && (
-                  <span className="px-2 py-0.5 rounded-[2px] bg-amber-400 text-slate-950 font-black text-[9px] uppercase">
-                    ★ All 3 Complete!
-                  </span>
-                )}
-                {unclaimedReadyCount > 0 && (
-                  <span className="px-2 py-0.5 rounded-[2px] bg-emerald-500 text-slate-950 font-black text-[9px] uppercase animate-bounce">
-                    {unclaimedReadyCount} Claim Ready!
-                  </span>
-                )}
-              </div>
-              <p className="text-[10px] text-slate-400 truncate">
-                {completedQuestsCount}/3 Completed • Complete all 3 for +25 XP Chest
-              </p>
-            </div>
-          </div>
-
-          <div className="flex items-center gap-1.5 shrink-0">
-            <span
-              className={`font-pixel-header text-[9px] px-2 py-1 rounded-[2px] border-2 ${
-                allThreeQuestsDone
-                  ? 'bg-amber-400 text-slate-950 border-amber-200'
-                  : 'bg-slate-950 border-slate-700 text-amber-300'
-              }`}
-            >
-              {completedQuestsCount}/3
-            </span>
-            <ChevronDown
-              className={`w-4 h-4 text-slate-400 transition-transform ${
-                questsExpanded ? 'rotate-180' : ''
-              }`}
-            />
-          </div>
-        </button>
-
-        {questsExpanded && (
-          <div className="space-y-2 pt-1 border-t-2 border-slate-800">
-            {safeDailyQuests.map((quest) => {
-              const isDone = dailyQuestState.completedIds?.includes(quest.id);
-              const isClaimed = dailyQuestState.claimedIds?.includes(quest.id);
-
-              return (
-                <div
-                  key={quest.id}
-                  onClick={() => {
-                    if (!isDone && !isClaimed) {
-                      onJumpToQuest?.(quest);
-                    }
-                  }}
-                  className={`rounded-[2px] p-2.5 border-2 flex items-center justify-between gap-2.5 transition-all ${
-                    isClaimed
-                      ? 'bg-slate-950/60 border-slate-800 opacity-65'
-                      : isDone
-                      ? 'bg-emerald-950/50 border-emerald-400'
-                      : 'cursor-pointer bg-slate-950 hover:bg-slate-900 border-slate-700'
-                  }`}
-                >
-                  <div className="flex items-center gap-2.5 min-w-0">
-                    <div
-                      className={`w-6 h-6 rounded-[2px] border flex items-center justify-center text-xs font-black shrink-0 ${
-                        isClaimed
-                          ? 'bg-emerald-500/20 border-emerald-500/40 text-emerald-400'
-                          : isDone
-                          ? 'bg-emerald-500 border-emerald-200 text-slate-950'
-                          : 'bg-slate-900 border-slate-700 text-slate-400'
-                      }`}
-                    >
-                      {isDone || isClaimed ? <Check className="w-3.5 h-3.5 stroke-[3px]" /> : '•'}
-                    </div>
-                    <div className="min-w-0">
-                      <div className="flex items-center gap-1.5 flex-wrap">
-                        <span className="text-xs font-extrabold text-white truncate">
-                          {quest.title}
-                        </span>
-                      </div>
-                      <div className="flex items-center gap-1.5 mt-0.5">
-                        <span className="text-[9px] font-extrabold uppercase px-1.5 py-0.5 rounded-[2px] bg-slate-800 border border-slate-700 text-slate-300">
-                          {quest.badge}
-                        </span>
-                        <span className="text-[10px] font-black text-amber-300 inline-flex items-center gap-1">
-                          <PixelCoinSprite className="w-3 h-3" />
-                          <span>+{quest.xpReward} XP</span>
-                        </span>
-                      </div>
-                    </div>
-                  </div>
-
-                  {isClaimed ? (
-                    <span className="px-2.5 py-1 rounded-[2px] bg-slate-900 border-2 border-slate-700 text-[10px] font-black text-emerald-400 shrink-0">
-                      Claimed ✓
-                    </span>
-                  ) : isDone ? (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onClaimQuestReward?.(quest);
-                      }}
-                      className="game-btn-3d px-3 py-1.5 rounded-[2px] bg-emerald-500 text-slate-950 font-black text-[10px] border-2 border-emerald-200 animate-pulse shrink-0 flex items-center gap-1"
-                    >
-                      <PixelCoinSprite className="w-3.5 h-3.5" />
-                      <span>Claim +{quest.xpReward} XP</span>
-                    </button>
-                  ) : (
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onJumpToQuest?.(quest);
-                      }}
-                      className="game-btn-3d px-2.5 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-600 text-[10px] font-extrabold text-amber-300 flex items-center gap-1 shrink-0"
-                    >
-                      <span>Go</span>
-                      <ChevronRight className="w-3 h-3" />
-                    </button>
-                  )}
-                </div>
-              );
-            })}
-
-            {/* DAILY COMPLETION CHEST (+25 XP BONUS FOR 3/3 QUESTS) */}
-            <div
-              className={`rounded-[2px] p-2.5 border-2 flex items-center justify-between gap-2.5 ${
-                allThreeQuestsDone
-                  ? 'bg-gradient-to-r from-amber-950/80 via-yellow-900/40 to-amber-950/80 border-amber-400'
-                  : 'bg-slate-950/80 border-slate-800'
-              }`}
-            >
-              <div className="flex items-center gap-2.5 min-w-0">
-                <div
-                  className={`w-6 h-6 rounded-[2px] border flex items-center justify-center shrink-0 ${
-                    allThreeQuestsDone
-                      ? 'bg-amber-400 border-amber-200 text-slate-950'
-                      : 'bg-slate-900 border-slate-700 text-slate-500'
-                  }`}
-                >
-                  <Trophy className="w-3.5 h-3.5" />
-                </div>
-                <div className="min-w-0">
-                  <span
-                    className={`text-xs font-extrabold block truncate ${
-                      allThreeQuestsDone ? 'text-amber-200' : 'text-slate-400'
-                    }`}
-                  >
-                    Daily Completion Chest (3/3 Quests)
-                  </span>
-                  <span className="text-[10px] font-black text-amber-400 inline-flex items-center gap-1">
-                    <PixelCoinSprite className="w-3 h-3" />
-                    <span>+25 XP Bonus Reward</span>
-                  </span>
-                </div>
-              </div>
-
-              {chestClaimed ? (
-                <span className="px-2.5 py-1 rounded-[2px] bg-amber-500/20 border-2 border-amber-400 text-[10px] font-black text-amber-300 shrink-0">
-                  Chest Claimed ★
-                </span>
-              ) : allThreeQuestsDone ? (
-                <button
-                  type="button"
-                  onClick={() => onClaimDailyChest?.()}
-                  className="game-btn-3d px-3 py-1.5 rounded-[2px] bg-amber-400 hover:bg-amber-300 text-slate-950 font-black text-[10px] border-2 border-amber-100 animate-bounce shrink-0 flex items-center gap-1"
-                >
-                  <PixelCoinSprite className="w-3.5 h-3.5" />
-                  <span>Open +25 XP</span>
-                </button>
-              ) : (
-                <span className="px-2 py-1 rounded-[2px] bg-slate-900 border border-slate-800 text-[10px] font-bold text-slate-500 shrink-0">
-                  {completedQuestsCount}/3
-                </span>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
-
       {/* Course & Lesson Selector Card */}
       <div className="rounded-2xl bg-slate-800/90 border border-slate-700/80 p-3.5 space-y-2.5 shadow-lg">
-        <div className="flex items-center justify-between">
+        <div className="flex items-center justify-between gap-2 flex-wrap">
           <span className="text-[10px] font-extrabold uppercase tracking-wider text-rose-400">
-            Adventure World & Unit Selector
+            Adventure World &amp; Unit Selector
           </span>
-          <button
-            type="button"
-            onClick={onOpenLibraryImporter}
-            className="text-[11px] font-bold text-sky-400 hover:text-sky-300 flex items-center gap-1"
-          >
-            <Upload className="w-3 h-3" />
-            <span>+ Import HSK / JSON</span>
-          </button>
+          <div className="flex items-center gap-2">
+            {onOpenModesGuide && (
+              <button
+                type="button"
+                onClick={() => {
+                  soundFX.playPop();
+                  onOpenModesGuide();
+                }}
+                className="text-[11px] font-bold text-amber-300 hover:text-amber-200 flex items-center gap-1"
+              >
+                <Compass className="w-3 h-3" />
+                <span>Modes Guide</span>
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={onOpenLibraryImporter}
+              className="text-[11px] font-bold text-sky-400 hover:text-sky-300 flex items-center gap-1"
+            >
+              <Upload className="w-3 h-3" />
+              <span>+ Import HSK / JSON</span>
+            </button>
+          </div>
         </div>
 
         {/* Refined HSK Band Filter Pills */}
@@ -1311,8 +1107,29 @@ export function SmartReviewArenaView({
     };
 
     const activeSummaryKeys = Object.keys(modalitySummary);
+    const activeTelemetryMap = progress.wordSkillTelemetry || progress.skillTelemetry || {};
 
-    const enrichedWords = scannedPool.map((rawWord) => {
+    // Deduplicate candidate pool across unlocked, active-course scanned, and tracked words,
+    // then strictly retain ONLY words with actual study history (`isWordDiscovered`).
+    const uniqueCandidateMap = new window.Map();
+    const registerRawCandidate = (rawWord, idx) => {
+      if (!rawWord) return;
+      const norm = normalizeWordEntry(rawWord, idx);
+      if (norm.hanzi && !uniqueCandidateMap.has(norm.hanzi)) {
+        uniqueCandidateMap.set(norm.hanzi, norm);
+      }
+    };
+    effectiveUnlockedPool.forEach(registerRawCandidate);
+    scannedPool.forEach(registerRawCandidate);
+    if (Array.isArray(allUniqueWordsArray)) {
+      allUniqueWordsArray.forEach(registerRawCandidate);
+    }
+
+    const discoveredRawWords = Array.from(uniqueCandidateMap.values()).filter((w) =>
+      isWordDiscovered(w, progress)
+    );
+
+    const enrichedWords = discoveredRawWords.map((rawWord) => {
       const word = enrichWordEntry(
         rawWord,
         progress.wordLinguisticOverrides,
@@ -1322,13 +1139,13 @@ export function SmartReviewArenaView({
       const priorityWeight =
         typeof word.priorityWeight === 'number' ? word.priorityWeight : 1.0;
       const mastery = getWordMasteryLevel(progress.mastery, word);
-      const telemetry = getWordSkillTelemetry(progress.skillTelemetry, word);
-      const srsEntry = getWordSrsEntry(progress.srsData, word);
+      const telemetry = getWordSkillTelemetry(activeTelemetryMap, word);
+      const srsEntry = getWordSrsEntry(activeSrsMap, word);
       const isDue = isSrsActive
-        ? isWordSrsDue(progress.srsData, word, mastery, nowMs)
+        ? isWordSrsDue(activeSrsMap, word, mastery, nowMs)
         : false;
       const overdueMs = isSrsActive
-        ? getSrsOverdueMs(progress.srsData, word, nowMs)
+        ? getSrsOverdueMs(activeSrsMap, word, nowMs)
         : 0;
       if (isDue) dueWordsCount += 1;
 
@@ -1375,6 +1192,21 @@ export function SmartReviewArenaView({
         (telemetry.classifier_drill?.mistakes || 0) +
         (telemetry.dialogue_qa?.mistakes || 0);
 
+      const totalCompletions =
+        telemetry.recognition.completions +
+        telemetry.writing.completions +
+        telemetry.listening.completions +
+        telemetry.speaking.completions +
+        telemetry.sentence_builder.completions +
+        telemetry.cloze.completions +
+        (telemetry.classifier_drill?.completions || 0) +
+        (telemetry.dialogue_qa?.completions || 0);
+
+      const mistakeRate =
+        totalMistakes + totalCompletions > 0
+          ? totalMistakes / (totalMistakes + totalCompletions)
+          : 0;
+
       const isLeech = Boolean(srsEntry?.isLeech);
       const lapseCount = Number(srsEntry?.lapseCount || 0);
       const easeFactor = typeof srsEntry?.easeFactor === 'number' ? srsEntry.easeFactor : 2.0;
@@ -1386,6 +1218,8 @@ export function SmartReviewArenaView({
         mastery,
         telemetry,
         totalMistakes,
+        totalCompletions,
+        mistakeRate,
         srsEntry,
         isDue,
         overdueMs,
@@ -1412,6 +1246,7 @@ export function SmartReviewArenaView({
 
     return {
       enrichedWords,
+      discoveredWords: enrichedWords,
       wordsToReview,
       consolidatingWords,
       masteredWords,
@@ -1421,12 +1256,11 @@ export function SmartReviewArenaView({
       weakestGlobalModality
     };
   }, [
+    effectiveUnlockedPool,
     scannedPool,
-    progress.mastery,
-    progress.skillTelemetry,
-    progress.srsData,
-    progress.wordLinguisticOverrides,
-    progress.wordPriorityOverrides,
+    allUniqueWordsArray,
+    progress,
+    activeSrsMap,
     isSrsActive,
     isClozeUnlocked,
     isSentenceBuilderUnlocked,
@@ -1435,6 +1269,11 @@ export function SmartReviewArenaView({
   ]);
 
   const adaptiveSmartQueue = useMemo(() => {
+    // Strictly restrict Weakest Word Review to discovered words — never pad with unstudied words
+    if (!Array.isArray(reviewAnalytics.discoveredWords) || reviewAnalytics.discoveredWords.length === 0) {
+      return [];
+    }
+
     const allowedModes =
       reviewFilter === 'writing_audio'
         ? [
@@ -1463,38 +1302,49 @@ export function SmartReviewArenaView({
           ? Math.min(14, c.overdueMs / (24 * 60 * 60 * 1000))
           : 0;
       const overdueBonus = overdueDays * 2.5;
-      const lowMasteryScore = (10 - Math.min(10, c.mastery || 0)) * 9;
+      const lowMasteryScore = (10 - Math.min(10, c.mastery || 0)) * 10;
       const mistakesCount = allowedModes.reduce(
         (sum, k) => sum + (c.telemetry[k]?.mistakes || 0),
         0
       );
-      const mistakeBonus = mistakesCount * 6;
+      const completionsCount = allowedModes.reduce(
+        (sum, k) => sum + (c.telemetry[k]?.completions || 0),
+        0
+      );
+      const modeMistakeRate =
+        mistakesCount + completionsCount > 0
+          ? mistakesCount / (mistakesCount + completionsCount)
+          : c.mistakeRate || 0;
+      const mistakeBonus = mistakesCount * 8 + modeMistakeRate * 45;
+      const lowEaseBonus = Math.max(0, 2.5 - (typeof c.easeFactor === 'number' ? c.easeFactor : 2.0)) * 40;
       const leechBonus = c.isLeech ? 140 + Math.min(60, (c.lapseCount || 0) * 10) : 0;
       const priorityMultiplierBonus = pWeight * 22;
       return (
-        (dueBonus + overdueBonus + lowMasteryScore + mistakeBonus) * pWeight +
+        (dueBonus + overdueBonus + lowMasteryScore + mistakeBonus + lowEaseBonus) * pWeight +
         priorityMultiplierBonus +
         leechBonus
       );
     };
 
-    const sortedCandidates = [...reviewAnalytics.enrichedWords].sort((a, b) => {
+    const sortedCandidates = [...reviewAnalytics.discoveredWords].sort((a, b) => {
       const scoreDiff = computeCandidatePriorityScore(b) - computeCandidatePriorityScore(a);
       if (Math.abs(scoreDiff) > 0.01) return scoreDiff;
       if (isSrsActive && a.isDue !== b.isDue) return a.isDue ? -1 : 1;
       if (a.mastery !== b.mastery) return a.mastery - b.mastery;
+      if (b.totalMistakes !== a.totalMistakes) return b.totalMistakes - a.totalMistakes;
+      if (a.easeFactor !== b.easeFactor) return a.easeFactor - b.easeFactor;
       return (b.priorityWeight || 1.0) - (a.priorityWeight || 1.0);
     });
 
-    const targetCount = Math.min(10, Math.max(sortedCandidates.length * 2, 6));
+    const targetCount = Math.min(10, sortedCandidates.length);
     const nonNicheCandidates = sortedCandidates.filter((c) => c.priorityTier !== 'niche');
     const allCandidatesAreNiche = nonNicheCandidates.length === 0;
     const maxNicheAllowed = allCandidatesAreNiche ? targetCount : 1;
 
-    // Build capped candidate sequence: at most 1 'niche' step per 10-step Smart Review session (unless all words are niche)
+    // Build capped candidate sequence strictly from discovered words:
+    // at most 1 'niche' step per session (unless all discovered words are niche)
     const selectedSessionCandidates = [];
     let nicheStepsScheduled = 0;
-    let nonNicheFallbackCursor = 0;
 
     for (let idx = 0; idx < sortedCandidates.length && selectedSessionCandidates.length < targetCount; idx++) {
       const cand = sortedCandidates[idx];
@@ -1504,14 +1354,6 @@ export function SmartReviewArenaView({
         nicheStepsScheduled += 1;
       }
       selectedSessionCandidates.push(cand);
-    }
-
-    while (selectedSessionCandidates.length < targetCount && sortedCandidates.length > 0) {
-      const refillPool = !allCandidatesAreNiche ? nonNicheCandidates : sortedCandidates;
-      const nextCand = refillPool[nonNicheFallbackCursor % refillPool.length];
-      nonNicheFallbackCursor += 1;
-      if (!nextCand) break;
-      selectedSessionCandidates.push(nextCand);
     }
 
     const queue = [];
@@ -1649,7 +1491,7 @@ export function SmartReviewArenaView({
 
     return queue;
   }, [
-    reviewAnalytics.enrichedWords,
+    reviewAnalytics.discoveredWords,
     reviewFilter,
     isSrsActive,
     isClozeUnlocked,
@@ -1706,7 +1548,7 @@ export function SmartReviewArenaView({
             <div className="text-[10px] font-black uppercase text-rose-200 mt-0.5">
               Words to Review
             </div>
-            <div className="text-[9px] text-rose-300/80">Mastery Lv. 0–4</div>
+            <div className="text-[9px] text-rose-300/80">Discovered Lv. 0–4</div>
           </div>
 
           <div className="rounded-2xl bg-amber-500/15 border border-amber-500/40 p-3 text-center">
@@ -1809,21 +1651,35 @@ export function SmartReviewArenaView({
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() =>
-            onLaunchSmartReviewSession(
-              adaptiveSmartQueue,
-              reviewFilter === 'writing_audio'
-                ? 'Struggling Writing/Audio'
-                : 'All Weak Words'
-            )
-          }
-          className="game-btn-3d w-full py-4 rounded-2xl bg-gradient-to-r from-rose-500 via-amber-500 to-emerald-500 text-slate-950 font-black text-sm shadow-xl border-b-4 border-amber-700 flex items-center justify-center gap-2"
-        >
-          <Zap className="w-4 h-4 fill-slate-950" />
-          <span>Start Smart Review ({adaptiveSmartQueue.length} Words)</span>
-        </button>
+        {adaptiveSmartQueue.length > 0 ? (
+          <button
+            type="button"
+            onClick={() =>
+              onLaunchSmartReviewSession(
+                adaptiveSmartQueue,
+                reviewFilter === 'writing_audio'
+                  ? 'Struggling Writing/Audio'
+                  : 'All Weak Words'
+              )
+            }
+            className="game-btn-3d w-full py-4 rounded-2xl bg-gradient-to-r from-rose-500 via-amber-500 to-emerald-500 text-slate-950 font-black text-sm shadow-xl border-b-4 border-amber-700 flex items-center justify-center gap-2"
+          >
+            <Zap className="w-4 h-4 fill-slate-950" />
+            <span>
+              Start Weakest Word Review ({adaptiveSmartQueue.length} Discovered Word
+              {adaptiveSmartQueue.length === 1 ? '' : 's'})
+            </span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled
+            className="w-full py-3.5 px-4 rounded-2xl bg-slate-900 border-2 border-slate-700 text-slate-400 font-extrabold text-xs flex items-center justify-center gap-2 cursor-not-allowed opacity-80"
+          >
+            <Lock className="w-4 h-4 text-slate-500 shrink-0" />
+            <span>Complete a lesson on the Map to unlock Weakest Word Review</span>
+          </button>
+        )}
 
         {/* DEDICATED LEECH REMEDIATION CARD */}
         {leechWords.length > 0 ? (
@@ -3025,12 +2881,24 @@ function CharacterStructureSvg({ structureId }) {
   );
 }
 
+/** @param {any} props */
 export function LibraryView({
   progress,
   courses,
   activeCourse,
   customDecks,
-  linguisticDataStatus = { loaded: false, lexiconCount: 0, preloadedCoursesCount: 0, corpusCount: 0, source: 'embedded' },
+  unlockedWords = [],
+  allUniqueWordsArray = [],
+  initialLibraryTarget = null,
+  onConsumeLibraryTarget = null,
+  linguisticDataStatus = {
+    loaded: false,
+    lexiconCount: 0,
+    preloadedCoursesCount: 0,
+    corpusCount: 0,
+    corpusSource: 'starter',
+    source: 'embedded'
+  },
   isSyncingData = false,
   onSyncLinguisticData,
   onSaveWordLinguisticOverride,
@@ -3053,12 +2921,36 @@ export function LibraryView({
 }) {
   const [librarySection, setLibrarySection] = useState('decks');
   const [strokesSubTab, setStrokesSubTab] = useState('strokes');
+  const [referenceTab, setReferenceTab] = useState('vocab'); // 'vocab' | 'corpus'
   const [editingCategoryWordKey, setEditingCategoryWordKey] = useState(null);
   const [confirmDeleteCourseId, setConfirmDeleteCourseId] = useState(null);
   const [studioToolMode, setStudioToolMode] = useState('none');
   const [searchQuery, setSearchQuery] = useState('');
   const [courseBandFilter, setCourseBandFilter] = useState('all');
   const [vocabFilterMode, setVocabFilterMode] = useState('all');
+
+  // Bilingual Corpus Browser state
+  const [corpusSearchQuery, setCorpusSearchQuery] = useState('');
+  const [corpusFilter, setCorpusFilter] = useState('all');
+  const [hideCorpusTranslations, setHideCorpusTranslations] = useState(false);
+  const [revealedCorpusIds, setRevealedCorpusIds] = useState({});
+  const [corpusVisibleCount, setCorpusVisibleCount] = useState(50);
+
+  useEffect(() => {
+    if (!initialLibraryTarget) return;
+    if (initialLibraryTarget.section) {
+      setLibrarySection(initialLibraryTarget.section);
+    }
+    if (initialLibraryTarget.studioToolMode) {
+      setStudioToolMode(initialLibraryTarget.studioToolMode);
+    }
+    if (initialLibraryTarget.referenceTab) {
+      setLibrarySection('decks');
+      setStudioToolMode('none');
+      setReferenceTab(initialLibraryTarget.referenceTab);
+    }
+    onConsumeLibraryTarget?.();
+  }, [initialLibraryTarget, onConsumeLibraryTarget]);
 
   const filteredLibraryCourses = useMemo(
     () =>
@@ -3075,6 +2967,68 @@ export function LibraryView({
   useEffect(() => {
     setVocabVisibleCount(50);
   }, [searchQuery, vocabFilterMode]);
+
+  useEffect(() => {
+    setCorpusVisibleCount(50);
+  }, [corpusSearchQuery, corpusFilter]);
+
+  const annotatedCorpusList = useMemo(
+    () => annotateCorpusReadiness(unlockedWords),
+    [unlockedWords, linguisticDataStatus?.corpusCount, linguisticDataStatus?.lastSyncedAt]
+  );
+
+  const corpusFilterCounts = useMemo(() => {
+    let i0 = 0;
+    let i1 = 0;
+    let hsk1 = 0;
+    let hsk2 = 0;
+    let hsk3 = 0;
+    let hsk4Plus = 0;
+    for (let i = 0; i < annotatedCorpusList.length; i++) {
+      const s = annotatedCorpusList[i];
+      if (s.inputLevel === 'i+0') i0 += 1;
+      else if (s.inputLevel === 'i+1') i1 += 1;
+      const lv = Number(s.hskLevel || 1);
+      if (lv === 1) hsk1 += 1;
+      else if (lv === 2) hsk2 += 1;
+      else if (lv === 3) hsk3 += 1;
+      else if (lv >= 4) hsk4Plus += 1;
+    }
+    return {
+      all: annotatedCorpusList.length,
+      i0,
+      i1,
+      hsk_1: hsk1,
+      hsk_2: hsk2,
+      hsk_3: hsk3,
+      hsk_4_plus: hsk4Plus
+    };
+  }, [annotatedCorpusList]);
+
+  const filteredCorpusList = useMemo(() => {
+    const q = corpusSearchQuery.trim().toLowerCase();
+    return annotatedCorpusList.filter((sent) => {
+      const lv = Number(sent.hskLevel || 1);
+      if (corpusFilter === 'i0' && sent.inputLevel !== 'i+0') return false;
+      if (corpusFilter === 'i1' && sent.inputLevel !== 'i+1') return false;
+      if (corpusFilter === 'hsk_1' && lv !== 1) return false;
+      if (corpusFilter === 'hsk_2' && lv !== 2) return false;
+      if (corpusFilter === 'hsk_3' && lv !== 3) return false;
+      if (corpusFilter === 'hsk_4_plus' && lv < 4) return false;
+
+      if (!q) return true;
+      const topicText = String(sent.topic || '').replace(/_/g, ' ').toLowerCase();
+      const pinyinText = String(sent.pinyin || '').toLowerCase();
+      const pinyinPlain = stripToneMarks(pinyinText).toLowerCase();
+      return (
+        String(sent.hanzi || '').toLowerCase().includes(q) ||
+        pinyinText.includes(q) ||
+        pinyinPlain.includes(q) ||
+        String(sent.english || '').toLowerCase().includes(q) ||
+        topicText.includes(q)
+      );
+    });
+  }, [annotatedCorpusList, corpusFilter, corpusSearchQuery]);
 
   const [radicalFilterMode, setRadicalFilterMode] = useState('all');
   const [radicalSearch, setRadicalSearch] = useState('');
@@ -3438,7 +3392,7 @@ export function LibraryView({
     const seen = new Set();
     let leechCount = 0;
 
-    courses.forEach((c) => {
+    sortCoursesCanonically(courses).forEach((c) => {
       (c.lessons || []).forEach((l) => {
         (l.words || []).forEach((w, idx) => {
           const norm = normalizeWordEntry(w, idx);
@@ -3498,9 +3452,11 @@ export function LibraryView({
 
   const characterMatrixList = useMemo(() => {
     const charMap = new window.Map();
-    const targetCourse = activeCourse || courses[0] || DEFAULT_COURSES[0];
+    const targetCourse = sortCourseLessonsNumerically(
+      activeCourse || courses[0] || DEFAULT_COURSES[0]
+    );
 
-    (targetCourse.lessons || []).forEach((lesson) => {
+    (targetCourse?.lessons || []).forEach((lesson) => {
       (lesson.words || []).forEach((rawWord, wIdx) => {
         const word = normalizeWordEntry(rawWord, wIdx);
         const wordMastery = getWordMasteryLevel(progress.mastery, word);
@@ -4694,11 +4650,38 @@ export function LibraryView({
 
           <div className="space-y-2.5">
             <div className="flex items-center justify-between gap-2 flex-wrap">
-              <h2 className="text-xs font-extrabold uppercase tracking-wider text-slate-300">
-                Vocabulary Reference ({filteredWordsList.length})
-              </h2>
+              <div className="flex items-center bg-slate-950 p-1 rounded-xl border border-slate-800 gap-1">
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundFX.playPop();
+                    setReferenceTab('vocab');
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all ${
+                    referenceTab === 'vocab'
+                      ? 'bg-rose-600 text-white shadow'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Vocabulary ({filteredWordsList.length})
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundFX.playPop();
+                    setReferenceTab('corpus');
+                  }}
+                  className={`px-2.5 py-1 rounded-lg text-[11px] font-black transition-all ${
+                    referenceTab === 'corpus'
+                      ? 'bg-teal-600 text-white shadow'
+                      : 'text-slate-400 hover:text-slate-200'
+                  }`}
+                >
+                  Corpus Sentences ({linguisticDataStatus?.corpusCount || annotatedCorpusList.length})
+                </button>
+              </div>
               <div className="flex items-center gap-1.5 flex-wrap">
-                {libraryLeechCount > 0 && (
+                {referenceTab === 'vocab' && libraryLeechCount > 0 && (
                   <div className="flex items-center bg-slate-950 p-0.5 rounded-[2px] border border-slate-800">
                     <button
                       type="button"
@@ -4731,15 +4714,17 @@ export function LibraryView({
                   </div>
                 )}
                 <span className="font-clarity text-[10px] font-bold px-2 py-0.5 rounded-full bg-indigo-500/15 text-indigo-300 border border-indigo-400/30">
-                  {linguisticDataStatus?.lexiconCount > 0
-                    ? `HSK Lexicon • ${linguisticDataStatus.lexiconCount.toLocaleString()} entries (${
-                        linguisticDataStatus.source === 'remote'
-                          ? 'CDN'
-                          : linguisticDataStatus.source === 'local'
-                          ? 'Local'
-                          : 'Offline'
-                      })`
-                    : `Corpus • ${linguisticDataStatus?.corpusCount || 60} sentences`}
+                  {(linguisticDataStatus?.lexiconCount || 0).toLocaleString()} Lexicon •{' '}
+                  {(linguisticDataStatus?.corpusCount || annotatedCorpusList.length).toLocaleString()}{' '}
+                  Corpus (
+                  {linguisticDataStatus?.corpusSource === 'remote' ||
+                  linguisticDataStatus?.source === 'remote'
+                    ? 'CDN'
+                    : linguisticDataStatus?.corpusSource === 'local' ||
+                      linguisticDataStatus?.source === 'local'
+                    ? 'Local'
+                    : 'Starter'}
+                  )
                 </span>
                 {onSyncLinguisticData && (
                   <button
@@ -4761,7 +4746,215 @@ export function LibraryView({
                 )}
               </div>
             </div>
-            {filteredWordsList.slice(0, vocabVisibleCount).map((word, idx) => {
+
+            {referenceTab === 'corpus' && (
+              <div className="space-y-2.5">
+                <div className="flex items-center gap-2">
+                  <div className="relative flex-1 min-w-0">
+                    <Search className="w-3.5 h-3.5 text-slate-400 absolute left-3 top-1/2 -translate-y-1/2" />
+                    <input
+                      type="text"
+                      value={corpusSearchQuery}
+                      onChange={(e) => setCorpusSearchQuery(e.target.value)}
+                      placeholder="Search corpus Hanzi, Pinyin, English, or topic..."
+                      className="w-full bg-slate-900 border border-slate-700 focus:border-teal-400 rounded-xl pl-8 pr-3 py-2 text-xs font-bold text-white placeholder:text-slate-500 outline-none"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundFX.playPop();
+                      setHideCorpusTranslations((prev) => !prev);
+                      setRevealedCorpusIds({});
+                    }}
+                    title="Toggle Pinyin & English visibility for self-testing"
+                    className={`game-btn-3d px-2.5 py-2 rounded-xl border text-[10px] font-black flex items-center gap-1 shrink-0 transition-all ${
+                      hideCorpusTranslations
+                        ? 'bg-amber-500/20 border-amber-400 text-amber-200'
+                        : 'bg-slate-900 border-slate-700 text-slate-300 hover:border-slate-500'
+                    }`}
+                  >
+                    {hideCorpusTranslations ? (
+                      <>
+                        <EyeOff className="w-3.5 h-3.5" />
+                        <span>Self-Test On</span>
+                      </>
+                    ) : (
+                      <>
+                        <Eye className="w-3.5 h-3.5" />
+                        <span>Hide Gloss</span>
+                      </>
+                    )}
+                  </button>
+                </div>
+
+                {/* Corpus Comprehension & HSK Filter Pills */}
+                <div className="flex items-center gap-1.5 overflow-x-auto pb-0.5">
+                  {[
+                    { id: 'all', label: 'All' },
+                    { id: 'i0', label: 'i+0 Ready' },
+                    { id: 'i1', label: 'i+1' },
+                    { id: 'hsk_1', label: 'HSK 1' },
+                    { id: 'hsk_2', label: 'HSK 2' },
+                    { id: 'hsk_3', label: 'HSK 3' },
+                    { id: 'hsk_4_plus', label: 'HSK 4+' }
+                  ].map((pill) => {
+                    const count = corpusFilterCounts[pill.id] || 0;
+                    const isSelected = corpusFilter === pill.id;
+                    return (
+                      <button
+                        key={pill.id}
+                        type="button"
+                        onClick={() => {
+                          soundFX.playPop();
+                          setCorpusFilter(pill.id);
+                        }}
+                        className={`px-2.5 py-1 rounded-xl text-[10px] font-black shrink-0 border transition-all flex items-center gap-1 ${
+                          isSelected
+                            ? 'bg-teal-600 text-white border-teal-400 shadow'
+                            : count === 0
+                            ? 'bg-slate-950/60 text-slate-600 border-slate-800/80'
+                            : 'bg-slate-900 text-slate-300 border-slate-700 hover:border-slate-500'
+                        }`}
+                      >
+                        <span>{pill.label}</span>
+                        <span
+                          className={`text-[9px] px-1 rounded ${
+                            isSelected ? 'bg-teal-800/70 text-teal-100' : 'bg-slate-950 text-slate-400'
+                          }`}
+                        >
+                          {count}
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+
+                {filteredCorpusList.length === 0 ? (
+                  <div className="rounded-2xl bg-slate-900/70 border border-slate-800 p-4 text-center space-y-1">
+                    <p className="text-xs font-bold text-slate-300">
+                      No corpus sentences match the current filter.
+                    </p>
+                    <p className="text-[11px] text-slate-500">
+                      Try switching to &ldquo;All&rdquo; or clearing the search box.
+                    </p>
+                  </div>
+                ) : (
+                  <>
+                    {filteredCorpusList.slice(0, corpusVisibleCount).map((sent, sIdx) => {
+                      const sentKey = sent.id || `corpus_${sIdx}`;
+                      const isRevealed =
+                        !hideCorpusTranslations || Boolean(revealedCorpusIds[sentKey]);
+                      const inputBadgeClass =
+                        sent.inputLevel === 'i+0'
+                          ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/50'
+                          : sent.inputLevel === 'i+1'
+                          ? 'bg-sky-500/20 text-sky-300 border-sky-400/50'
+                          : 'bg-slate-900 text-slate-400 border-slate-700';
+                      const formattedTopic = String(sent.topic || 'general')
+                        .replace(/_/g, ' ')
+                        .replace(/\b\w/g, (m) => m.toUpperCase());
+
+                      return (
+                        <div
+                          key={sentKey}
+                          className="rounded-2xl bg-slate-800/70 border border-slate-700/80 p-3.5 space-y-2"
+                        >
+                          <div className="flex items-center justify-between gap-2 flex-wrap">
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              <span
+                                className={`text-[10px] font-black px-2 py-0.5 rounded-[2px] border ${inputBadgeClass}`}
+                              >
+                                {sent.inputLevel}
+                              </span>
+                              <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-[2px] bg-indigo-500/15 text-indigo-300 border border-indigo-400/35">
+                                HSK {sent.hskLevel || 1}
+                              </span>
+                              <span className="text-[10px] font-bold px-2 py-0.5 rounded-[2px] bg-slate-900 text-slate-300 border border-slate-700">
+                                {formattedTopic}
+                              </span>
+                            </div>
+                            {sent.inputLevel === 'i+1' && sent.unknownTokens?.[0] && (
+                              <span className="font-hanzi text-[10px] font-bold text-sky-300">
+                                +1: {sent.unknownTokens[0]}
+                              </span>
+                            )}
+                          </div>
+
+                          <div className="flex items-start justify-between gap-2.5">
+                            <div className="flex-1 min-w-0 space-y-1.5">
+                              <InteractiveExampleText
+                                sentence={sent.hanzi}
+                                speakMandarin={speakMandarin}
+                                masteryMap={progress.mastery}
+                                courseWords={allUniqueWordsArray}
+                                charClassName="text-lg font-black text-white"
+                                showHint={false}
+                              />
+
+                              {isRevealed ? (
+                                <div className="space-y-0.5 pt-0.5">
+                                  {sent.pinyin && (
+                                    <p className="font-pinyin font-clarity text-sm font-bold text-rose-400 leading-snug">
+                                      {sent.pinyin}
+                                    </p>
+                                  )}
+                                  <p className="font-clarity text-xs font-medium text-slate-200 leading-snug">
+                                    {sent.english}
+                                  </p>
+                                </div>
+                              ) : (
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    soundFX.playPop();
+                                    setRevealedCorpusIds((prev) => ({
+                                      ...prev,
+                                      [sentKey]: true
+                                    }));
+                                  }}
+                                  className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg bg-slate-900 hover:bg-slate-800 border border-amber-500/40 text-[10px] font-extrabold text-amber-300"
+                                >
+                                  <Eye className="w-3 h-3" />
+                                  <span>Tap to reveal Pinyin &amp; English</span>
+                                </button>
+                              )}
+                            </div>
+
+                            <div className="shrink-0">
+                              <MandarinAudioControls
+                                text={sent.hanzi}
+                                isSlowMode={isSlowMode}
+                                onSetSlowMode={onSetSlowMode}
+                                speakMandarin={speakMandarin}
+                                speakingState={speakingState}
+                                size="sm"
+                                vertical={true}
+                              />
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {filteredCorpusList.length > corpusVisibleCount && (
+                      <button
+                        type="button"
+                        onClick={() => {
+                          soundFX.playPop();
+                          setCorpusVisibleCount((prev) => prev + 50);
+                        }}
+                        className="game-btn-3d w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border-2 border-slate-700 text-xs font-extrabold text-teal-300"
+                      >
+                        Show 50 more ({filteredCorpusList.length - corpusVisibleCount} left)
+                      </button>
+                    )}
+                  </>
+                )}
+              </div>
+            )}
+
+            {referenceTab === 'vocab' && filteredWordsList.slice(0, vocabVisibleCount).map((word, idx) => {
               const masteryLv = getWordMasteryLevel(progress.mastery, word);
               const tierTitle = getMasteryTierMeta(masteryLv).tier;
               const enrichedWord = enrichWordEntry(
@@ -4945,7 +5138,7 @@ export function LibraryView({
                 </div>
               );
             })}
-            {filteredWordsList.length > vocabVisibleCount && (
+            {referenceTab === 'vocab' && filteredWordsList.length > vocabVisibleCount && (
               <button
                 type="button"
                 onClick={() => {
@@ -5483,7 +5676,7 @@ export function LibraryView({
 }
 
 // ============================================================================
-// TAB 4: PROFILE VIEW (ACHIEVEMENTS / BADGES GRID + WEAKEST WORDS REVIEW + STATS + DAILY GOAL)
+// TAB 4: PROFILE VIEW (STUDY MODES DIRECTORY + WEAKEST WORDS REVIEW + STATS + SETTINGS)
 // ============================================================================
 export function ProfileView({
   progress,
@@ -5492,6 +5685,7 @@ export function ProfileView({
   courses,
   customDecks,
   currentLevel,
+  studyModesHubProps = {},
   linguisticDataStatus,
   isSyncingData = false,
   onSyncLinguisticData,
@@ -5560,12 +5754,24 @@ export function ProfileView({
     return Array.from(allUniqueWordsMap.values());
   }, [allUniqueWordsMap]);
 
+  const discoveredWeakestRanked = useMemo(() => {
+    const discovered = trackedWordsArray
+      .filter((word) => isWordDiscovered(word, progress))
+      .map((word) =>
+        enrichWordEntry(
+          word,
+          progress.wordLinguisticOverrides,
+          progress.wordPriorityOverrides
+        )
+      );
+    return rankWeakestDiscoveredWords(discovered, progress);
+  }, [trackedWordsArray, progress]);
+
   const weakWordsList = useMemo(() => {
-    const list = trackedWordsArray.filter(
+    return discoveredWeakestRanked.filter(
       (word) => getWordMasteryLevel(progress.mastery, word) <= 4
     );
-    return list;
-  }, [trackedWordsArray, progress.mastery]);
+  }, [discoveredWeakestRanked, progress.mastery]);
 
   const todayIso = getLocalIsoDate();
   const todayStudySeconds =
@@ -5573,81 +5779,6 @@ export function ProfileView({
       ? Math.max(0, Number(progress.dailyStudySeconds?.seconds) || 0)
       : 0;
   const totalStudySeconds = Math.max(0, Number(progress.totalStudySeconds) || 0);
-
-  const achievements = useMemo(() => {
-    const completedStagesTotal =
-      (progress.completedStages?.length || 0) +
-      Object.values(progress.lessonProgress || {}).reduce(
-        (acc, lp) => acc + (lp.completedStages?.length || 0),
-        0
-      );
-
-    const hasWrittenStage = (progress.stats?.writingStagesCompleted || 0) > 0;
-    const hasPerfectBoss = (progress.stats?.perfectBossWins || 0) > 0;
-
-    const grandmasterCount = globalStats.grandmasterWordsCount || 0;
-    const lv10Count = globalStats.level10WordsCount || 0;
-
-    return [
-      {
-        id: 'first_steps',
-        title: 'First Steps',
-        desc: 'Complete your first study stage or earn 50+ XP',
-        icon: Sparkles,
-        unlocked: completedStagesTotal >= 1 || progress.xp >= 50,
-        progressText: completedStagesTotal >= 1 || progress.xp >= 50 ? 'Unlocked!' : `${progress.xp}/50 XP`
-      },
-      {
-        id: 'stroke_master',
-        title: 'Stroke Master',
-        desc: 'Complete a Hanzi Stroke Order Writing stage',
-        icon: PenTool,
-        unlocked: hasWrittenStage,
-        progressText: hasWrittenStage ? 'Unlocked!' : '0/1 Stage'
-      },
-      {
-        id: 'perfect_boss',
-        title: 'Perfect Boss',
-        desc: 'Defeat the Unit Boss Challenge',
-        icon: Swords,
-        unlocked: hasPerfectBoss,
-        progressText: hasPerfectBoss ? 'Unlocked!' : 'Defeat Boss'
-      },
-      {
-        id: 'fifty_words_club',
-        title: 'Mastery Club (Lv. 8–10)',
-        desc: 'Build a library of 50+ words or master 3+ words (Lv. 8–10)',
-        icon: BookOpen,
-        unlocked:
-          globalStats.totalTrackedWords >= 50 || globalStats.masteredWordsCount >= 3,
-        progressText:
-          globalStats.totalTrackedWords >= 50
-            ? `${globalStats.totalTrackedWords}/50 Words`
-            : `${globalStats.masteredWordsCount}/3 Mastered`
-      },
-      {
-        id: 'grandmaster_sage',
-        title: 'Grandmaster (Lv. 10)',
-        desc: 'Reach Lv. 9–10 Grandmaster tier on any character',
-        icon: Trophy,
-        unlocked: grandmasterCount >= 1 || lv10Count >= 1,
-        progressText:
-          lv10Count >= 1
-            ? `${lv10Count} Lv.10 Max!`
-            : `${grandmasterCount}/1 Grandmaster`
-      },
-      {
-        id: 'jade_scholar',
-        title: 'Jade Scholar',
-        desc: 'Reach Player Level 3 (250+ XP) or 3x Combo streak',
-        icon: Crown,
-        unlocked: currentLevel >= 3 || (progress.stats?.highestCombo || 0) >= 3,
-        progressText: `Lv.${currentLevel}/3`
-      }
-    ];
-  }, [progress, globalStats, currentLevel]);
-
-  const unlockedCount = achievements.filter((a) => a.unlocked).length;
 
   return (
     <div className="p-4 space-y-4">
@@ -5660,8 +5791,8 @@ export function ProfileView({
             <h1 className="font-pixel-header text-xs text-amber-300">
               Lv.{currentLevel} {getPlayerTitle(currentLevel)}
             </h1>
-            <span className="text-[10px] font-black px-2 py-0.5 rounded-[2px] bg-amber-500/20 text-amber-300 border-2 border-amber-400/60">
-              {unlockedCount}/{achievements.length} Badges
+            <span className="text-[10px] font-black px-2 py-0.5 rounded-[2px] bg-emerald-500/20 text-emerald-300 border-2 border-emerald-400/50">
+              {globalStats.masteredWordsCount} Mastered
             </span>
           </div>
           <p className="text-xs text-slate-300 mt-1">
@@ -5688,7 +5819,7 @@ export function ProfileView({
         </div>
         <div className="text-right shrink-0">
           <span className="text-[10px] font-black uppercase tracking-wider text-emerald-400 block">
-            Today's Study Time
+            Today&apos;s Study Time
           </span>
           <span className="inline-flex items-center px-2.5 py-1 rounded-[2px] bg-emerald-500/15 border-2 border-emerald-400 text-xs font-black text-emerald-300 mt-0.5">
             {formatTodayStudyTime(todayStudySeconds)}
@@ -5726,87 +5857,56 @@ export function ProfileView({
               <span>Targeted Mastery Booster</span>
             </span>
             <h2 className="text-sm font-black text-white mt-1.5">
-              Weakest Words Review (Level 0–4)
+              Weakest Words Review ({discoveredWeakestRanked.length} Discovered)
             </h2>
             <p className="text-xs text-slate-300 mt-0.5">
-              {weakWordsList.length > 0
-                ? `You have ${weakWordsList.length} character(s) at Mastery Level 0–4 (${weakWordsList
+              {discoveredWeakestRanked.length === 0
+                ? 'Complete a lesson on the Map to unlock Weakest Word Review'
+                : weakWordsList.length > 0
+                ? `You have ${weakWordsList.length} discovered word(s) at Mastery Level 0–4 (${weakWordsList
                     .slice(0, 4)
                     .map((w) => w.hanzi)
                     .join(', ')}${weakWordsList.length > 4 ? '...' : ''}). Re-train them now!`
-                : 'All tracked characters are above Level 4! Click below for a quick refresher.'}
+                : `All ${discoveredWeakestRanked.length} discovered words are above Level 4! Click below to reinforce your weakest studied words.`}
             </p>
           </div>
         </div>
 
-        <button
-          type="button"
-          onClick={() =>
-            onLaunchWeakWordsReview(
-              weakWordsList.length > 0 ? weakWordsList : trackedWordsArray.slice(0, 5)
-            )
-          }
-          className="game-btn-3d w-full py-3 rounded-xl bg-gradient-to-r from-rose-500 to-amber-500 text-slate-950 font-black text-xs shadow-lg border-b-4 border-rose-800 flex items-center justify-center gap-2"
-        >
-          <RotateCcw className="w-4 h-4 stroke-[2.5px]" />
-          <span>
-            Review {weakWordsList.length > 0 ? `${weakWordsList.length} Weakest Words` : 'Core Words'} Now
-          </span>
-        </button>
+        {discoveredWeakestRanked.length > 0 ? (
+          <button
+            type="button"
+            onClick={() =>
+              onLaunchWeakWordsReview(
+                weakWordsList.length > 0 ? weakWordsList : discoveredWeakestRanked.slice(0, 10)
+              )
+            }
+            className="game-btn-3d w-full py-3 rounded-xl bg-gradient-to-r from-rose-500 to-amber-500 text-slate-950 font-black text-xs shadow-lg border-b-4 border-rose-800 flex items-center justify-center gap-2"
+          >
+            <RotateCcw className="w-4 h-4 stroke-[2.5px]" />
+            <span>
+              Review{' '}
+              {weakWordsList.length > 0
+                ? `${weakWordsList.length} Weakest Word${weakWordsList.length === 1 ? '' : 's'}`
+                : `${Math.min(10, discoveredWeakestRanked.length)} Studied Word${
+                    discoveredWeakestRanked.length === 1 ? '' : 's'
+                  }`}{' '}
+              Now
+            </span>
+          </button>
+        ) : (
+          <button
+            type="button"
+            disabled
+            className="w-full py-3 px-3 rounded-xl bg-slate-900 border-2 border-slate-700 text-slate-400 font-extrabold text-xs flex items-center justify-center gap-2 cursor-not-allowed opacity-80"
+          >
+            <Lock className="w-4 h-4 text-slate-500 shrink-0" />
+            <span>Complete a lesson on the Map to unlock Weakest Word Review</span>
+          </button>
+        )}
       </div>
 
-      <div className="rounded-2xl bg-slate-800/75 border border-slate-700/80 p-4 space-y-3">
-        <div className="flex items-center justify-between">
-          <h2 className="text-xs font-extrabold uppercase tracking-wider text-amber-400 flex items-center gap-1.5">
-            <Award className="w-4 h-4" />
-            <span>Achievements & Badges</span>
-          </h2>
-          <span className="text-xs font-black text-slate-300">
-            {unlockedCount} / {achievements.length} Unlocked
-          </span>
-        </div>
-
-        <div className="grid grid-cols-2 gap-2.5">
-          {achievements.map((badge) => {
-            const BadgeIcon = badge.icon;
-            return (
-              <div
-                key={badge.id}
-                className={`rounded-2xl p-3 border transition-all flex flex-col justify-between ${
-                  badge.unlocked
-                    ? 'bg-gradient-to-b from-amber-500/15 to-slate-900 border-amber-400/50 shadow-md'
-                    : 'bg-slate-900/60 border-slate-800 opacity-65'
-                }`}
-              >
-                <div className="flex items-start justify-between gap-2">
-                  <div
-                    className={`w-9 h-9 rounded-xl flex items-center justify-center shrink-0 ${
-                      badge.unlocked
-                        ? 'bg-gradient-to-br from-amber-400 to-orange-500 text-slate-950 shadow'
-                        : 'bg-slate-800 text-slate-500'
-                    }`}
-                  >
-                    <BadgeIcon className="w-5 h-5" />
-                  </div>
-                  <span
-                    className={`text-[10px] font-black px-2 py-0.5 rounded-full ${
-                      badge.unlocked
-                        ? 'bg-emerald-500/20 text-emerald-300 border border-emerald-500/30'
-                        : 'bg-slate-800 text-slate-400'
-                    }`}
-                  >
-                    {badge.progressText}
-                  </span>
-                </div>
-                <div className="mt-2">
-                  <h3 className="text-xs font-black text-white">{badge.title}</h3>
-                  <p className="text-[10px] text-slate-400 mt-0.5 leading-snug">{badge.desc}</p>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
+      {/* STUDY MODES & TOOLS DIRECTORY HUB */}
+      <StudyModesHub {...studyModesHubProps} />
 
       <div className="rounded-2xl bg-slate-800/75 border border-slate-700/80 p-4 space-y-3">
         <div className="flex items-center justify-between">
@@ -5881,43 +5981,8 @@ export function ProfileView({
 
       <div className="rounded-2xl bg-slate-800/75 border border-slate-700/80 p-4 space-y-3">
         <h2 className="text-xs font-extrabold uppercase tracking-wider text-slate-300">
-          Daily Quests, Backup & Study Settings
+          Backup, Data Sync &amp; Study Settings
         </h2>
-
-        <div className="rounded-2xl bg-slate-900/90 border border-slate-800 p-3 flex items-center justify-between gap-2">
-          <div>
-            <p className="text-xs font-extrabold text-white">Daily Quests & Completion Chest</p>
-            <p className="text-[11px] text-slate-400">
-              Today's Quests:{' '}
-              <strong className="text-amber-300">
-                {(progress.dailyQuests?.date === todayIso
-                  ? progress.dailyQuests?.completedIds?.length
-                  : 0) || 0}{' '}
-                / 3 Completed
-              </strong>{' '}
-              • Complete all 3 for +25 XP Chest
-            </p>
-          </div>
-          <span
-            className={`px-2.5 py-1 rounded-[2px] text-[10px] font-black border-2 shrink-0 ${
-              ((progress.dailyQuests?.date === todayIso
-                ? progress.dailyQuests?.completedIds?.length
-                : 0) || 0) >= 3
-                ? 'bg-amber-400 text-slate-950 border-amber-200'
-                : 'bg-slate-950 border-amber-500/50 text-amber-300'
-            }`}
-          >
-            {((progress.dailyQuests?.date === todayIso
-              ? progress.dailyQuests?.completedIds?.length
-              : 0) || 0) >= 3
-              ? '★ 3/3 Gold Chest!'
-              : `${
-                  (progress.dailyQuests?.date === todayIso
-                    ? progress.dailyQuests?.completedIds?.length
-                    : 0) || 0
-                }/3 Quests`}
-          </span>
-        </div>
 
         <div className="grid grid-cols-2 gap-2">
           <button

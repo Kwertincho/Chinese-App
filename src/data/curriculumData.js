@@ -1222,11 +1222,6 @@ export const INITIAL_PROGRESS_STATE = {
     date: null,
     seconds: 0
   },
-  dailyQuests: {
-    date: null,
-    completedIds: [],
-    claimedIds: []
-  },
   wordNotes: {},
   wordLinguisticOverrides: {},
   wordPriorityOverrides: {},

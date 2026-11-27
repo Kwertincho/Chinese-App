@@ -319,22 +319,87 @@ export function getCanonicalCourseRank(course) {
   return 90;
 }
 
+/**
+ * Extracts a deterministic numeric lesson index from a lesson object using strict priority:
+ * 1. Finite `lesson.lessonNumber`
+ * 2. Suffix pattern on `lesson.id`: `/(?:^|[-_])(?:l|lesson|unit|u)[-_]?(\d+)$/i`
+ * 3. Title pattern on `lesson.title`: `/\b(?:lesson|unit)\s*(\d+)\b/i`
+ * 4. `fallbackIdx`
+ */
+export function extractLessonOrderNumber(lesson, fallbackIdx = 9999) {
+  if (!lesson || typeof lesson !== 'object') return fallbackIdx;
+
+  if (typeof lesson.lessonNumber === 'number' && Number.isFinite(lesson.lessonNumber)) {
+    return lesson.lessonNumber;
+  }
+
+  const idStr = String(lesson.id || '').trim();
+  const idMatch = idStr.match(/(?:^|[-_])(?:l|lesson|unit|u)[-_]?(\d+)$/i);
+  if (idMatch && idMatch[1] !== undefined) {
+    const parsed = parseInt(idMatch[1], 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  const titleStr = String(lesson.title || '').trim();
+  const titleMatch = titleStr.match(/\b(?:lesson|unit)\s*(\d+)\b/i);
+  if (titleMatch && titleMatch[1] !== undefined) {
+    const parsed = parseInt(titleMatch[1], 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  return fallbackIdx;
+}
+
+/**
+ * Returns a new course object with its `lessons` array sorted strictly ascending
+ * by numeric lesson index (e.g. Lesson 1 -> 15, 4A 1 -> 10, 4B 11 -> 20, Unit 1 -> N).
+ */
+export function sortCourseLessonsNumerically(course) {
+  if (!course || typeof course !== 'object') return course;
+  const rawLessons = Array.isArray(course.lessons) ? course.lessons : [];
+  if (rawLessons.length <= 1) {
+    return {
+      ...course,
+      lessons: [...rawLessons]
+    };
+  }
+
+  const sortedLessons = rawLessons
+    .map((lesson, idx) => ({
+      lesson,
+      orderNum: extractLessonOrderNumber(lesson, idx),
+      originalIdx: idx
+    }))
+    .sort((a, b) => {
+      if (a.orderNum !== b.orderNum) return a.orderNum - b.orderNum;
+      return a.originalIdx - b.originalIdx;
+    })
+    .map((entry) => entry.lesson);
+
+  return {
+    ...course,
+    lessons: sortedLessons
+  };
+}
+
 export function sortCoursesCanonically(courses = []) {
   if (!Array.isArray(courses)) return [];
-  return [...courses].sort((a, b) => {
-    const rankDiff = getCanonicalCourseRank(a) - getCanonicalCourseRank(b);
-    if (rankDiff !== 0) return rankDiff;
+  return courses
+    .map((course) => sortCourseLessonsNumerically(course))
+    .sort((a, b) => {
+      const rankDiff = getCanonicalCourseRank(a) - getCanonicalCourseRank(b);
+      if (rankDiff !== 0) return rankDiff;
 
-    const aOfficial = String(a?.id || '').toLowerCase().startsWith('preloaded_new_hsk_') ? 0 : 1;
-    const bOfficial = String(b?.id || '').toLowerCase().startsWith('preloaded_new_hsk_') ? 0 : 1;
-    if (aOfficial !== bOfficial) return aOfficial - bOfficial;
+      const aOfficial = String(a?.id || '').toLowerCase().startsWith('preloaded_new_hsk_') ? 0 : 1;
+      const bOfficial = String(b?.id || '').toLowerCase().startsWith('preloaded_new_hsk_') ? 0 : 1;
+      if (aOfficial !== bOfficial) return aOfficial - bOfficial;
 
-    return String(a?.courseName || a?.id || '').localeCompare(
-      String(b?.courseName || b?.id || ''),
-      undefined,
-      { numeric: true, sensitivity: 'base' }
-    );
-  });
+      return String(a?.courseName || a?.id || '').localeCompare(
+        String(b?.courseName || b?.id || ''),
+        undefined,
+        { numeric: true, sensitivity: 'base' }
+      );
+    });
 }
 
 // ============================================================================
@@ -1642,7 +1707,8 @@ export function computeUnlockedWordsPool(courses = [], activeCourse = null, acti
   };
 
   courses.forEach((course) => {
-    const lessons = course.lessons || [];
+    const sortedCourse = sortCourseLessonsNumerically(course);
+    const lessons = sortedCourse?.lessons || [];
     lessons.forEach((lesson, lIdx) => {
       const lessonKey = `${course.id}__${lesson.id}`;
       const lp = progress.lessonProgress?.[lessonKey];
@@ -1724,105 +1790,6 @@ export function computeUnlockedWordsPool(courses = [], activeCourse = null, acti
     unlockedWords: wordsArray,
     unlockedWordsCount: effectiveCount
   };
-}
-
-export function hashDateSeed(dateStr = '') {
-  let h = 2166136261;
-  for (let i = 0; i < dateStr.length; i++) {
-    h ^= dateStr.charCodeAt(i);
-    h = Math.imul(h, 16777619);
-  }
-  return Math.abs(h);
-}
-
-export function generateDeterministicDailyQuests(dateStr = '', unlockedWordsCount = 3) {
-  const candidatePool = [
-    {
-      id: 'quest_smart_review',
-      modeKey: 'smart_review',
-      title: 'Finish a Smart Review session',
-      xpReward: 25,
-      badge: 'Smart Review',
-      minWords: 0
-    },
-    {
-      id: 'quest_flashcards',
-      modeKey: 'flashcards',
-      title: 'Complete 1 Flashcards Discovery run',
-      xpReward: 20,
-      badge: 'Discovery',
-      minWords: 0
-    },
-    {
-      id: 'quest_writing',
-      modeKey: 'writing',
-      title: 'Complete 1 Stroke Writing session',
-      xpReward: 25,
-      badge: 'Calligraphy',
-      minWords: 0
-    },
-    {
-      id: 'quest_dictation',
-      modeKey: 'dictation',
-      title: 'Finish 1 Listening Dictation drill',
-      xpReward: 25,
-      badge: 'Ear Training',
-      minWords: 0
-    },
-    {
-      id: 'quest_sentence_builder',
-      modeKey: 'sentence_builder',
-      title: 'Complete 1 Sentence Builder puzzle',
-      xpReward: 30,
-      badge: '12+ Words Mode',
-      minWords: ADVANCED_MODE_UNLOCK_THRESHOLDS.sentence_builder
-    },
-    {
-      id: 'quest_tone_drill',
-      modeKey: 'tone_sandhi_drill',
-      title: 'Complete 1 Tone & Sandhi Drill',
-      xpReward: 30,
-      badge: '12+ Words Mode',
-      minWords: ADVANCED_MODE_UNLOCK_THRESHOLDS.tone_sandhi_drill
-    },
-    {
-      id: 'quest_cloze',
-      modeKey: 'cloze',
-      title: 'Finish 1 Fill-in-the-Blank (Cloze) drill',
-      xpReward: 30,
-      badge: '25+ Words Mode',
-      minWords: ADVANCED_MODE_UNLOCK_THRESHOLDS.cloze
-    },
-    {
-      id: 'quest_blitz',
-      modeKey: 'blitz_match',
-      title: 'Win a 60s Blitz round',
-      xpReward: 35,
-      badge: '25+ Words Mode',
-      minWords: ADVANCED_MODE_UNLOCK_THRESHOLDS.blitz_match
-    },
-    {
-      id: 'quest_hsk_mock',
-      modeKey: 'hsk_mock_exam',
-      title: 'Complete an HSK Mock Exam',
-      xpReward: 35,
-      badge: '40+ Words Mode',
-      minWords: ADVANCED_MODE_UNLOCK_THRESHOLDS.hsk_mock_exam
-    }
-  ];
-
-  const eligible = candidatePool.filter((q) => unlockedWordsCount >= q.minWords);
-  const seed = hashDateSeed(dateStr || '2026-11-13');
-
-  const poolCopy = [...eligible];
-  for (let i = poolCopy.length - 1; i > 0; i--) {
-    const j = (seed + i * 31) % (i + 1);
-    const temp = poolCopy[i];
-    poolCopy[i] = poolCopy[j];
-    poolCopy[j] = temp;
-  }
-
-  return poolCopy.slice(0, 3);
 }
 
 export function partitionLessonWordsIntoChunks(lessonWords = UNIT_1_WORDS) {
@@ -3219,6 +3186,164 @@ export function getLeechWords(unlockedWords = [], srsSchedule = {}) {
   });
 
   return flagged.map((item) => item.word);
+}
+
+/**
+ * Returns true ONLY if the learner has actual study history for `word`:
+ * - mastery >= 1 (`progress.mastery[hanzi] >= 1` or by `word.id`), OR
+ * - recorded skill telemetry across any modality (`totalCompletions > 0 || totalMistakes > 0`
+ *   in `progress.wordSkillTelemetry` or `progress.skillTelemetry`), OR
+ * - a recorded SRS review (`Boolean(srsEntry.lastReviewedAt)` in `progress.srsSchedule` or `progress.srsData`).
+ *
+ * Words with mastery === 0, zero telemetry, and no prior SRS review strictly return `false`
+ * even if they belong to an unlocked lesson or active course.
+ */
+export function isWordDiscovered(word, progress) {
+  if (!word || !progress || typeof progress !== 'object') return false;
+
+  const hanzi =
+    typeof word === 'string'
+      ? word.trim()
+      : String(word?.hanzi || word?.simplified || '').trim();
+  const wordId = typeof word === 'object' && word?.id ? String(word.id) : '';
+  if (!hanzi && !wordId) return false;
+
+  // 1. Mastery >= 1
+  const masteryMap = progress.mastery;
+  if (masteryMap && typeof masteryMap === 'object') {
+    const byHanzi = hanzi ? Number(masteryMap[hanzi] || 0) : 0;
+    const byId = wordId ? Number(masteryMap[wordId] || 0) : 0;
+    if (Math.max(byHanzi, byId) >= 1) return true;
+  }
+
+  // 2. Recorded skill telemetry across any modality
+  const telemetryMaps = [progress.wordSkillTelemetry, progress.skillTelemetry].filter(
+    (m) => m && typeof m === 'object'
+  );
+  for (let mIdx = 0; mIdx < telemetryMaps.length; mIdx++) {
+    const tMap = telemetryMaps[mIdx];
+    const entries = [];
+    if (hanzi && tMap[hanzi] && typeof tMap[hanzi] === 'object') entries.push(tMap[hanzi]);
+    if (wordId && wordId !== hanzi && tMap[wordId] && typeof tMap[wordId] === 'object') {
+      entries.push(tMap[wordId]);
+    }
+    for (let eIdx = 0; eIdx < entries.length; eIdx++) {
+      const entry = entries[eIdx];
+      if (Number(entry.totalCompletions || 0) > 0 || Number(entry.totalMistakes || 0) > 0) {
+        return true;
+      }
+      const modValues = Object.values(entry);
+      for (let vIdx = 0; vIdx < modValues.length; vIdx++) {
+        const mod = modValues[vIdx];
+        if (
+          mod &&
+          typeof mod === 'object' &&
+          (Number(mod.completions || 0) > 0 || Number(mod.mistakes || 0) > 0)
+        ) {
+          return true;
+        }
+      }
+    }
+  }
+
+  // 3. Recorded SRS review
+  const srsMaps = [progress.srsSchedule, progress.srsData].filter(
+    (m) => m && typeof m === 'object'
+  );
+  for (let sIdx = 0; sIdx < srsMaps.length; sIdx++) {
+    const sMap = srsMaps[sIdx];
+    const byHanzi = hanzi ? sMap[hanzi] : null;
+    const byId = wordId ? sMap[wordId] : null;
+    if (Boolean(byHanzi?.lastReviewedAt) || Boolean(byId?.lastReviewedAt)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+/**
+ * Filters `candidateWords` strictly through `isWordDiscovered(w, progress)` and ranks
+ * them from weakest to strongest using mastery, mistake count/rate, SRS easeFactor,
+ * leech status, and word priorityWeight. Never pads with unstudied words.
+ */
+export function rankWeakestDiscoveredWords(candidateWords = [], progress = {}) {
+  if (!Array.isArray(candidateWords) || candidateWords.length === 0) return [];
+  const srsMap = progress?.srsSchedule || progress?.srsData || {};
+  const telemetryMap = progress?.wordSkillTelemetry || progress?.skillTelemetry || {};
+  const seen = new Set();
+  const scored = [];
+
+  for (let i = 0; i < candidateWords.length; i++) {
+    const word = candidateWords[i];
+    if (!word) continue;
+    const key = String(word.hanzi || word.id || '').trim();
+    if (!key || seen.has(key)) continue;
+    if (!isWordDiscovered(word, progress)) continue;
+    seen.add(key);
+
+    const mastery = getWordMasteryLevel(progress?.mastery, word);
+    const telemetry = getWordSkillTelemetry(telemetryMap, word);
+    let totalMistakes = 0;
+    let totalCompletions = 0;
+    Object.values(telemetry).forEach((m) => {
+      if (m && typeof m === 'object') {
+        totalMistakes += Number(m.mistakes || 0);
+        totalCompletions += Number(m.completions || 0);
+      }
+    });
+    const rawEntry = telemetryMap[word.hanzi] || telemetryMap[word.id] || null;
+    if (rawEntry && typeof rawEntry === 'object') {
+      totalMistakes = Math.max(totalMistakes, Number(rawEntry.totalMistakes || 0));
+      totalCompletions = Math.max(totalCompletions, Number(rawEntry.totalCompletions || 0));
+    }
+
+    const totalAttempts = totalMistakes + totalCompletions;
+    const mistakeRate = totalAttempts > 0 ? totalMistakes / totalAttempts : 0;
+    const srsEntry = getWordSrsEntry(srsMap, word);
+    const easeFactor =
+      typeof srsEntry?.easeFactor === 'number' && Number.isFinite(srsEntry.easeFactor)
+        ? srsEntry.easeFactor
+        : 2.0;
+    const isLeech = Boolean(srsEntry?.isLeech);
+    const lapseCount = Number(srsEntry?.lapseCount || 0);
+    const priorityWeight =
+      typeof word.priorityWeight === 'number' && Number.isFinite(word.priorityWeight)
+        ? word.priorityWeight
+        : typeof word.linguistics?.priorityWeight === 'number' &&
+          Number.isFinite(word.linguistics.priorityWeight)
+        ? word.linguistics.priorityWeight
+        : 1.0;
+
+    const lowMasteryScore = (10 - Math.min(10, mastery)) * 10;
+    const mistakeScore = totalMistakes * 8 + mistakeRate * 45;
+    const lowEaseScore = Math.max(0, 2.5 - easeFactor) * 40;
+    const leechBonus = isLeech ? 120 + Math.min(60, lapseCount * 10) : 0;
+    const weaknessScore =
+      (lowMasteryScore + mistakeScore + lowEaseScore) * priorityWeight + leechBonus;
+
+    scored.push({
+      word,
+      mastery,
+      totalMistakes,
+      mistakeRate,
+      easeFactor,
+      priorityWeight,
+      weaknessScore
+    });
+  }
+
+  scored.sort((a, b) => {
+    if (Math.abs(b.weaknessScore - a.weaknessScore) > 0.01) {
+      return b.weaknessScore - a.weaknessScore;
+    }
+    if (a.mastery !== b.mastery) return a.mastery - b.mastery;
+    if (b.totalMistakes !== a.totalMistakes) return b.totalMistakes - a.totalMistakes;
+    if (a.easeFactor !== b.easeFactor) return a.easeFactor - b.easeFactor;
+    return b.priorityWeight - a.priorityWeight;
+  });
+
+  return scored.map((item) => item.word);
 }
 
 /**

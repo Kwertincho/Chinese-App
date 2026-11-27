@@ -23,6 +23,7 @@ let masterLexiconMap = {};
 let preloadedCurriculum = { version: null, courses: [] };
 let isLoaded = false;
 let inFlightLoadPromise = null;
+let corpusSource = 'starter';
 let activeDataSource = (() => {
   try {
     if (typeof localStorage !== 'undefined') {
@@ -454,10 +455,22 @@ export async function loadStaticLinguisticData(options = {}) {
           ? corpusPayload
           : Array.isArray(corpusPayload.sentences)
           ? corpusPayload.sentences
+          : Array.isArray(corpusPayload.data)
+          ? corpusPayload.data
+          : Array.isArray(corpusPayload.items)
+          ? corpusPayload.items
           : [];
         if (externalSentences.length > 0) {
           registerExternalCorpusSentences(externalSentences);
+          corpusSource =
+            corpusRes.source === 'remote' || corpusRes.source === 'local'
+              ? corpusRes.source
+              : 'starter';
+        } else if (!isLoaded) {
+          corpusSource = 'starter';
         }
+      } else if (!isLoaded) {
+        corpusSource = 'starter';
       }
 
       const sources = [lexiconRes.source, curriculumRes.source, corpusRes.source];
@@ -533,6 +546,7 @@ export function getLinguisticDataStatus() {
       : 0,
     curriculumVersion: preloadedCurriculum?.version || null,
     corpusCount: getCorpusSentenceCount(),
+    corpusSource: corpusSource || 'starter',
     source: activeDataSource || 'embedded',
     lastSyncedAt: lastSyncedAt || null,
     activeBaseUrl,

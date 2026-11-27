@@ -95,7 +95,7 @@ export function PixelFlameSprite({ active = true, className = 'w-4 h-4' }) {
 }
 
 /**
- * Pixel Gold Coin / Gem Sprite (XP counter & Daily Quests)
+ * Pixel Gold Coin / Gem Sprite (XP counter & Rewards)
  */
 export function PixelCoinSprite({ className = 'w-4 h-4' }) {
   return (

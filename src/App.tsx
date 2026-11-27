@@ -9,13 +9,13 @@ import {
   Sparkles,
   Turtle,
   Swords,
-  ChevronRight
+  ChevronRight,
+  Compass
 } from 'lucide-react';
 import {
   PixelFlameSprite,
   PixelCoinSprite,
   PixelCrownSprite,
-  PixelGemSprite,
   PixelBlockGauge
 } from './components/SharedHudAndAudio.jsx';
 import {
@@ -42,7 +42,6 @@ import {
 import {
   normalizeWordEntry,
   computeUnlockedWordsPool,
-  generateDeterministicDailyQuests,
   buildDynamicModalityQueue,
   buildProportionalUnitNodes,
   collectPastLessonWords,
@@ -54,10 +53,14 @@ import {
   sampleWeightedWordsWithoutReplacement,
   SRS_ACTIVATION_MIN_WORDS,
   isWordSrsDue,
+  getLeechWords,
   countWordsAtLeastLevel,
   buildConfusableDrillItems,
   getCourseHskBandNumber,
-  sortCoursesCanonically
+  sortCourseLessonsNumerically,
+  sortCoursesCanonically,
+  isWordDiscovered,
+  rankWeakestDiscoveredWords
 } from './utils/mandarinHelpers.js';
 import {
   FlashcardStageModal,
@@ -79,6 +82,7 @@ import {
   ProfileView
 } from './components/TabViews.jsx';
 import { ShadowingAudioModal } from './components/ShadowingAudioModal.jsx';
+import { StudyModesHub } from './components/StudyModesHub.jsx';
 import { PWAInstallButton, OfflineIndicator } from './components/PWAInstallPrompt.jsx';
 import {
   loadStaticLinguisticData,
@@ -150,9 +154,15 @@ export default function App() {
           parsed.lessonProgress || {},
           parsed.completedStages || []
         );
+        const {
+          dailyQuests: _legacyDailyQuests,
+          achievements: _legacyAchievements,
+          unlockedAchievements: _legacyUnlockedAchievements,
+          ...cleanParsed
+        } = parsed && typeof parsed === 'object' ? parsed : {};
         return {
           ...INITIAL_PROGRESS_STATE,
-          ...parsed,
+          ...cleanParsed,
           isSlowMode: slow,
           preferredSpeed: slow ? SLOW_SPEECH_RATE : NORMAL_SPEECH_RATE,
           dailyGoalXp: Number(parsed.dailyGoalXp) > 0 ? Number(parsed.dailyGoalXp) : 30,
@@ -189,20 +199,20 @@ export default function App() {
     return INITIAL_PROGRESS_STATE;
   });
 
-  // Courses State
+  // Courses State (always canonically ordered with strictly numeric lesson order)
   const [courses, setCourses] = useState(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY_COURSES);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return sortCoursesCanonically(parsed);
+          return sortCoursesCanonically(parsed.map((c: any) => sortCourseLessonsNumerically(c)));
         }
       }
     } catch (e) {
       // Ignore
     }
-    return sortCoursesCanonically(DEFAULT_COURSES);
+    return sortCoursesCanonically(DEFAULT_COURSES.map((c: any) => sortCourseLessonsNumerically(c)));
   });
 
   // Custom Decks State
@@ -239,25 +249,42 @@ export default function App() {
       const saved = localStorage.getItem(STORAGE_KEY_ACTIVE_SELECTION);
       if (saved) {
         const parsed = JSON.parse(saved);
-        const matchedCourse =
+        const rawMatchedCourse =
           courses.find((c: any) => c.id === parsed?.courseId) || courses[0] || DEFAULT_COURSES[0];
-        if (
-          parsed?.lessonId &&
-          (matchedCourse.lessons || []).some((l: any) => l.id === parsed.lessonId)
-        ) {
+        const matchedCourse = sortCourseLessonsNumerically(rawMatchedCourse);
+        const sortedLessons = matchedCourse?.lessons || [];
+        const firstLessonId = sortedLessons[0]?.id || DEFAULT_COURSES[0].lessons[0].id;
+
+        if (parsed?.lessonId && sortedLessons.some((l: any) => l.id === parsed.lessonId)) {
+          // If the course has zero recorded progress yet, always land on the numerically first lesson
+          // (heals any legacy selection saved when lessons were lexicographically ordered, e.g. nhsk1-l11).
+          const courseHasProgress = Object.entries(progress.lessonProgress || {}).some(
+            ([k, lp]: [string, any]) =>
+              k.startsWith(`${matchedCourse.id}__`) &&
+              lp &&
+              ((lp.unlockedStage || 1) > 1 ||
+                (Array.isArray(lp.completedStages) && lp.completedStages.length > 0) ||
+                Object.values(lp.nodeLevels || {}).some((lv: any) => Number(lv) >= 1))
+          );
+          if (!courseHasProgress && parsed.lessonId !== firstLessonId) {
+            return firstLessonId;
+          }
           return parsed.lessonId;
         }
-        return matchedCourse.lessons?.[0]?.id || DEFAULT_COURSES[0].lessons[0].id;
+        return firstLessonId;
       }
     } catch (e) {
       // Ignore storage errors
     }
-    return courses[0]?.lessons?.[0]?.id || DEFAULT_COURSES[0].lessons[0].id;
+    const firstCourse = sortCourseLessonsNumerically(courses[0] || DEFAULT_COURSES[0]);
+    return firstCourse?.lessons?.[0]?.id || DEFAULT_COURSES[0].lessons[0].id;
   });
 
   // Active Study / Game Modal State
   const [activeModal, setActiveModal] = useState<any>(null);
   const [isShadowingOpen, setIsShadowingOpen] = useState(false);
+  const [isModesGuideOpen, setIsModesGuideOpen] = useState(false);
+  const [libraryNavTarget, setLibraryNavTarget] = useState<any>(null);
 
   const [speakingState, setSpeakingState] = useState({
     active: false,
@@ -324,13 +351,27 @@ export default function App() {
           (!incomingVersion || existingPre.curriculumVersion === incomingVersion) &&
           existingPre.hskBand === stampedCourse.hskBand;
 
-        canonicalPreloadedCourses.push(shouldKeepExisting ? existingPre : stampedCourse);
+        canonicalPreloadedCourses.push(
+          sortCourseLessonsNumerically(shouldKeepExisting ? existingPre : stampedCourse)
+        );
       });
 
-      const nextCourses = sortCoursesCanonically([...userCourses, ...canonicalPreloadedCourses]);
+      const nextCourses = sortCoursesCanonically([
+        ...userCourses.map((c: any) => sortCourseLessonsNumerically(c)),
+        ...canonicalPreloadedCourses
+      ]);
       const didChange =
         nextCourses.length !== prevCourses.length ||
-        nextCourses.some((course, idx) => course !== prevCourses[idx]);
+        nextCourses.some((course, idx) => {
+          const prev = prevCourses[idx];
+          if (!prev || course.id !== prev.id || course.curriculumVersion !== prev.curriculumVersion) {
+            return true;
+          }
+          const nextLessons = course.lessons || [];
+          const prevLessons = prev.lessons || [];
+          if (nextLessons.length !== prevLessons.length) return true;
+          return nextLessons.some((l: any, lIdx: number) => l?.id !== prevLessons[lIdx]?.id);
+        });
 
       return didChange ? nextCourses : prevCourses;
     });
@@ -497,9 +538,11 @@ export default function App() {
     });
   };
 
-  // Resolve Active Course and Active Lesson
+  // Resolve Active Course and Active Lesson (always numerically sorted)
   const activeCourse = useMemo(() => {
-    return courses.find((c: any) => c.id === activeCourseId) || courses[0] || DEFAULT_COURSES[0];
+    const found =
+      courses.find((c: any) => c.id === activeCourseId) || courses[0] || DEFAULT_COURSES[0];
+    return sortCourseLessonsNumerically(found);
   }, [courses, activeCourseId]);
 
   const activeLessonIndex = useMemo(() => {
@@ -581,44 +624,12 @@ export default function App() {
   }, [enrichedUnlockedWords, linguisticDataStatus.corpusCount]);
 
   const todayCalendarDate = getLocalIsoDate();
-  const dailyQuests = useMemo(
-    () => generateDeterministicDailyQuests(todayCalendarDate, unlockedWordsCount),
-    [todayCalendarDate, unlockedWordsCount]
-  );
-
-  const dailyQuestState = useMemo(() => {
-    const saved = progress.dailyQuests || {};
-    if (saved.date === todayCalendarDate) {
-      return {
-        date: todayCalendarDate,
-        completedIds: Array.isArray(saved.completedIds) ? saved.completedIds : [],
-        claimedIds: Array.isArray(saved.claimedIds) ? saved.claimedIds : [],
-        bonusChestClaimed: Boolean(saved.bonusChestClaimed)
-      };
-    }
-    return {
-      date: todayCalendarDate,
-      completedIds: [],
-      claimedIds: [],
-      bonusChestClaimed: false
-    };
-  }, [progress.dailyQuests, todayCalendarDate]);
 
   useEffect(() => {
-    const needsQuestReset = progress.dailyQuests?.date !== todayCalendarDate;
     const needsStudyTimerReset = progress.dailyStudySeconds?.date !== todayCalendarDate;
-    if (needsQuestReset || needsStudyTimerReset) {
+    if (needsStudyTimerReset) {
       setProgress((prev: any) => ({
         ...prev,
-        dailyQuests:
-          prev.dailyQuests?.date === todayCalendarDate
-            ? prev.dailyQuests
-            : {
-                date: todayCalendarDate,
-                completedIds: [],
-                claimedIds: [],
-                bonusChestClaimed: false
-              },
         dailyStudySeconds:
           prev.dailyStudySeconds?.date === todayCalendarDate
             ? prev.dailyStudySeconds
@@ -628,7 +639,7 @@ export default function App() {
               }
       }));
     }
-  }, [progress.dailyQuests?.date, progress.dailyStudySeconds?.date, todayCalendarDate]);
+  }, [progress.dailyStudySeconds?.date, todayCalendarDate]);
 
   const handleRecordStudySeconds = useCallback((secondsDelta: number) => {
     const cleanDelta = Math.max(0, Math.round(Number(secondsDelta) || 0));
@@ -650,210 +661,6 @@ export default function App() {
       };
     });
   }, []);
-
-  const handleClaimQuestReward = useCallback(
-    (quest: any) => {
-      if (!quest) return;
-      soundFX.playVictory();
-      const today = getLocalIsoDate();
-
-      setProgress((prev: any) => {
-        const dq =
-          prev.dailyQuests?.date === today
-            ? prev.dailyQuests
-            : { date: today, completedIds: [], claimedIds: [], bonusChestClaimed: false };
-
-        if ((dq.claimedIds || []).includes(quest.id)) return prev;
-
-        const nextClaimed = [...(dq.claimedIds || []), quest.id];
-        const xpGain = Number(quest.xpReward) || 25;
-        const nextTotalXp = (prev.xp || 0) + xpGain;
-        const prevTodayXp =
-          prev.dailyXpDate === today
-            ? Number(prev.dailyXpEarned ?? prev.dailyXp ?? 0)
-            : 0;
-
-        return {
-          ...prev,
-          xp: nextTotalXp,
-          playerLevel: computePlayerLevelProgress(nextTotalXp).level,
-          dailyXpDate: today,
-          dailyXp: prevTodayXp + xpGain,
-          dailyXpEarned: prevTodayXp + xpGain,
-          dailyQuests: {
-            date: today,
-            completedIds: dq.completedIds || [],
-            claimedIds: nextClaimed,
-            bonusChestClaimed: Boolean(dq.bonusChestClaimed)
-          }
-        };
-      });
-
-      triggerToast(
-        `Quest Reward Claimed! +${quest.xpReward} XP`,
-        `Completed: "${quest.title}"`
-      );
-    },
-    [triggerToast]
-  );
-
-  const handleClaimDailyChest = useCallback(() => {
-    soundFX.playVictory();
-    const today = getLocalIsoDate();
-    setProgress((prev: any) => {
-      const dq =
-        prev.dailyQuests?.date === today
-          ? prev.dailyQuests
-          : { date: today, completedIds: [], claimedIds: [], bonusChestClaimed: false };
-      if ((dq.completedIds || []).length < 3 || dq.bonusChestClaimed) return prev;
-      const xpGain = 25;
-      const nextTotalXp = (prev.xp || 0) + xpGain;
-      const prevTodayXp =
-        prev.dailyXpDate === today
-          ? Number(prev.dailyXpEarned ?? prev.dailyXp ?? 0)
-          : 0;
-      return {
-        ...prev,
-        xp: nextTotalXp,
-        playerLevel: computePlayerLevelProgress(nextTotalXp).level,
-        dailyXpDate: today,
-        dailyXp: prevTodayXp + xpGain,
-        dailyXpEarned: prevTodayXp + xpGain,
-        dailyQuests: {
-          ...dq,
-          date: today,
-          bonusChestClaimed: true
-        }
-      };
-    });
-    triggerToast(
-      'Daily Completion Chest Opened! +25 XP',
-      'All 3 Daily Quests completed today!'
-    );
-  }, [triggerToast]);
-
-  const handleJumpToQuest = useCallback(
-    (quest: any) => {
-      if (!quest) return;
-      soundFX.playPop();
-      const pool = unlockedWords.length > 0 ? unlockedWords : activeWords;
-
-      switch (quest.modeKey) {
-        case 'smart_review': {
-          const queue = buildDynamicModalityQueue(
-            pool,
-            ['recognition', 'writing', 'listening', 'speaking'],
-            'Daily Quest • Smart Review',
-            activeLessonIndex,
-            [],
-            0,
-            unlockedWords
-          );
-          setActiveModal({
-            type: 'mixed_session',
-            stageId: null,
-            questModeKey: 'smart_review',
-            sessionConfig: {
-              title: 'Daily Quest • Smart Review',
-              badgeText: 'Daily Quest',
-              xpReward: 25,
-              queue
-            }
-          });
-          break;
-        }
-        case 'flashcards':
-          setActiveModal({
-            type: 'flashcards',
-            stageId: null,
-            questModeKey: 'flashcards',
-            words: activeWords
-          });
-          break;
-        case 'writing':
-          setActiveModal({
-            type: 'writing',
-            stageId: null,
-            questModeKey: 'writing',
-            words: activeWords
-          });
-          break;
-        case 'dictation':
-          setActiveModal({
-            type: 'audio_speech',
-            stageId: null,
-            questModeKey: 'dictation',
-            words: activeWords,
-            focusMode: 'dictation'
-          });
-          break;
-        case 'sentence_builder': {
-          const queue = activeWords.map((w: any, idx: number) => ({
-            stepId: `quest_sb_${w.id}_${idx}`,
-            word: w,
-            modality: 'sentence_builder',
-            reason: 'Daily Quest • Sentence Builder'
-          }));
-          setActiveModal({
-            type: 'mixed_session',
-            stageId: null,
-            questModeKey: 'sentence_builder',
-            sessionConfig: {
-              title: 'Sentence Builder Puzzle',
-              badgeText: 'Daily Quest',
-              xpReward: 25,
-              queue
-            }
-          });
-          break;
-        }
-        case 'tone_sandhi_drill':
-          setActiveModal({
-            type: 'tone_sandhi_drill',
-            questModeKey: 'tone_sandhi_drill',
-            words: pool
-          });
-          break;
-        case 'cloze': {
-          const queue = pool.slice(0, 6).map((w: any, idx: number) => ({
-            stepId: `quest_cloze_${w.id}_${idx}`,
-            word: w,
-            modality: 'cloze',
-            reason: 'Daily Quest • Fill-in-the-Blank'
-          }));
-          setActiveModal({
-            type: 'mixed_session',
-            stageId: null,
-            questModeKey: 'cloze',
-            sessionConfig: {
-              title: 'Fill-in-the-Blank (选词填空)',
-              badgeText: 'Daily Quest',
-              xpReward: 25,
-              queue
-            }
-          });
-          break;
-        }
-        case 'blitz_match':
-          setActiveModal({
-            type: 'blitz_match',
-            questModeKey: 'blitz_match',
-            words: pool
-          });
-          break;
-        case 'hsk_mock_exam':
-          setActiveModal({
-            type: 'hsk_mock_exam',
-            questModeKey: 'hsk_mock_exam',
-            words: pool
-          });
-          break;
-        default:
-          setActiveTab('practice');
-      }
-    },
-    [activeLessonIndex, activeWords, unlockedWords]
-  );
 
   const handleRecordSkillEvent = useCallback(
     (word: any, modalityKey: string, { mistakesDelta = 0, completionsDelta = 0 } = {}) => {
@@ -1038,21 +845,6 @@ export default function App() {
             ? Number(prev.dailyXpEarned ?? prev.dailyXp ?? 0)
             : 0;
 
-        const prevDq =
-          prev.dailyQuests?.date === today
-            ? prev.dailyQuests
-            : { date: today, completedIds: [], claimedIds: [], bonusChestClaimed: false };
-        const nextCompletedQuestIds = [...(prevDq.completedIds || [])];
-
-        dailyQuests.forEach((q: any) => {
-          if (
-            completedModeKeys.includes(q.modeKey) &&
-            !nextCompletedQuestIds.includes(q.id)
-          ) {
-            nextCompletedQuestIds.push(q.id);
-          }
-        });
-
         const nextTotalXp = (prev.xp || 0) + appliedXpEarned;
         const completedWriting =
           Array.isArray(completedModeKeys) && completedModeKeys.includes('writing');
@@ -1066,12 +858,6 @@ export default function App() {
           dailyXpEarned: prevTodayXp + appliedXpEarned,
           streak: nextStreak,
           lastStudyDate: today,
-          dailyQuests: {
-            date: today,
-            completedIds: nextCompletedQuestIds,
-            claimedIds: prevDq.claimedIds || [],
-            bonusChestClaimed: Boolean(prevDq.bonusChestClaimed)
-          },
           unlockedStage: isDefaultUnit1 ? nextUnlocked : prev.unlockedStage,
           completedStages: isDefaultUnit1 ? nextCompleted : prev.completedStages,
           lessonProgress: {
@@ -1124,7 +910,6 @@ export default function App() {
       activeCourse.id,
       activeLesson.id,
       activeWords,
-      dailyQuests,
       progress.completedStages,
       progress.lessonProgress,
       progress.unlockedStage,
@@ -1267,7 +1052,6 @@ export default function App() {
           type: 'mixed_session',
           stageId: stage.id,
           nodeLevel: currentNodeLevel,
-          questModeKey: 'flashcards',
           sessionConfig: {
             title: stage.title,
             badgeText: stage.badgeText,
@@ -1433,10 +1217,25 @@ export default function App() {
   const effectiveStreak = studiedToday || streakAtRisk ? rawStreak : 0;
   const dailyGoalXp = Number(progress.dailyGoalXp) > 0 ? Number(progress.dailyGoalXp) : 30;
   const todayXpEarned = progress.dailyXpDate === todayIso ? Number(progress.dailyXpEarned || 0) : 0;
-  const completedDailyQuestsCount = dailyQuests.filter((q: any) =>
-    dailyQuestState.completedIds?.includes(q.id)
-  ).length;
-  const isAllDailyQuestsDone = completedDailyQuestsCount >= 3;
+
+  const srsDueCount = useMemo(() => {
+    const nowMs = Date.now();
+    return unlockedWords.filter(
+      (w: any) =>
+        isWordDiscovered(w, progress) &&
+        isWordSrsDue(progress.srsData, w, getWordMasteryLevel(progress.mastery, w), nowMs)
+    ).length;
+  }, [unlockedWords, progress]);
+
+  const leechWordsList = useMemo(
+    () => getLeechWords(unlockedWords, progress.srsData),
+    [unlockedWords, progress.srsData]
+  );
+
+  const confusableReadyCount = useMemo(
+    () => buildConfusableDrillItems(unlockedWords, getMasterLexiconMap(), 8).length,
+    [unlockedWords, linguisticDataStatus.lexiconCount]
+  );
 
   const handleLaunchGenerativeDrill = useCallback(
     (modeKey: string) => {
@@ -1730,7 +1529,6 @@ export default function App() {
       setActiveModal({
         type: 'mixed_session',
         stageId: null,
-        questModeKey: modeKey,
         sessionConfig: {
           title: modeMeta.label,
           badgeText:
@@ -1754,6 +1552,179 @@ export default function App() {
       allUniqueWordsArray,
       activeWords,
       triggerToast
+    ]
+  );
+
+  const handleLaunchLeechRemediationSession = useCallback(
+    (leechPool: any[]) => {
+      const safeLeeches = Array.isArray(leechPool) ? leechPool.filter(Boolean) : [];
+      if (safeLeeches.length === 0) {
+        triggerToast('Memory Stable!', 'No leech words currently need remediation.');
+        return;
+      }
+      soundFX.playPop();
+      const openClozeUnlocked = Boolean(generativeReadiness?.open_cloze?.unlocked);
+      const activeModes = [
+        'listening',
+        'reverse_meaning_mc',
+        'cloze',
+        'writing',
+        ...(openClozeUnlocked ? ['open_cloze'] : [])
+      ];
+
+      const openClozeByHanzi: Record<string, any> = {};
+      if (openClozeUnlocked && enrichedUnlockedWords.length > 0) {
+        try {
+          const enrichedLeeches = safeLeeches.map((w: any) =>
+            enrichWordEntry(
+              w,
+              progress.wordLinguisticOverrides,
+              progress.wordPriorityOverrides
+            )
+          );
+          const batch = generateGenerativeBatch(enrichedUnlockedWords, {
+            count: Math.min(8, Math.max(4, safeLeeches.length * 2)),
+            focusWords: enrichedLeeches,
+            mode: 'open_cloze'
+          });
+          (Array.isArray(batch) ? batch : []).forEach((item: any) => {
+            const targetH = item?.targetWord?.hanzi;
+            if (targetH && !openClozeByHanzi[targetH]) {
+              openClozeByHanzi[targetH] = item;
+            }
+          });
+          enrichedLeeches.forEach((lw: any) => {
+            if (lw?.hanzi && !openClozeByHanzi[lw.hanzi]) {
+              const single = generateSentenceForWord(enrichedUnlockedWords, lw);
+              if (single && single.targetWord?.hanzi) {
+                openClozeByHanzi[lw.hanzi] = single;
+              }
+            }
+          });
+        } catch {
+          // Gracefully fall back to standard high-retention modalities
+        }
+      }
+
+      const targetSteps = Math.min(10, Math.max(safeLeeches.length * 2, 4));
+      const queue: any[] = [];
+      for (let i = 0; i < targetSteps; i++) {
+        const targetWord = safeLeeches[i % safeLeeches.length];
+        const preferredMode = activeModes[i % activeModes.length];
+        const genItem =
+          preferredMode === 'open_cloze' ? openClozeByHanzi[targetWord.hanzi] || null : null;
+        const finalModality =
+          preferredMode === 'open_cloze' && !genItem ? 'cloze' : preferredMode;
+        const meta = (MODALITY_META as any)[finalModality] || {
+          shortLabel: finalModality
+        };
+        queue.push({
+          stepId: `leech_${targetWord.hanzi || targetWord.id}_${finalModality}_${i}`,
+          word: targetWord,
+          modality: finalModality,
+          ...(genItem ? { generativeItem: genItem } : {}),
+          reason: `Leech Attack • ${meta.shortLabel}`
+        });
+      }
+
+      setActiveModal({
+        type: 'mixed_session',
+        stageId: null,
+        sessionConfig: {
+          title: 'Leech Remediation • 难点攻坚',
+          badgeText: `${safeLeeches.length} Stubborn Word${
+            safeLeeches.length === 1 ? '' : 's'
+          }`,
+          xpReward: 35,
+          queue
+        }
+      });
+    },
+    [
+      generativeReadiness,
+      enrichedUnlockedWords,
+      progress.wordLinguisticOverrides,
+      progress.wordPriorityOverrides,
+      triggerToast
+    ]
+  );
+
+  const studyModesHubProps = useMemo(
+    () => ({
+      unlockedWordsCount,
+      srsDueCount,
+      leechCount: leechWordsList.length,
+      generativeReadiness,
+      corpusStats,
+      confusableCount: confusableReadyCount,
+      onNavigateTab: (tabId: string) => setActiveTab(tabId),
+      onLaunchSmartReview: () => {
+        const discoveredPool = rankWeakestDiscoveredWords(enrichedUnlockedWords, progress);
+        if (discoveredPool.length < 1) {
+          soundFX.playMistake();
+          triggerToast(
+            'Weakest Word Review Locked',
+            'Complete a lesson on the Map to unlock Weakest Word Review'
+          );
+          setActiveTab('practice');
+          return;
+        }
+        const queue = buildDynamicModalityQueue(
+          discoveredPool.slice(0, 8),
+          ['recognition', 'writing', 'listening', 'speaking'],
+          'Weakest Word Review',
+          activeLessonIndex,
+          [],
+          0,
+          enrichedUnlockedWords,
+          generativeReadiness
+        );
+        setActiveModal({
+          type: 'mixed_session',
+          stageId: null,
+          sessionConfig: {
+            title: 'Weakest Word Review',
+            badgeText: srsDueCount > 0 ? `${srsDueCount} SRS Due` : 'Discovered Weakest',
+            xpReward: 25,
+            queue
+          }
+        });
+      },
+      onLaunchLeechRemediation: () => handleLaunchLeechRemediationSession(leechWordsList),
+      onOpenShadowing: () => setIsShadowingOpen(true),
+      onLaunchBlitz: () => {
+        const pool = unlockedWords.length > 0 ? unlockedWords : activeWords;
+        setActiveModal({
+          type: 'blitz_match',
+          words: pool
+        });
+      },
+      onLaunchGenerativeMode: (modeKey: string) => handleLaunchGenerativeDrill(modeKey),
+      onLaunchConfusable: () => handleLaunchGenerativeDrill('confusable_chars'),
+      onOpenLibrarySection: (targetKey: string) => {
+        if (targetKey === 'corpus') {
+          setLibraryNavTarget({ section: 'decks', studioToolMode: 'none', referenceTab: 'corpus' });
+        } else {
+          setLibraryNavTarget({ section: targetKey });
+        }
+        setActiveTab('library');
+      }
+    }),
+    [
+      unlockedWordsCount,
+      srsDueCount,
+      leechWordsList,
+      generativeReadiness,
+      corpusStats,
+      confusableReadyCount,
+      unlockedWords,
+      activeWords,
+      activeLessonIndex,
+      enrichedUnlockedWords,
+      progress,
+      triggerToast,
+      handleLaunchLeechRemediationSession,
+      handleLaunchGenerativeDrill
     ]
   );
 
@@ -2046,48 +2017,37 @@ export default function App() {
             </div>
           </div>
 
-          {/* Unified Daily Quests Progress Bar (0/3 -> 3/3 Gold + +25 XP Chest) */}
-          <div
+          {/* Study Modes Directory Quick Launcher Bar */}
+          <button
+            type="button"
             onClick={() => {
               soundFX.playPop();
-              setActiveTab('map');
+              setIsModesGuideOpen(true);
             }}
-            className={`cursor-pointer rounded-[2px] px-2.5 py-1.5 border-2 flex items-center justify-between gap-2.5 transition-all ${
-              isAllDailyQuestsDone
-                ? 'bg-amber-950/75 border-amber-400 shadow-[0_0_12px_rgba(251,191,36,0.2)]'
-                : 'bg-slate-950 border-slate-700'
-            }`}
+            className="w-full cursor-pointer rounded-[2px] px-2.5 py-1.5 border-2 bg-slate-950 hover:bg-slate-900 border-slate-700 hover:border-amber-400/70 flex items-center justify-between gap-2.5 transition-all"
           >
-            <div className="flex items-center gap-1.5 shrink-0">
-              <PixelGemSprite className="w-3.5 h-3.5" />
-              <span
-                className={`text-[10px] font-black uppercase tracking-wider ${
-                  isAllDailyQuestsDone ? 'text-amber-300' : 'text-slate-200'
-                }`}
-              >
-                {isAllDailyQuestsDone ? 'Daily Quests: 3/3 ★ Chest +25 XP' : `Daily Quests: ${completedDailyQuestsCount}/3`}
+            <div className="flex items-center gap-1.5 min-w-0">
+              <Compass className="w-3.5 h-3.5 text-amber-400 shrink-0" />
+              <span className="text-[10px] font-black uppercase tracking-wider text-slate-200 truncate">
+                Modes Guide
+              </span>
+              <span className="text-[10px] font-bold text-slate-400 truncate hidden sm:inline">
+                • All Study Tools
               </span>
             </div>
 
-            <div className="flex-1 max-w-[140px]">
-              <PixelBlockGauge
-                value={completedDailyQuestsCount}
-                max={3}
-                blocks={3}
-                filledClass={isAllDailyQuestsDone ? 'bg-amber-400' : 'bg-emerald-400'}
-                emptyClass="bg-slate-900"
-                heightClass="h-2"
-              />
+            <div className="flex items-center gap-1.5 shrink-0">
+              {srsDueCount > 0 && (
+                <span className="px-1.5 py-0.5 rounded-[2px] bg-amber-500/20 border border-amber-400/50 text-[9px] font-black text-amber-300">
+                  {srsDueCount} Due
+                </span>
+              )}
+              <span className="px-1.5 py-0.5 rounded-[2px] bg-slate-900 border border-slate-700 text-[9px] font-bold text-slate-300">
+                {unlockedWordsCount} Words
+              </span>
+              <ChevronRight className="w-3.5 h-3.5 text-amber-300" />
             </div>
-
-            <span
-              className={`font-pixel-header text-[9px] shrink-0 ${
-                isAllDailyQuestsDone ? 'text-amber-300' : 'text-emerald-300'
-              }`}
-            >
-              {completedDailyQuestsCount}/3
-            </span>
-          </div>
+          </button>
         </header>
 
         {/* TOAST NOTIFICATION BANNER (16-BIT RPG DIALOGUE BOX) */}
@@ -2112,14 +2072,11 @@ export default function App() {
               activeCourse={activeCourse}
               activeLesson={activeLesson}
               activeWords={activeWords}
-              dailyQuests={dailyQuests}
-              dailyQuestState={dailyQuestState}
-              onJumpToQuest={handleJumpToQuest}
-              onClaimQuestReward={handleClaimQuestReward}
-              onClaimDailyChest={handleClaimDailyChest}
               onSelectCourseAndLesson={(courseId: string, lessonId: string | null) => {
                 setActiveCourseId(courseId);
-                const foundCourse = courses.find((c: any) => c.id === courseId);
+                const foundCourse = sortCourseLessonsNumerically(
+                  courses.find((c: any) => c.id === courseId)
+                );
                 const targetLessonId =
                   lessonId || foundCourse?.lessons?.[0]?.id || activeLessonId;
                 setActiveLessonId(targetLessonId);
@@ -2127,6 +2084,7 @@ export default function App() {
               speakMandarin={speakMandarin}
               onSelectStageNode={handleSelectStageNode}
               onOpenLibraryImporter={() => setActiveTab('library')}
+              onOpenModesGuide={() => setIsModesGuideOpen(true)}
             />
           )}
 
@@ -2153,108 +2111,30 @@ export default function App() {
               }}
               onLaunchGenerativeDrill={handleLaunchGenerativeDrill}
               onLaunchSmartReviewSession={(queue: any, filterLabel: string) => {
+                const safeQueue = Array.isArray(queue)
+                  ? queue.filter((step: any) => step?.word && isWordDiscovered(step.word, progress))
+                  : [];
+                if (safeQueue.length < 1) {
+                  soundFX.playMistake();
+                  triggerToast(
+                    'Weakest Word Review Locked',
+                    'Complete a lesson on the Map to unlock Weakest Word Review'
+                  );
+                  return;
+                }
                 soundFX.playPop();
                 setActiveModal({
                   type: 'mixed_session',
                   stageId: null,
-                  questModeKey: 'smart_review',
                   sessionConfig: {
                     title: 'Smart Review Arena',
                     badgeText: filterLabel,
                     xpReward: 25,
-                    queue
+                    queue: safeQueue
                   }
                 });
               }}
-              onLaunchLeechRemediation={(leechPool: any[]) => {
-                const safeLeeches = Array.isArray(leechPool) ? leechPool.filter(Boolean) : [];
-                if (safeLeeches.length === 0) {
-                  triggerToast('Memory Stable!', 'No leech words currently need remediation.');
-                  return;
-                }
-                soundFX.playPop();
-                const openClozeUnlocked = Boolean(generativeReadiness?.open_cloze?.unlocked);
-                const activeModes = [
-                  'listening',
-                  'reverse_meaning_mc',
-                  'cloze',
-                  'writing',
-                  ...(openClozeUnlocked ? ['open_cloze'] : [])
-                ];
-
-                // Pre-generate optional open_cloze items focused on the leech words when unlocked
-                const openClozeByHanzi: Record<string, any> = {};
-                if (openClozeUnlocked && enrichedUnlockedWords.length > 0) {
-                  try {
-                    const enrichedLeeches = safeLeeches.map((w: any) =>
-                      enrichWordEntry(
-                        w,
-                        progress.wordLinguisticOverrides,
-                        progress.wordPriorityOverrides
-                      )
-                    );
-                    const batch = generateGenerativeBatch(enrichedUnlockedWords, {
-                      count: Math.min(8, Math.max(4, safeLeeches.length * 2)),
-                      focusWords: enrichedLeeches,
-                      mode: 'open_cloze'
-                    });
-                    (Array.isArray(batch) ? batch : []).forEach((item: any) => {
-                      const targetH = item?.targetWord?.hanzi;
-                      if (targetH && !openClozeByHanzi[targetH]) {
-                        openClozeByHanzi[targetH] = item;
-                      }
-                    });
-                    enrichedLeeches.forEach((lw: any) => {
-                      if (lw?.hanzi && !openClozeByHanzi[lw.hanzi]) {
-                        const single = generateSentenceForWord(enrichedUnlockedWords, lw);
-                        if (single && single.targetWord?.hanzi) {
-                          openClozeByHanzi[lw.hanzi] = single;
-                        }
-                      }
-                    });
-                  } catch {
-                    // Gracefully fall back to standard high-retention modalities
-                  }
-                }
-
-                // Focus exclusively on flagged leech words across high-retention active modalities
-                const targetSteps = Math.min(10, Math.max(safeLeeches.length * 2, 4));
-                const queue: any[] = [];
-                for (let i = 0; i < targetSteps; i++) {
-                  const targetWord = safeLeeches[i % safeLeeches.length];
-                  const preferredMode = activeModes[i % activeModes.length];
-                  const genItem =
-                    preferredMode === 'open_cloze'
-                      ? openClozeByHanzi[targetWord.hanzi] || null
-                      : null;
-                  const finalModality =
-                    preferredMode === 'open_cloze' && !genItem ? 'cloze' : preferredMode;
-                  const meta = (MODALITY_META as any)[finalModality] || {
-                    shortLabel: finalModality
-                  };
-                  queue.push({
-                    stepId: `leech_${targetWord.hanzi || targetWord.id}_${finalModality}_${i}`,
-                    word: targetWord,
-                    modality: finalModality,
-                    ...(genItem ? { generativeItem: genItem } : {}),
-                    reason: `Leech Attack • ${meta.shortLabel}`
-                  });
-                }
-
-                setActiveModal({
-                  type: 'mixed_session',
-                  stageId: null,
-                  questModeKey: 'smart_review',
-                  sessionConfig: {
-                    title: 'Leech Remediation • 难点攻坚',
-                    badgeText: `${safeLeeches.length} Stubborn Word${
-                      safeLeeches.length === 1 ? '' : 's'
-                    }`,
-                    xpReward: 35,
-                    queue
-                  }
-                });
-              }}
+              onLaunchLeechRemediation={handleLaunchLeechRemediationSession}
               onLaunchSentenceBuilderDrill={() => {
                 soundFX.playPop();
                 const queue = activeWords.map((w: any, idx: number) => ({
@@ -2266,7 +2146,6 @@ export default function App() {
                 setActiveModal({
                   type: 'mixed_session',
                   stageId: null,
-                  questModeKey: 'sentence_builder',
                   sessionConfig: {
                     title: 'Sentence Builder Puzzle',
                     badgeText: 'Word Order',
@@ -2290,7 +2169,6 @@ export default function App() {
                 setActiveModal({
                   type: 'mixed_session',
                   stageId: null,
-                  questModeKey: 'classifier_drill',
                   sessionConfig: {
                     title: 'Measure Words Trainer (量词)',
                     badgeText: 'HSK 1 Classifiers',
@@ -2314,7 +2192,6 @@ export default function App() {
                 setActiveModal({
                   type: 'mixed_session',
                   stageId: null,
-                  questModeKey: 'dialogue_qa',
                   sessionConfig: {
                     title: 'Conversational Q&A (问答)',
                     badgeText: 'Mini-Dialogues',
@@ -2327,7 +2204,6 @@ export default function App() {
                 soundFX.playPop();
                 setActiveModal({
                   type: 'numbers_time_lab',
-                  questModeKey: 'numbers_time_lab',
                   words: Array.isArray(pool) && pool.length > 0 ? pool : activeWords
                 });
               }}
@@ -2344,7 +2220,6 @@ export default function App() {
                 setActiveModal({
                   type: 'mixed_session',
                   stageId: null,
-                  questModeKey: 'cloze',
                   sessionConfig: {
                     title: 'Fill-in-the-Blank (选词填空)',
                     badgeText: 'Cloze Context Drill',
@@ -2357,7 +2232,6 @@ export default function App() {
                 soundFX.playPop();
                 setActiveModal({
                   type: 'tone_sandhi_drill',
-                  questModeKey: 'tone_sandhi_drill',
                   words: Array.isArray(pool) && pool.length > 0 ? pool : activeWords
                 });
               }}
@@ -2365,7 +2239,6 @@ export default function App() {
                 soundFX.playPop();
                 setActiveModal({
                   type: 'hsk_mock_exam',
-                  questModeKey: 'hsk_mock_exam',
                   words: Array.isArray(pool) && pool.length > 0 ? pool : activeWords
                 });
               }}
@@ -2373,7 +2246,6 @@ export default function App() {
                 soundFX.playPop();
                 setActiveModal({
                   type: 'blitz_match',
-                  questModeKey: 'blitz_match',
                   words: pool && pool.length > 0 ? pool : activeWords
                 });
               }}
@@ -2383,14 +2255,12 @@ export default function App() {
                   setActiveModal({
                     type: 'writing',
                     stageId: null,
-                    questModeKey: 'writing',
                     words: activeWords
                   });
                 } else if (activityType === 'dictation_only') {
                   setActiveModal({
                     type: 'audio_speech',
                     stageId: null,
-                    questModeKey: 'dictation',
                     words: activeWords,
                     focusMode: 'dictation'
                   });
@@ -2398,7 +2268,6 @@ export default function App() {
                   setActiveModal({
                     type: 'audio_speech',
                     stageId: null,
-                    questModeKey: 'speaking',
                     words: activeWords,
                     focusMode: 'speaking'
                   });
@@ -2406,7 +2275,6 @@ export default function App() {
                   setActiveModal({
                     type: 'flashcards',
                     stageId: null,
-                    questModeKey: 'flashcards',
                     words: activeWords
                   });
                 }
@@ -2421,6 +2289,10 @@ export default function App() {
               courses={courses}
               activeCourse={activeCourse}
               customDecks={customDecks}
+              unlockedWords={unlockedWords}
+              allUniqueWordsArray={allUniqueWordsArray}
+              initialLibraryTarget={libraryNavTarget}
+              onConsumeLibraryTarget={() => setLibraryNavTarget(null)}
               linguisticDataStatus={linguisticDataStatus}
               isSyncingData={isSyncingData}
               onSyncLinguisticData={handleSyncLinguisticData}
@@ -2533,10 +2405,16 @@ export default function App() {
                   triggerToast('Invalid Backup', 'Backup file structure was not recognized.');
                   return;
                 }
-                if (parsedBackup.progress) {
+                if (parsedBackup.progress && typeof parsedBackup.progress === 'object') {
+                  const {
+                    dailyQuests: _legacyDq,
+                    achievements: _legacyAch,
+                    unlockedAchievements: _legacyUnlockedAch,
+                    ...cleanBackupProgress
+                  } = parsedBackup.progress;
                   setProgress((prev: any) => ({
                     ...prev,
-                    ...parsedBackup.progress,
+                    ...cleanBackupProgress,
                     wordLinguisticOverrides:
                       parsedBackup.progress.wordLinguisticOverrides &&
                       typeof parsedBackup.progress.wordLinguisticOverrides === 'object'
@@ -2627,6 +2505,7 @@ export default function App() {
               courses={courses}
               customDecks={customDecks}
               currentLevel={currentLevel}
+              studyModesHubProps={studyModesHubProps}
               linguisticDataStatus={linguisticDataStatus}
               isSyncingData={isSyncingData}
               onSyncLinguisticData={handleSyncLinguisticData}
@@ -2658,10 +2537,16 @@ export default function App() {
                 triggerToast('Backup Exported!', 'Downloaded full study backup JSON.');
               }}
               onImportBackupData={(parsedBackup: any) => {
-                if (parsedBackup?.progress) {
+                if (parsedBackup?.progress && typeof parsedBackup.progress === 'object') {
+                  const {
+                    dailyQuests: _legacyDq,
+                    achievements: _legacyAch,
+                    unlockedAchievements: _legacyUnlockedAch,
+                    ...cleanBackupProgress
+                  } = parsedBackup.progress;
                   setProgress((prev: any) => ({
                     ...prev,
-                    ...parsedBackup.progress,
+                    ...cleanBackupProgress,
                     wordLinguisticOverrides:
                       parsedBackup.progress.wordLinguisticOverrides &&
                       typeof parsedBackup.progress.wordLinguisticOverrides === 'object'
@@ -2713,11 +2598,6 @@ export default function App() {
                     date: todayDate,
                     seconds: 0
                   },
-                  dailyQuests: {
-                    date: todayDate,
-                    completedIds: [],
-                    claimedIds: []
-                  },
                   wordNotes: {},
                   wordLinguisticOverrides: {},
                   wordPriorityOverrides: {},
@@ -2752,14 +2632,32 @@ export default function App() {
                 );
               }}
               onLaunchWeakWordsReview={(weakPool: any[]) => {
-                const wordsToUse =
-                  Array.isArray(weakPool) && weakPool.length > 0 ? weakPool : activeWords;
+                const rawCandidates = Array.isArray(weakPool) ? weakPool : [];
+                const enrichedCandidates = rawCandidates.map((w: any) =>
+                  enrichWordEntry(
+                    w,
+                    progress.wordLinguisticOverrides,
+                    progress.wordPriorityOverrides
+                  )
+                );
+                const discoveredWeakWords = rankWeakestDiscoveredWords(
+                  enrichedCandidates,
+                  progress
+                );
+                if (discoveredWeakWords.length < 1) {
+                  soundFX.playMistake();
+                  triggerToast(
+                    'Weakest Word Review Locked',
+                    'Complete a lesson on the Map to unlock Weakest Word Review'
+                  );
+                  return;
+                }
                 const weakModalities =
                   unlockedWordsCount >= 12
                     ? ['recognition', 'writing', 'listening', 'sentence_builder']
                     : ['recognition', 'writing', 'listening'];
                 const queue = buildDynamicModalityQueue(
-                  wordsToUse,
+                  discoveredWeakWords.slice(0, 10),
                   weakModalities,
                   'Weakest Words Booster',
                   activeLessonIndex,
@@ -2772,7 +2670,7 @@ export default function App() {
                   stageId: null,
                   sessionConfig: {
                     title: 'Weakest Words Booster',
-                    badgeText: 'Mastery Lv 0–4 Review',
+                    badgeText: `Discovered Weakest (${discoveredWeakWords.length})`,
                     xpReward: 25,
                     queue
                   }
@@ -2837,7 +2735,7 @@ export default function App() {
                 wordsPracticed: activeModal.words || activeWords,
                 xpEarned: 15 + bonusXp,
                 maxCombo,
-                completedModeKeys: ['flashcards', activeModal.questModeKey].filter(Boolean)
+                completedModeKeys: ['flashcards']
               })
             }
           />
@@ -2861,7 +2759,7 @@ export default function App() {
                 wordsPracticed: activeModal.words || activeWords,
                 xpEarned: 25 + bonusXp,
                 maxCombo,
-                completedModeKeys: ['writing', activeModal.questModeKey].filter(Boolean)
+                completedModeKeys: ['writing']
               })
             }
           />
@@ -2885,8 +2783,7 @@ export default function App() {
               const focusMode = activeModal.focusMode || 'combined';
               const audioModeKeys = [
                 focusMode === 'dictation' || focusMode === 'combined' ? 'dictation' : null,
-                focusMode === 'speaking' || focusMode === 'combined' ? 'speaking' : null,
-                activeModal.questModeKey
+                focusMode === 'speaking' || focusMode === 'combined' ? 'speaking' : null
               ].filter(Boolean);
               handleCompleteStageSession({
                 stageId: activeModal.stageId,
@@ -2930,7 +2827,7 @@ export default function App() {
                 maxCombo,
                 isBossWin: true,
                 heartsRemaining,
-                completedModeKeys: ['boss', activeModal.questModeKey].filter(Boolean)
+                completedModeKeys: ['boss']
               });
             }}
           />
@@ -2960,10 +2857,7 @@ export default function App() {
                 wordsPracticed: wordsPracticed || activeWords,
                 xpEarned: (activeModal.sessionConfig?.xpReward || 25) + bonusXp,
                 maxCombo,
-                completedModeKeys: [
-                  activeModal.questModeKey,
-                  ...modalitiesInQueue
-                ].filter(Boolean)
+                completedModeKeys: modalitiesInQueue.filter(Boolean)
               });
             }}
           />
@@ -2982,7 +2876,7 @@ export default function App() {
                   matchedWords && matchedWords.length > 0 ? matchedWords : activeWords,
                 xpEarned: scoreXp,
                 maxCombo,
-                completedModeKeys: ['blitz_match', activeModal.questModeKey].filter(Boolean)
+                completedModeKeys: ['blitz_match']
               })
             }
           />
@@ -3005,7 +2899,7 @@ export default function App() {
                   practicedWords && practicedWords.length > 0 ? practicedWords : activeWords,
                 xpEarned: totalXp,
                 maxCombo,
-                completedModeKeys: ['tone_sandhi_drill', activeModal.questModeKey].filter(Boolean)
+                completedModeKeys: ['tone_sandhi_drill']
               })
             }
           />
@@ -3028,7 +2922,7 @@ export default function App() {
                   practicedWords && practicedWords.length > 0 ? practicedWords : activeWords,
                 xpEarned: totalXp,
                 maxCombo: totalCorrect,
-                completedModeKeys: ['hsk_mock_exam', activeModal.questModeKey].filter(Boolean)
+                completedModeKeys: ['hsk_mock_exam']
               })
             }
           />
@@ -3051,10 +2945,28 @@ export default function App() {
                 wordsPracticed: Array.isArray(practicedWords) ? practicedWords : [],
                 xpEarned: totalXp,
                 maxCombo,
-                completedModeKeys: ['numbers_time_lab', activeModal.questModeKey].filter(Boolean)
+                completedModeKeys: ['numbers_time_lab']
               })
             }
           />
+        )}
+
+        {isModesGuideOpen && (
+          <div
+            className="fixed inset-0 z-50 bg-slate-950/90 backdrop-blur-sm flex items-end sm:items-center justify-center p-3"
+            onClick={() => setIsModesGuideOpen(false)}
+          >
+            <div
+              className="w-full max-w-md max-h-[86vh] overflow-y-auto rounded-3xl bg-slate-900 border-2 border-amber-500/70 p-4 shadow-2xl"
+              onClick={(e) => e.stopPropagation()}
+            >
+              <StudyModesHub
+                {...studyModesHubProps}
+                isModal={true}
+                onClose={() => setIsModesGuideOpen(false)}
+              />
+            </div>
+          </div>
         )}
 
         <ShadowingAudioModal
