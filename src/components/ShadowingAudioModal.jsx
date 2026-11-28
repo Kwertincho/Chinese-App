@@ -9,14 +9,22 @@ import {
   Repeat,
   MessageSquare,
   Volume2,
-  Sun
+  Sun,
+  EyeOff,
+  Eye
 } from 'lucide-react';
 import {
   soundFX,
   resolveMandarinVoice,
   getGlobalPreferredVoiceURI
 } from '../audio/soundEngine.js';
-import { normalizeWordEntry } from '../utils/mandarinHelpers.js';
+import {
+  normalizeWordEntry,
+  useSessionTimer,
+  isWordSrsDue,
+  isWordDiscovered,
+  getWordMasteryLevel
+} from '../utils/mandarinHelpers.js';
 
 const DECK_FILTERS = [
   { id: 'core', label: 'Core Priority' },
@@ -38,11 +46,15 @@ const PHASES = [
   { id: 'mandarin_slow', label: 'Slow 0.65x' }
 ];
 
-function extractCleanChineseExample(word) {
+export function extractCleanChineseExample(word) {
   if (!word) return '';
+  const targetHanzi = String(word.hanzi || '').trim();
   const direct = String(word.exampleHanzi || '').trim();
   if (direct && /[\u4e00-\u9fff]/.test(direct)) {
-    return direct.replace(/\s+/g, '');
+    const cleanedDirect = direct.replace(/\s+/g, '');
+    if (cleanedDirect !== targetHanzi) {
+      return cleanedDirect;
+    }
   }
   const raw = String(word.example || '').trim();
   if (!raw) return '';
@@ -117,8 +129,10 @@ export function ShadowingAudioModal({
   enrichedUnlockedWords,
   activeLessonWords,
   srsSchedule,
+  progress = null,
   speechRate = 1.0,
-  selectedVoiceURI = ''
+  selectedVoiceURI = '',
+  onRecordStudySeconds
 }) {
   const safeUnlockedWords = Array.isArray(enrichedUnlockedWords) ? enrichedUnlockedWords : [];
   const safeLessonWords = Array.isArray(activeLessonWords) ? activeLessonWords : [];
@@ -127,6 +141,8 @@ export function ShadowingAudioModal({
   const [recallPauseMs, setRecallPauseMs] = useState(2500);
   const [includeExample, setIncludeExample] = useState(true);
   const [loopPlaylist, setLoopPlaylist] = useState(true);
+  const [blindRecall, setBlindRecall] = useState(true);
+  const [openedAtMs, setOpenedAtMs] = useState(() => Date.now());
 
   const [isPlaying, setIsPlaying] = useState(false);
   const [currentIndex, setCurrentIndex] = useState(0);
@@ -136,11 +152,21 @@ export function ShadowingAudioModal({
   const [wakeLockActive, setWakeLockActive] = useState(false);
   const [ttsWarning, setTtsWarning] = useState('');
 
+  useSessionTimer(Boolean(isOpen && isPlaying), onRecordStudySeconds);
+
   const cycleRunIdRef = useRef(0);
   const activeTimersRef = useRef([]);
   const activeIntervalRef = useRef(null);
   const activeUtteranceRef = useRef(null);
   const wakeLockRef = useRef(null);
+
+  // Live setting refs so toggling recall pause, example sentence, or loop mid-card never cuts off active TTS
+  const recallPauseMsRef = useRef(recallPauseMs);
+  recallPauseMsRef.current = recallPauseMs;
+  const includeExampleRef = useRef(includeExample);
+  includeExampleRef.current = includeExample;
+  const loopPlaylistRef = useRef(loopPlaylist);
+  loopPlaylistRef.current = loopPlaylist;
 
   const clearTimersAndSpeech = useCallback(() => {
     cycleRunIdRef.current += 1;
@@ -209,8 +235,12 @@ export function ShadowingAudioModal({
   }, [safeUnlockedWords]);
 
   const deckLists = useMemo(() => {
-    const nowMs = Date.now();
     const allList = Array.from(enrichedByHanzi.values());
+    const effectiveProgress =
+      progress && typeof progress === 'object'
+        ? progress
+        : { srsData: safeSrsSchedule, mastery: {} };
+    const masteryMap = effectiveProgress.mastery || {};
 
     const sortByPriorityDesc = (arr) =>
       [...arr].sort((a, b) => {
@@ -225,10 +255,9 @@ export function ShadowingAudioModal({
 
     const srsDueList = sortByPriorityDesc(
       allList.filter((w) => {
-        const entry = safeSrsSchedule?.[w.hanzi] || safeSrsSchedule?.[w.id];
-        if (!entry) return false;
-        const nextAt = Number(entry.nextReviewAt || 0);
-        return nextAt > 0 && nextAt <= nowMs;
+        if (!isWordDiscovered(w, effectiveProgress)) return false;
+        const lv = getWordMasteryLevel(masteryMap, w);
+        return isWordSrsDue(safeSrsSchedule, w, lv, openedAtMs);
       })
     );
 
@@ -253,13 +282,14 @@ export function ShadowingAudioModal({
       lesson: lessonList,
       all: sortByPriorityDesc(allList)
     };
-  }, [enrichedByHanzi, safeLessonWords, safeSrsSchedule]);
+  }, [enrichedByHanzi, safeLessonWords, safeSrsSchedule, progress, openedAtMs]);
 
   const playlist = deckLists[deckFilter] || [];
 
-  // Default to a non-empty deck filter when opening the modal
+  // Refresh SRS timestamp and default to a non-empty deck filter when opening the modal
   useEffect(() => {
     if (!isOpen) return;
+    setOpenedAtMs(Date.now());
     setIsPlaying(false);
     setActivePhase('idle');
     setCurrentIndex(0);
@@ -486,7 +516,7 @@ export function ShadowingAudioModal({
 
       // 2. Silent Recall Countdown (1.5s / 2.5s / 4.0s)
       setActivePhase('recall_pause');
-      const ok2 = await runRecallCountdown(recallPauseMs, runId);
+      const ok2 = await runRecallCountdown(recallPauseMsRef.current, runId);
       if (!ok2 || cycleRunIdRef.current !== runId) return;
 
       // 3. Speak Mandarin Target Word at Normal Speed (speechRate || 1.0)
@@ -514,7 +544,7 @@ export function ShadowingAudioModal({
       });
       if (!ok4 || cycleRunIdRef.current !== runId) return;
 
-      const exampleHanzi = includeExample ? extractCleanChineseExample(card) : '';
+      const exampleHanzi = includeExampleRef.current ? extractCleanChineseExample(card) : '';
       if (exampleHanzi) {
         const okExGap = await waitCancelable(450, runId);
         if (!okExGap || cycleRunIdRef.current !== runId) return;
@@ -535,7 +565,7 @@ export function ShadowingAudioModal({
 
       if (safeIdx + 1 < playlist.length) {
         setCurrentIndex(safeIdx + 1);
-      } else if (loopPlaylist) {
+      } else if (loopPlaylistRef.current) {
         setCurrentIndex(0);
       } else {
         setIsPlaying(false);
@@ -553,9 +583,6 @@ export function ShadowingAudioModal({
     isPlaying,
     currentIndex,
     playlist,
-    recallPauseMs,
-    includeExample,
-    loopPlaylist,
     speechRate,
     selectedVoiceURI,
     clearTimersAndSpeech,
@@ -722,7 +749,34 @@ export function ShadowingAudioModal({
               </div>
             </div>
 
-            <div className="grid grid-cols-2 gap-1.5">
+            <div className="grid grid-cols-3 gap-1.5">
+              <button
+                type="button"
+                role="switch"
+                aria-checked={blindRecall}
+                onClick={() => {
+                  soundFX.playPop();
+                  setBlindRecall((v) => !v);
+                }}
+                className={`px-2 py-2 rounded-xl border text-[10px] font-bold flex items-center justify-between gap-1 transition-all ${
+                  blindRecall
+                    ? 'bg-amber-500/15 border-amber-400/50 text-amber-200'
+                    : 'bg-slate-950/80 border-slate-800 text-slate-400'
+                }`}
+              >
+                <span className="flex items-center gap-1 truncate">
+                  {blindRecall ? (
+                    <EyeOff className="w-3.5 h-3.5 shrink-0" />
+                  ) : (
+                    <Eye className="w-3.5 h-3.5 shrink-0" />
+                  )}
+                  <span className="truncate">Blind Recall</span>
+                </span>
+                <span className="text-[9px] font-black uppercase shrink-0">
+                  {blindRecall ? 'ON' : 'OFF'}
+                </span>
+              </button>
+
               <button
                 type="button"
                 role="switch"
@@ -731,7 +785,7 @@ export function ShadowingAudioModal({
                   soundFX.playPop();
                   setIncludeExample((v) => !v);
                 }}
-                className={`px-2.5 py-2 rounded-xl border text-[11px] font-bold flex items-center justify-between gap-1.5 transition-all ${
+                className={`px-2 py-2 rounded-xl border text-[10px] font-bold flex items-center justify-between gap-1 transition-all ${
                   includeExample
                     ? 'bg-emerald-500/15 border-emerald-400/50 text-emerald-200'
                     : 'bg-slate-950/80 border-slate-800 text-slate-400'
@@ -739,7 +793,7 @@ export function ShadowingAudioModal({
               >
                 <span className="flex items-center gap-1 truncate">
                   <MessageSquare className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate">Example Sentence</span>
+                  <span className="truncate">Example</span>
                 </span>
                 <span className="text-[9px] font-black uppercase shrink-0">
                   {includeExample ? 'ON' : 'OFF'}
@@ -754,7 +808,7 @@ export function ShadowingAudioModal({
                   soundFX.playPop();
                   setLoopPlaylist((v) => !v);
                 }}
-                className={`px-2.5 py-2 rounded-xl border text-[11px] font-bold flex items-center justify-between gap-1.5 transition-all ${
+                className={`px-2 py-2 rounded-xl border text-[10px] font-bold flex items-center justify-between gap-1 transition-all ${
                   loopPlaylist
                     ? 'bg-sky-500/15 border-sky-400/50 text-sky-200'
                     : 'bg-slate-950/80 border-slate-800 text-slate-400'
@@ -762,7 +816,7 @@ export function ShadowingAudioModal({
               >
                 <span className="flex items-center gap-1 truncate">
                   <Repeat className="w-3.5 h-3.5 shrink-0" />
-                  <span className="truncate">Loop Playlist</span>
+                  <span className="truncate">Loop</span>
                 </span>
                 <span className="text-[9px] font-black uppercase shrink-0">
                   {loopPlaylist ? 'ON' : 'OFF'}
@@ -844,28 +898,44 @@ export function ShadowingAudioModal({
                 </div>
               </div>
 
-              {/* Word Showcase */}
-              <div className="text-center py-3 space-y-2">
-                <div className="font-hanzi text-5xl font-black text-white tracking-wide leading-tight">
-                  {currentCard.hanzi}
-                </div>
-                <div className="font-pinyin text-lg font-bold text-rose-300">
-                  {currentCard.pinyin}
-                </div>
-                <div className="font-clarity text-base font-bold text-slate-200 leading-snug px-2">
-                  {currentCard.meaning || currentCard.english}
-                </div>
-                {includeExample && cleanExample && (
-                  <div className="mt-2 pt-2.5 border-t border-slate-800/80 space-y-0.5">
-                    <span className="font-clarity text-[10px] font-extrabold uppercase tracking-wider text-emerald-300 block">
-                      Example Sentence (0.65x)
-                    </span>
-                    <div className="font-hanzi text-base font-bold text-slate-100">
-                      {cleanExample}
-                    </div>
+              {/* Word Showcase (Active-Recall Blind Mode hides Hanzi & Pinyin during English Cue + Recall Pause) */}
+              {blindRecall &&
+              (activePhase === 'english_cue' || activePhase === 'recall_pause') ? (
+                <div className="text-center py-4 space-y-3">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-amber-500/15 border border-amber-400/40 text-amber-300 font-clarity text-[11px] font-black uppercase tracking-wider">
+                    <EyeOff className="w-3.5 h-3.5" />
+                    <span>Blind Recall Active</span>
                   </div>
-                )}
-              </div>
+                  <div className="font-clarity text-xl font-black text-white leading-snug px-2">
+                    {currentCard.meaning || currentCard.english}
+                  </div>
+                  <p className="font-clarity text-sm font-extrabold text-amber-300 animate-pulse">
+                    Think &amp; Say in Mandarin...
+                  </p>
+                </div>
+              ) : (
+                <div className="text-center py-3 space-y-2">
+                  <div className="font-hanzi text-5xl font-black text-white tracking-wide leading-tight">
+                    {currentCard.hanzi}
+                  </div>
+                  <div className="font-pinyin text-lg font-bold text-rose-300">
+                    {currentCard.pinyin}
+                  </div>
+                  <div className="font-clarity text-base font-bold text-slate-200 leading-snug px-2">
+                    {currentCard.meaning || currentCard.english}
+                  </div>
+                  {includeExample && cleanExample && (
+                    <div className="mt-2 pt-2.5 border-t border-slate-800/80 space-y-0.5">
+                      <span className="font-clarity text-[10px] font-extrabold uppercase tracking-wider text-emerald-300 block">
+                        Example Sentence (0.65x)
+                      </span>
+                      <div className="font-hanzi text-base font-bold text-slate-100">
+                        {cleanExample}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
             </>
           ) : (
             <div className="text-center py-8 space-y-2">

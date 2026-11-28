@@ -9,6 +9,7 @@ import {
   WRITING_MASTERY_STAGES,
   HANZI_WRITER_CDN
 } from '../data/curriculumData.js';
+import { getLexiconEntry } from '../engine/linguisticDataLoader.js';
 
 // ============================================================================
 // PINYIN NORMALIZATION, ANDROID KEYBOARD ('v' -> 'ü'), TONE & DICTATION HELPERS
@@ -46,7 +47,7 @@ export function segmentMandarinPinyin(pinyin = '') {
   const rawChunks = primaryVariant
     .trim()
     .replace(/u:/gi, 'ü')
-    .split(/[\s'’]+/)
+    .split(/[\s'’-]+/)
     .filter(Boolean);
 
   const syllables = [];
@@ -970,8 +971,9 @@ export function buildClozeExerciseData(
 
   let pinyinPart = normTarget.examplePinyin || normTarget.pinyin;
 
-  // Guardrail: synthesize a minimal contextual sentence when a word has no real multi-word example (avoid "[ ___ ]！")
-  if (!hasRealMultiWordExample(normTarget)) {
+  // Guardrail: synthesize a minimal contextual sentence when a word has no real multi-word example
+  // or when mandarinPart does not contain normTarget.hanzi contiguously (e.g. split separable verb)
+  if (!hasRealMultiWordExample(normTarget) || !mandarinPart.includes(normTarget.hanzi)) {
     const synth = buildSynthesizedContextExample(normTarget, seed + cleanNodeLevel);
     mandarinPart = synth.mandarinSentence;
     englishPart = synth.englishSentence;
@@ -1333,7 +1335,7 @@ export function buildHskMockExamQuestions(unlockedWords = UNIT_1_WORDS) {
   for (let j = 0; j < 10; j++) {
     const qNum = j + 11;
     const word = normalizeWordEntry(
-      shuffledSource[(j + 2) % shuffledSource.length],
+      shuffledSource[(j + 10) % shuffledSource.length],
       j + 10
     );
     const isCloze = j % 2 === 0;
@@ -1696,6 +1698,26 @@ export function getWordSkillTelemetry(telemetryMap = {}, word = {}) {
 export function computeUnlockedWordsPool(courses = [], activeCourse = null, activeLesson = null, progress = {}) {
   const wordMap = new Map();
 
+  // Precompute a fast Set of mastery >= 1 keys so locked courses avoid calling normalizeWordEntry on every word
+  const masteredKeySet = new Set();
+  if (progress?.mastery && typeof progress.mastery === 'object') {
+    Object.entries(progress.mastery).forEach(([key, val]) => {
+      if (Number(val) >= 1) masteredKeySet.add(key);
+    });
+  }
+
+  const isRawWordMastered = (w) => {
+    if (!w || typeof w !== 'object' || masteredKeySet.size === 0) return false;
+    const rawHanzi =
+      typeof w.hanzi === 'string'
+        ? w.hanzi.trim()
+        : typeof w.simplified === 'string'
+        ? w.simplified.trim()
+        : '';
+    const rawId = typeof w.id === 'string' ? w.id.trim() : '';
+    return Boolean((rawHanzi && masteredKeySet.has(rawHanzi)) || (rawId && masteredKeySet.has(rawId)));
+  };
+
   const isLessonBossCompleted = (lessonObj, lpEntry) => {
     if (!lessonObj || !lpEntry) return false;
     const bossStageId = buildProportionalUnitNodes(lessonObj.words).length;
@@ -1731,10 +1753,7 @@ export function computeUnlockedWordsPool(courses = [], activeCourse = null, acti
             Object.values(lp.nodeLevels || {}).some((lv) => Number(lv) >= 1))
       );
 
-      const hasMasteredWordInLesson = (lesson.words || []).some((w, wIdx) => {
-        const norm = normalizeWordEntry(w, wIdx);
-        return Boolean(norm.hanzi && getWordMasteryLevel(progress.mastery, norm) >= 1);
-      });
+      const hasMasteredWordInLesson = (lesson.words || []).some((w) => isRawWordMastered(w));
 
       const isActiveCourse = Boolean(activeCourse?.id && course.id === activeCourse.id);
       const isActiveCourseFirstOrSelectedLesson =
@@ -1759,16 +1778,19 @@ export function computeUnlockedWordsPool(courses = [], activeCourse = null, acti
     });
   });
 
-  courses.forEach((course) => {
-    (course.lessons || []).forEach((lesson) => {
-      (lesson.words || []).forEach((w, wIdx) => {
-        const norm = normalizeWordEntry(w, wIdx);
-        if (norm.hanzi && getWordMasteryLevel(progress.mastery, norm) >= 1) {
-          wordMap.set(norm.hanzi, norm);
-        }
+  if (masteredKeySet.size > 0) {
+    courses.forEach((course) => {
+      (course.lessons || []).forEach((lesson) => {
+        (lesson.words || []).forEach((w, wIdx) => {
+          if (!isRawWordMastered(w)) return;
+          const norm = normalizeWordEntry(w, wIdx);
+          if (norm.hanzi && getWordMasteryLevel(progress.mastery, norm) >= 1) {
+            wordMap.set(norm.hanzi, norm);
+          }
+        });
       });
     });
-  });
+  }
 
   const defaultUnitKey = 'course_default_unit1__lesson_unit_1';
   const defaultCourse = courses.find((c) => c.id === 'course_default_unit1');
@@ -2775,11 +2797,20 @@ export function buildBossQuestionsForWords(
     };
   };
 
+  // Shuffle normalizedPool BEFORE generating questions so large lessons sample across all words
+  const shuffledNormalizedPool = [...normalizedPool];
+  for (let i = shuffledNormalizedPool.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1));
+    const tmp = shuffledNormalizedPool[i];
+    shuffledNormalizedPool[i] = shuffledNormalizedPool[j];
+    shuffledNormalizedPool[j] = tmp;
+  }
+
   const questions = [];
 
   if (cleanNodeLevel === 0) {
     // Run 1 (nodeLevel === 0): meaning (Hanzi -> English) and pinyin (Context -> Pinyin & Meaning)
-    normalizedPool.forEach((word, idx) => {
+    shuffledNormalizedPool.forEach((word, idx) => {
       questions.push(createQuestionForWord(word, idx, false, 'meaning'));
       questions.push(createQuestionForWord(word, idx, false, 'pinyin'));
     });
@@ -2787,7 +2818,7 @@ export function buildBossQuestionsForWords(
     // Run 2 (nodeLevel === 1): include reverse_meaning and cloze alongside shuffled meaning/pinyin turns
     const run2PrimaryTypes = ['reverse_meaning', 'cloze'];
     const run2SecondaryTypes = ['pinyin', 'meaning'];
-    normalizedPool.forEach((word, idx) => {
+    shuffledNormalizedPool.forEach((word, idx) => {
       const firstType = run2PrimaryTypes[idx % run2PrimaryTypes.length];
       const secondType = run2SecondaryTypes[(idx + 1) % run2SecondaryTypes.length];
       questions.push(createQuestionForWord(word, idx * 2, false, firstType));
@@ -2796,7 +2827,7 @@ export function buildBossQuestionsForWords(
   } else {
     // Run 3 MAX Trial (nodeLevel >= 2): full shuffled mix of reverse_meaning, cloze, pinyin, and meaning turns
     const run3Types = ['cloze', 'reverse_meaning', 'pinyin', 'meaning'];
-    normalizedPool.forEach((word, idx) => {
+    shuffledNormalizedPool.forEach((word, idx) => {
       const firstType = run3Types[(idx * 2 + 1) % run3Types.length];
       const secondType = run3Types[(idx * 2 + 2) % run3Types.length];
       questions.push(createQuestionForWord(word, idx * 2, false, firstType));
@@ -3388,6 +3419,7 @@ export function resolveCharacterInspectorInfo(
 ) {
   const cleanChar = String(char || '').trim();
   const known = KNOWN_CHARACTER_INFO[cleanChar] || null;
+  const lexEntry = getLexiconEntry(cleanChar) || null;
   const normalizedWords = Array.isArray(courseWords) ? courseWords : [];
 
   // 1. Exact single-character match in loaded courses/decks
@@ -3401,12 +3433,14 @@ export function resolveCharacterInspectorInfo(
         ) || null
       : null;
 
-  // Resolve syllable pinyin from containingWord if needed
+  // Resolve syllable pinyin (exactWord -> KNOWN_CHARACTER_INFO -> master lexicon -> containingWord)
   let derivedPinyin = '';
   if (exactWord?.pinyin) {
     derivedPinyin = exactWord.pinyin;
   } else if (known?.pinyin) {
     derivedPinyin = known.pinyin;
+  } else if (lexEntry?.pinyin) {
+    derivedPinyin = lexEntry.pinyin;
   } else if (containingWord?.pinyin) {
     const chars = Array.from(containingWord.hanzi).filter((c) => /[\u4e00-\u9fff]/.test(c));
     const idx = chars.indexOf(cleanChar);
@@ -3421,12 +3455,14 @@ export function resolveCharacterInspectorInfo(
     }
   }
 
-  // Resolve core English meaning (prioritize exact course word -> built-in dictionary -> compound context)
+  // Resolve core English meaning (exactWord -> KNOWN_CHARACTER_INFO -> master lexicon -> compound context)
   let meaning = '';
   if (exactWord?.meaning || exactWord?.english) {
     meaning = exactWord.meaning || exactWord.english;
   } else if (known?.meaning) {
     meaning = known.meaning;
+  } else if (lexEntry?.meaning) {
+    meaning = lexEntry.meaning;
   } else if (containingWord) {
     const shortCompMeaning = (containingWord.meaning || containingWord.english || '')
       .split(/[;]/)[0]
@@ -3452,7 +3488,7 @@ export function resolveCharacterInspectorInfo(
     char: cleanChar,
     pinyin: derivedPinyin || '—',
     meaning,
-    radical: known?.radical || null,
+    radical: known?.radical || lexEntry?.radical || null,
     compoundHint:
       containingWord && !exactWord
         ? `${containingWord.hanzi} (${containingWord.pinyin}) — ${
@@ -5465,7 +5501,7 @@ function buildConfusableContextCloze(targetWord, targetHanzi) {
   if (!cleanTarget) return null;
 
   const exHanzi = String(targetWord?.exampleHanzi || '').trim();
-  if (exHanzi && exHanzi.includes(cleanTarget)) {
+  if (hasRealMultiWordExample(targetWord) && exHanzi && exHanzi.includes(cleanTarget)) {
     return exHanzi.split(cleanTarget).join('[ ___ ]');
   }
 
@@ -5599,9 +5635,11 @@ export function buildConfusableDrillItems(
     };
   };
 
+  const shuffledCuratedGroups = shuffleList(CURATED_CONFUSABLE_GROUPS);
+
   // Pass 1: Curated sets matching exact single-char unlocked words first
-  for (const group of CURATED_CONFUSABLE_GROUPS) {
-    const exactMatches = group.chars.filter((ch) => unlockedByHanzi.has(ch));
+  for (const group of shuffledCuratedGroups) {
+    const exactMatches = shuffleList(group.chars.filter((ch) => unlockedByHanzi.has(ch)));
     for (const ch of exactMatches) {
       const built = buildCuratedItemForChar(group, ch, unlockedByHanzi.get(ch));
       if (built) {
@@ -5611,7 +5649,7 @@ export function buildConfusableDrillItems(
     }
   }
 
-  // Pass 2: Dynamic homophone / near-homophone mining across unlocked words
+  // Pass 2: Dynamic homophone / near-homophone mining across unlocked words (shuffled before slicing)
   const tonelessBuckets = new Map();
   normalizedWords.forEach((w) => {
     const hz = w.hanzi.trim();
@@ -5629,7 +5667,9 @@ export function buildConfusableDrillItems(
     }
   });
 
-  tonelessBuckets.forEach((bucketWords, bucketKey) => {
+  const shuffledBucketEntries = shuffleList(Array.from(tonelessBuckets.entries()));
+  shuffledBucketEntries.forEach(([bucketKey, rawBucketWords]) => {
+    const bucketWords = shuffleList(rawBucketWords);
     if (bucketWords.length < 2) return;
     const baseSyllable = bucketKey.split('::')[1] || '';
     const targetWord = bucketWords.find((w) => !usedTargets.has(w.hanzi.trim()));
@@ -5715,10 +5755,10 @@ export function buildConfusableDrillItems(
 
   // Pass 3: Curated sets matching characters embedded inside unlocked multi-char words
   if (items.length < maxItems) {
-    for (const group of CURATED_CONFUSABLE_GROUPS) {
+    for (const group of shuffleList(shuffledCuratedGroups)) {
       if (items.length >= maxItems) break;
-      const embeddedMatches = group.chars.filter(
-        (ch) => !usedTargets.has(ch) && unlockedCharOwners.has(ch)
+      const embeddedMatches = shuffleList(
+        group.chars.filter((ch) => !usedTargets.has(ch) && unlockedCharOwners.has(ch))
       );
       for (const ch of embeddedMatches) {
         const built = buildCuratedItemForChar(group, ch, unlockedCharOwners.get(ch));
@@ -5732,10 +5772,12 @@ export function buildConfusableDrillItems(
 
   // Pass 4: Secondary curated twins from groups where 2+ members are unlocked
   if (items.length < maxItems) {
-    for (const group of CURATED_CONFUSABLE_GROUPS) {
+    for (const group of shuffleList(shuffledCuratedGroups)) {
       if (items.length >= maxItems) break;
-      const remainingUnlocked = group.chars.filter(
-        (ch) => !usedTargets.has(ch) && (unlockedByHanzi.has(ch) || unlockedCharOwners.has(ch))
+      const remainingUnlocked = shuffleList(
+        group.chars.filter(
+          (ch) => !usedTargets.has(ch) && (unlockedByHanzi.has(ch) || unlockedCharOwners.has(ch))
+        )
       );
       for (const ch of remainingUnlocked) {
         if (items.length >= maxItems) break;
@@ -5746,9 +5788,9 @@ export function buildConfusableDrillItems(
     }
   }
 
-  // Interleave visual and homophone items cleanly, then cap to maxItems
-  const visualItems = items.filter((it) => it.contrastType === 'visual');
-  const homophoneItems = items.filter((it) => it.contrastType === 'homophone');
+  // Interleave shuffled visual and homophone items cleanly, then cap to maxItems
+  const visualItems = shuffleList(items.filter((it) => it.contrastType === 'visual'));
+  const homophoneItems = shuffleList(items.filter((it) => it.contrastType === 'homophone'));
   const interleaved = [];
   const maxLen = Math.max(visualItems.length, homophoneItems.length);
   for (let i = 0; i < maxLen; i++) {

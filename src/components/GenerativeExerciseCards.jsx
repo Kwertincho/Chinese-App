@@ -126,7 +126,7 @@ function buildShuffledBlockBank(tokens = [], distractorTokens = [], itemKey = 'i
   for (let i = 0; i < rawDistractors.length; i++) {
     const entry = rawDistractors[i];
     const h = typeof entry === 'string' ? entry.trim() : String(entry?.hanzi || '').trim();
-    if (!h || seenDistractorHanzi.has(h)) continue;
+    if (!h || usedHanziSet.has(h) || seenDistractorHanzi.has(h)) continue;
     seenDistractorHanzi.add(h);
     distractorCandidates.push(h);
     if (distractorCandidates.length >= 3) break;
@@ -228,6 +228,43 @@ function extractTrailingPunctuation(hanzi = '') {
   return /[。！？?!.]/.test(last) ? last : '';
 }
 
+function buildOpenClozeDisplayParts(sentenceHanzi = '', tokens = []) {
+  const raw = String(sentenceHanzi || '').trim();
+  const parts = [];
+  let cursor = 0;
+
+  for (let i = 0; i < tokens.length; i++) {
+    const tokHanzi = String(tokens[i]?.hanzi || '').trim();
+    if (tokHanzi && raw) {
+      const foundIdx = raw.indexOf(tokHanzi, cursor);
+      if (foundIdx > cursor) {
+        const between = raw.slice(cursor, foundIdx).trim();
+        if (between) {
+          parts.push({ type: 'punct', text: between, key: `punct_pre_${i}` });
+        }
+      }
+      if (foundIdx >= cursor) {
+        cursor = foundIdx + tokHanzi.length;
+      }
+    }
+    parts.push({ type: 'token', token: tokens[i], tokenIndex: i, key: `cloze_tok_${i}` });
+  }
+
+  if (raw && cursor < raw.length) {
+    const trailing = raw.slice(cursor).trim();
+    if (trailing) {
+      parts.push({ type: 'punct', text: trailing, key: 'punct_tail' });
+    }
+  } else if (!raw) {
+    const fallbackPunct = extractTrailingPunctuation(sentenceHanzi);
+    if (fallbackPunct) {
+      parts.push({ type: 'punct', text: fallbackPunct, key: 'punct_tail' });
+    }
+  }
+
+  return parts;
+}
+
 function EmptyExerciseFallback({ label = 'Exercise' }) {
   return (
     <div className="my-auto rounded-3xl bg-slate-800/90 border-2 border-slate-700 p-5 text-center space-y-2 shadow-xl">
@@ -273,23 +310,33 @@ export function TranslationExerciseCard({
   const [selectedTileUids, setSelectedTileUids] = useState([]);
   const [typedInput, setTypedInput] = useState('');
   const [submittedGrade, setSubmittedGrade] = useState(null);
-  const inputRef = useRef(null);
+
+  const latestInitRef = useRef({ item, masteryLv, nodeLevel, onInspectOpenChange });
+  latestInitRef.current = { item, masteryLv, nodeLevel, onInspectOpenChange };
 
   useEffect(() => {
-    const nextMode = masteryLv <= 5 && nodeLevel < 2 ? 'blocks' : 'keyboard';
+    const {
+      item: latestItem,
+      masteryLv: latestMasteryLv,
+      nodeLevel: latestNodeLevel,
+      onInspectOpenChange: latestOnInspect
+    } = latestInitRef.current;
+    const nextMode = latestMasteryLv <= 5 && latestNodeLevel < 2 ? 'blocks' : 'keyboard';
     setInputMode(nextMode);
     setSelectedTileUids([]);
     setTypedInput('');
     setSubmittedGrade(null);
-    if (typeof onInspectOpenChange === 'function') {
-      onInspectOpenChange(false);
+    if (typeof latestOnInspect === 'function') {
+      latestOnInspect(false);
     }
-    if (item && Array.isArray(item.tokens)) {
-      setTileBank(buildShuffledBlockBank(item.tokens, item.distractorTokens, itemKey));
+    if (latestItem && Array.isArray(latestItem.tokens)) {
+      setTileBank(
+        buildShuffledBlockBank(latestItem.tokens, latestItem.distractorTokens, itemKey)
+      );
     } else {
       setTileBank([]);
     }
-  }, [item, itemKey, masteryLv, nodeLevel, onInspectOpenChange]);
+  }, [itemKey]);
 
   const tileByUid = useMemo(() => {
     const map = new Map();
@@ -347,12 +394,6 @@ export function TranslationExerciseCard({
       inputMode: inputMode === 'blocks' ? 'hanzi' : 'auto',
       requireTones: true
     });
-
-    if (gradeResult.isCorrect) {
-      soundFX.playSuccess();
-    } else {
-      soundFX.playError();
-    }
 
     setSubmittedGrade(gradeResult);
     if (typeof onResult === 'function') {
@@ -498,7 +539,6 @@ export function TranslationExerciseCard({
             Type Hanzi or Pinyin with tones (e.g. <span className="text-sky-300 font-bold">ni3 hao3</span>, use <span className="text-sky-300 font-bold">v</span> for ü):
           </label>
           <input
-            ref={inputRef}
             type="text"
             value={typedInput}
             onChange={(e) => setTypedInput(e.target.value)}
@@ -644,13 +684,16 @@ export function OpenClozeCard({
   const [typedInput, setTypedInput] = useState('');
   const [submittedGrade, setSubmittedGrade] = useState(null);
 
+  const latestInspectRef = useRef(onInspectOpenChange);
+  latestInspectRef.current = onInspectOpenChange;
+
   useEffect(() => {
     setTypedInput('');
     setSubmittedGrade(null);
-    if (typeof onInspectOpenChange === 'function') {
-      onInspectOpenChange(false);
+    if (typeof latestInspectRef.current === 'function') {
+      latestInspectRef.current(false);
     }
-  }, [item, itemKey, onInspectOpenChange]);
+  }, [itemKey]);
 
   const tokens = useMemo(
     () => (Array.isArray(item?.tokens) ? item.tokens.filter(Boolean) : []),
@@ -677,7 +720,7 @@ export function OpenClozeCard({
 
   const isLocked = Boolean(isCompleted || submittedGrade);
   const showRoleHint = masteryLv <= 3 && nodeLevel === 0;
-  const trailingPunct = extractTrailingPunctuation(item.hanzi);
+  const displayParts = buildOpenClozeDisplayParts(item.hanzi, tokens);
   const grammarRule = item.grammarPoint?.ruleSummary || item.ruleSummary || '';
   const grammarTitle = item.grammarPoint?.title || item.title || '';
 
@@ -688,12 +731,6 @@ export function OpenClozeCard({
     if (!canSubmit) return;
 
     const gradeResult = gradeOpenClozeAnswer(typedInput.trim(), blankToken, acceptedAnswers);
-
-    if (gradeResult.isCorrect) {
-      soundFX.playSuccess();
-    } else {
-      soundFX.playError();
-    }
 
     setSubmittedGrade(gradeResult);
     if (typeof onResult === 'function') {
@@ -737,18 +774,26 @@ export function OpenClozeCard({
         </span>
 
         <div className="font-hanzi text-2xl font-black text-white tracking-wide leading-relaxed flex flex-wrap items-center justify-center gap-x-1 gap-y-1.5">
-          {tokens.map((tok, idx) => {
+          {displayParts.map((part) => {
+            if (part.type === 'punct') {
+              return (
+                <span key={part.key} className="font-hanzi">
+                  {part.text}
+                </span>
+              );
+            }
+            const { token: tok, tokenIndex: idx } = part;
             if (idx === blankIndex) {
               return isLocked ? (
                 <span
-                  key={`cloze_tok_${idx}`}
+                  key={part.key}
                   className="inline-flex items-center px-2 py-0.5 rounded-[2px] bg-emerald-500/25 border-2 border-emerald-400 text-emerald-200 font-hanzi"
                 >
                   {tok.hanzi}
                 </span>
               ) : (
                 <span
-                  key={`cloze_tok_${idx}`}
+                  key={part.key}
                   className="inline-flex items-center px-2.5 py-0.5 rounded-[2px] bg-cyan-500/15 border-2 border-dashed border-cyan-400 text-cyan-300 font-clarity text-base font-black"
                 >
                   [ ___ ]
@@ -756,12 +801,11 @@ export function OpenClozeCard({
               );
             }
             return (
-              <span key={`cloze_tok_${idx}`} className="font-hanzi">
+              <span key={part.key} className="font-hanzi">
                 {tok.hanzi}
               </span>
             );
           })}
-          {trailingPunct ? <span className="font-hanzi">{trailingPunct}</span> : null}
         </div>
 
         {item.english ? (
@@ -922,27 +966,46 @@ export function SyntaxTransformCard({
   const [typedInput, setTypedInput] = useState('');
   const [submittedGrade, setSubmittedGrade] = useState(null);
 
+  const latestInitRef = useRef({
+    expectedSentence,
+    masteryLv,
+    nodeLevel,
+    onInspectOpenChange
+  });
+  latestInitRef.current = {
+    expectedSentence,
+    masteryLv,
+    nodeLevel,
+    onInspectOpenChange
+  };
+
   useEffect(() => {
-    const nextMode = masteryLv <= 5 && nodeLevel < 2 ? 'blocks' : 'keyboard';
+    const {
+      expectedSentence: latestExpected,
+      masteryLv: latestMasteryLv,
+      nodeLevel: latestNodeLevel,
+      onInspectOpenChange: latestOnInspect
+    } = latestInitRef.current;
+    const nextMode = latestMasteryLv <= 5 && latestNodeLevel < 2 ? 'blocks' : 'keyboard';
     setInputMode(nextMode);
     setSelectedTileUids([]);
     setTypedInput('');
     setSubmittedGrade(null);
-    if (typeof onInspectOpenChange === 'function') {
-      onInspectOpenChange(false);
+    if (typeof latestOnInspect === 'function') {
+      latestOnInspect(false);
     }
-    if (expectedSentence && Array.isArray(expectedSentence.tokens)) {
+    if (latestExpected && Array.isArray(latestExpected.tokens)) {
       setTileBank(
         buildShuffledBlockBank(
-          expectedSentence.tokens,
-          expectedSentence.distractorTokens,
+          latestExpected.tokens,
+          latestExpected.distractorTokens,
           itemKey
         )
       );
     } else {
       setTileBank([]);
     }
-  }, [item, itemKey, expectedSentence, masteryLv, nodeLevel, onInspectOpenChange]);
+  }, [itemKey]);
 
   const tileByUid = useMemo(() => {
     const map = new Map();
@@ -1001,12 +1064,6 @@ export function SyntaxTransformCard({
       inputMode: inputMode === 'blocks' ? 'hanzi' : 'auto',
       requireTones: true
     });
-
-    if (gradeResult.isCorrect) {
-      soundFX.playSuccess();
-    } else {
-      soundFX.playError();
-    }
 
     setSubmittedGrade(gradeResult);
     if (typeof onResult === 'function') {
@@ -1326,15 +1383,18 @@ export function ErrorSpotterCard({
   const [selectedFixId, setSelectedFixId] = useState(null);
   const [submittedGrade, setSubmittedGrade] = useState(null);
 
+  const latestInspectRef = useRef(onInspectOpenChange);
+  latestInspectRef.current = onInspectOpenChange;
+
   useEffect(() => {
     setStep(1);
     setTappedTokenIdx(null);
     setSelectedFixId(null);
     setSubmittedGrade(null);
-    if (typeof onInspectOpenChange === 'function') {
-      onInspectOpenChange(false);
+    if (typeof latestInspectRef.current === 'function') {
+      latestInspectRef.current(false);
     }
-  }, [item, itemKey, onInspectOpenChange]);
+  }, [itemKey]);
 
   const brokenTokens = Array.isArray(item?.brokenTokens)
     ? item.brokenTokens.filter(Boolean)
@@ -1342,12 +1402,17 @@ export function ErrorSpotterCard({
   const fixOptions = Array.isArray(item?.fixOptions) ? item.fixOptions.filter(Boolean) : [];
   const errorTokenIndex =
     typeof item?.errorTokenIndex === 'number' ? item.errorTokenIndex : -1;
+  const errorTokenIndices =
+    Array.isArray(item?.errorTokenIndices) && item.errorTokenIndices.length > 0
+      ? item.errorTokenIndices.filter((i) => typeof i === 'number' && i >= 0 && i < brokenTokens.length)
+      : errorTokenIndex >= 0
+      ? [errorTokenIndex]
+      : [];
 
   if (
     !item ||
     brokenTokens.length === 0 ||
-    errorTokenIndex < 0 ||
-    errorTokenIndex >= brokenTokens.length ||
+    errorTokenIndices.length === 0 ||
     !item.correctedHanzi
   ) {
     return <EmptyExerciseFallback label="Error Spotter" />;
@@ -1360,16 +1425,19 @@ export function ErrorSpotterCard({
     if (isLocked || step !== 1) return;
     setTappedTokenIdx(idx);
 
-    if (idx !== errorTokenIndex) {
+    if (!errorTokenIndices.includes(idx)) {
       // Immediately finalize as incorrect to prevent blind clicking
-      soundFX.playError();
+      const errorSpanText = errorTokenIndices
+        .map((i) => brokenTokens[i]?.hanzi || '')
+        .filter(Boolean)
+        .join('');
       const gradeResult = {
         isCorrect: false,
         matchType: 'Wrong Segment',
         errorCategory: item.errorType || 'error_spotter_step1',
         diagnostic:
           item.explanation ||
-          `The grammar error is on "${brokenTokens[errorTokenIndex]?.hanzi || ''}".`
+          `The grammar error is on "${errorSpanText || brokenTokens[errorTokenIndex]?.hanzi || ''}".`
       };
       setSubmittedGrade(gradeResult);
       if (typeof onResult === 'function') {
@@ -1391,12 +1459,6 @@ export function ErrorSpotterCard({
     if (isLocked || step !== 2 || !opt) return;
     setSelectedFixId(opt.id);
     const isCorrect = Boolean(opt.isCorrect);
-
-    if (isCorrect) {
-      soundFX.playSuccess();
-    } else {
-      soundFX.playError();
-    }
 
     const gradeResult = {
       isCorrect,
@@ -1459,7 +1521,7 @@ export function ErrorSpotterCard({
 
           <div className="flex flex-wrap items-center justify-center gap-2 pt-1">
             {brokenTokens.map((tok, idx) => {
-              const isActualError = idx === errorTokenIndex;
+              const isActualError = errorTokenIndices.includes(idx);
               const isUserWrongTap = isLocked && tappedTokenIdx === idx && !isActualError;
               const isSpottedInStep2 = !isLocked && step === 2 && isActualError;
 

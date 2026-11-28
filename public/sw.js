@@ -1,10 +1,9 @@
-const CACHE_NAME = 'hanzi-app-cache-v6';
+const CACHE_NAME = 'hanzi-app-cache-v7';
 
 const CORE_ASSETS = [
   '/',
   '/index.html',
   '/manifest.json',
-  '/icon.svg',
   'https://cdn.jsdelivr.net/npm/hanzi-writer@3.5/dist/hanzi-writer.min.js',
   'https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Noto+Sans+SC:wght@400;500;700;900&family=Press+Start+2P&family=Silkscreen:wght@400;700&display=swap'
 ];

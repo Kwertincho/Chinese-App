@@ -52,27 +52,42 @@ function extractHanziChars(targetWord) {
   return extractWritableCjkChars(targetWord);
 }
 
-function splitSentenceAroundTarget(sentence = '', targetHanzi = '') {
+export function extractGlossString(val) {
+  if (!val) return '';
+  if (typeof val === 'string') return val.trim();
+  if (typeof val === 'object') {
+    const candidate =
+      val.base ||
+      val.singular ||
+      val.plural ||
+      val.past ||
+      val.gerund ||
+      val.english ||
+      val.meaning ||
+      '';
+    return typeof candidate === 'string' ? candidate.trim() : '';
+  }
+  return String(val).trim();
+}
+
+export function splitSentenceAroundTarget(sentence = '', targetHanzi = '') {
   const safeSentence = String(sentence || '').trim();
   const safeTarget = String(targetHanzi || '').trim();
   if (!safeSentence) return [{ type: 'text', value: '' }];
-  if (!safeTarget || !safeSentence.includes(safeTarget)) {
+  const matchIdx = safeTarget ? safeSentence.indexOf(safeTarget) : -1;
+  if (!safeTarget || matchIdx === -1) {
     return [
       { type: 'text', value: safeSentence },
       { type: 'blank', value: safeTarget }
     ];
   }
 
-  const parts = safeSentence.split(safeTarget);
   const segments = [];
-  parts.forEach((part, idx) => {
-    if (part) {
-      segments.push({ type: 'text', value: part });
-    }
-    if (idx < parts.length - 1) {
-      segments.push({ type: 'blank', value: safeTarget });
-    }
-  });
+  const before = safeSentence.slice(0, matchIdx);
+  const after = safeSentence.slice(matchIdx + safeTarget.length);
+  if (before) segments.push({ type: 'text', value: before });
+  segments.push({ type: 'blank', value: safeTarget });
+  if (after) segments.push({ type: 'text', value: after });
   return segments;
 }
 
@@ -101,6 +116,7 @@ export function ContextualWritingCard({
   const showOutline = masteryLv <= 3 && nodeLevel === 0;
 
   const [scriptStatus, setScriptStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
+  const [charLoadError, setCharLoadError] = useState(false);
   const [charIndex, setCharIndex] = useState(0);
   const [completedCharIndices, setCompletedCharIndices] = useState([]);
   const [isWordFinished, setIsWordFinished] = useState(false);
@@ -153,11 +169,32 @@ export function ContextualWritingCard({
 
   // Load HanziWriter v3.5 script once on mount
   const loadWriter = useCallback(() => {
+    setCharLoadError(false);
     setScriptStatus('loading');
     return loadHanziWriterScript()
-      .then(() => setScriptStatus('ready'))
+      .then(() => {
+        setScriptStatus('ready');
+        setQuizResetKey((k) => k + 1);
+      })
       .catch(() => setScriptStatus('error'));
   }, []);
+
+  const handleOfflineSkipContinue = useCallback(() => {
+    clearTimers();
+    soundFX.playPop();
+    setIsWordFinished(true);
+    if (!resultEmittedRef.current) {
+      resultEmittedRef.current = true;
+      if (typeof liveCallbacksRef.current.onResult === 'function') {
+        liveCallbacksRef.current.onResult({
+          isCorrect: false,
+          skippedOffline: true,
+          totalMistakes: totalMistakesRef.current,
+          item: liveCallbacksRef.current.item
+        });
+      }
+    }
+  }, [clearTimers]);
 
   useEffect(() => {
     let mounted = true;
@@ -178,6 +215,7 @@ export function ContextualWritingCard({
   useEffect(() => {
     clearTimers();
     setCharIndex(0);
+    setCharLoadError(false);
     setCompletedCharIndices([]);
     setIsWordFinished(false);
     setBoardFeedback('idle');
@@ -230,6 +268,9 @@ export function ContextualWritingCard({
     charMissCountRef.current = 0;
     setCharMissCount(0);
     setTouchNudgeMessage('');
+    setCharLoadError(false);
+    setCharStrokeMeta({ strokeCount: null, radStrokes: [] });
+    setStrokeStats({ completedStrokes: 0, totalStrokes: 0, hintTriggered: false });
 
     let writer = null;
     try {
@@ -250,7 +291,13 @@ export function ContextualWritingCard({
         highlightColor: '#38bdf8',
         showHintAfterMisses: false,
         highlightOnComplete: true,
+        onLoadCharDataError: () => {
+          if (!writerInstanceRef.current || writerInstanceRef.current === writer) {
+            setCharLoadError(true);
+          }
+        },
         onLoadCharDataSuccess: (charData) => {
+          setCharLoadError(false);
           const radStrokes = Array.isArray(charData?.radStrokes) ? charData.radStrokes : [];
           const totalCount = Array.isArray(charData?.strokes) ? charData.strokes.length : 0;
           setCharStrokeMeta({ strokeCount: totalCount, radStrokes });
@@ -327,7 +374,6 @@ export function ContextualWritingCard({
             onComplete: () => {
               setTouchNudgeMessage('');
               triggerBoardFeedback('correct');
-              soundFX.playCorrect(3);
 
               setCompletedCharIndices((prev) =>
                 prev.includes(charIndex) ? prev : [...prev, charIndex]
@@ -335,6 +381,7 @@ export function ContextualWritingCard({
 
               const isFinalChar = charIndex >= targetChars.length - 1;
               if (!isFinalChar) {
+                soundFX.playCorrect(3);
                 transitionTimerRef.current = setTimeout(() => {
                   setCharIndex((prev) => prev + 1);
                 }, 520);
@@ -394,7 +441,10 @@ export function ContextualWritingCard({
     return <EmptyPhase4Fallback label="Contextual Writing" />;
   }
 
-  const missingGloss = targetWord.meaning || targetWord.english || '';
+  const missingGloss =
+    extractGlossString(targetWord.meaning) ||
+    extractGlossString(targetWord.english) ||
+    extractGlossString(targetWord.enGloss);
   const knownCharMeta = KNOWN_CHARACTER_INFO[currentChar] || null;
   const grammarTitle = item.grammarPoint?.title || item.title || '';
   const passedCleanly = totalMistakes <= 1;
@@ -605,18 +655,34 @@ export function ContextualWritingCard({
               </div>
             )}
 
-            {scriptStatus === 'error' && (
-              <div className="z-10 text-center space-y-2 px-4">
+            {(scriptStatus === 'error' || charLoadError) && (
+              <div className="z-20 absolute inset-0 bg-slate-950/92 flex flex-col items-center justify-center text-center space-y-2.5 px-4">
                 <p className="font-clarity text-xs font-bold text-rose-300">
                   Stroke data unavailable offline for this character.
                 </p>
-                <button
-                  type="button"
-                  onClick={loadWriter}
-                  className="game-btn-3d px-3 py-1.5 rounded-[2px] bg-amber-500/20 border-amber-400 text-amber-200 font-pixel-ui text-[9px] uppercase cursor-pointer"
-                >
-                  Retry Load
-                </button>
+                <div className="flex flex-col gap-2 w-full max-w-[190px]">
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (scriptStatus === 'error') {
+                        loadWriter();
+                      } else {
+                        setCharLoadError(false);
+                        setQuizResetKey((k) => k + 1);
+                      }
+                    }}
+                    className="game-btn-3d px-3 py-1.5 rounded-[2px] bg-amber-500/20 border-amber-400 text-amber-200 font-pixel-ui text-[9px] uppercase cursor-pointer"
+                  >
+                    Retry Load
+                  </button>
+                  <button
+                    type="button"
+                    onClick={handleOfflineSkipContinue}
+                    className="game-btn-3d px-3 py-1.5 rounded-[2px] bg-slate-800 hover:bg-slate-700 border-slate-500 text-slate-100 font-pixel-ui text-[9px] uppercase cursor-pointer"
+                  >
+                    Skip / Continue (Offline)
+                  </button>
+                </div>
               </div>
             )}
 
@@ -795,6 +861,10 @@ export function adaptContextualWritingItem(sentenceItem) {
       ...sentenceItem,
       targetWord: {
         ...candidateTarget,
+        meaning:
+          extractGlossString(candidateTarget.meaning) ||
+          extractGlossString(candidateTarget.english) ||
+          extractGlossString(candidateTarget.enGloss),
         chars: candidateChars
       }
     };
@@ -816,12 +886,25 @@ export function adaptContextualWritingItem(sentenceItem) {
   });
 
   if (!eligible) return null;
-  const resolvedWord = eligible.sourceWord || {
-    id: eligible.id || `cw_${eligible.hanzi}`,
-    hanzi: eligible.hanzi,
-    pinyin: eligible.pinyin || '',
-    meaning: eligible.meaning || eligible.enGloss || ''
-  };
+  const resolvedWord = eligible.sourceWord
+    ? {
+        ...eligible.sourceWord,
+        meaning:
+          extractGlossString(eligible.sourceWord.meaning) ||
+          extractGlossString(eligible.sourceWord.english) ||
+          extractGlossString(eligible.sourceWord.enGloss) ||
+          extractGlossString(eligible.meaning) ||
+          extractGlossString(eligible.enGloss)
+      }
+    : {
+        id: eligible.id || `cw_${eligible.hanzi}`,
+        hanzi: eligible.hanzi,
+        pinyin: eligible.pinyin || '',
+        meaning:
+          extractGlossString(eligible.meaning) ||
+          extractGlossString(eligible.english) ||
+          extractGlossString(eligible.enGloss)
+      };
   const resolvedChars = extractHanziChars(resolvedWord);
   if (resolvedChars.length === 0) return null;
 
@@ -894,7 +977,10 @@ export function normalizeGrammarLabItem(rawItem) {
       id: rawItem.id || `seplab_${sepWord.hanzi}`,
       modeType: 'separable',
       baseForm: sepWord.hanzi || '',
-      baseMeaning: sepWord.meaning || sepWord.english || sepWord.enGloss || '',
+      baseMeaning:
+        extractGlossString(sepWord.meaning) ||
+        extractGlossString(sepWord.english) ||
+        extractGlossString(sepWord.enGloss),
       promptEnglish: rawItem.promptEnglish || rawItem.english || '',
       ruleTitle:
         rawItem.labType === 'insert_modifier'
@@ -919,6 +1005,9 @@ export function normalizeGrammarLabItem(rawItem) {
 
 export function buildParticleContrastLabItem(sentenceItem, enrichedPool = []) {
   if (!sentenceItem || !Array.isArray(sentenceItem.tokens) || sentenceItem.tokens.length === 0) {
+    return null;
+  }
+  if (sentenceItem.schemaId === 'a_not_a_verb' || sentenceItem.schemaId === 'a_not_a_adj') {
     return null;
   }
 
@@ -1068,12 +1157,6 @@ export function GrammarLabCard({
   const handleSelectOption = (opt) => {
     if (isLocked || !opt) return;
     setSelectedOptionId(opt.id);
-
-    if (opt.isCorrect) {
-      soundFX.playCorrect(2);
-    } else {
-      soundFX.playMistake();
-    }
 
     if (typeof onResult === 'function') {
       onResult({
@@ -1374,12 +1457,6 @@ export function MicroReadingCard({
       const matchedOpt = q.options.find((o) => (o.id || o.text) === picked);
       return Boolean(matchedOpt?.isCorrect);
     });
-
-    if (finalAllCorrect) {
-      soundFX.playCorrect(3);
-    } else {
-      soundFX.playMistake();
-    }
 
     if (!resultEmittedRef.current) {
       resultEmittedRef.current = true;

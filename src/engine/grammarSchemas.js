@@ -4,6 +4,8 @@
 // particle, semantic valence, classifier, and separable-verb constraints.
 // ============================================================================
 
+import { segmentMandarinPinyin } from '../utils/mandarinHelpers.js';
+
 const IRREGULAR_VERBS = {
   be: { third: 'is', past: 'was', pastPlural: 'were', pp: 'been', gerund: 'being' },
   have: { third: 'has', past: 'had', pp: 'had', gerund: 'having' },
@@ -123,6 +125,28 @@ const NUMBER_VALUES = {
   百: 100
 };
 
+const NO_DOUBLE_CONSONANT_VERBS = new Set([
+  'open',
+  'visit',
+  'edit',
+  'listen',
+  'happen',
+  'enter',
+  'offer',
+  'order',
+  'cover',
+  'answer',
+  'remember',
+  'travel',
+  'cancel',
+  'limit',
+  'focus',
+  'credit',
+  'benefit'
+]);
+
+const SINGLE_SYLLABLE_CVC_REGEX = /^[^aeiou]*[aeiou][bdgmnpt]$/i;
+
 function conjugateHeadWord(headWord, form) {
   const lower = String(headWord || '').toLowerCase();
   const irreg = IRREGULAR_VERBS[lower];
@@ -142,7 +166,11 @@ function conjugateHeadWord(headWord, form) {
   if (form === 'past' || form === 'pp') {
     if (/e$/i.test(lower)) return `${lower}d`;
     if (/[^aeiou]y$/i.test(lower)) return `${lower.slice(0, -1)}ied`;
-    if (/^[a-z]*[^aeiou][aeiou][bdgmnpt]$/i.test(lower) && lower.length <= 5) {
+    if (
+      !NO_DOUBLE_CONSONANT_VERBS.has(lower) &&
+      SINGLE_SYLLABLE_CVC_REGEX.test(lower) &&
+      lower.length <= 5
+    ) {
       return `${lower}${lower[lower.length - 1]}ed`;
     }
     return `${lower}ed`;
@@ -150,7 +178,11 @@ function conjugateHeadWord(headWord, form) {
   if (form === 'gerund') {
     if (/ie$/i.test(lower)) return `${lower.slice(0, -2)}ying`;
     if (/[^e]e$/i.test(lower)) return `${lower.slice(0, -1)}ing`;
-    if (/^[a-z]*[^aeiou][aeiou][bdgmnpt]$/i.test(lower) && lower.length <= 5) {
+    if (
+      !NO_DOUBLE_CONSONANT_VERBS.has(lower) &&
+      SINGLE_SYLLABLE_CVC_REGEX.test(lower) &&
+      lower.length <= 5
+    ) {
       return `${lower}${lower[lower.length - 1]}ing`;
     }
     return `${lower}ing`;
@@ -257,16 +289,22 @@ export function realizeEnglishVerb(
     return `${getDoForm(subjectType, tense)} not ${cleanBase}`;
   }
 
-  // Affirmative past
+  // Affirmative past (check IRREGULAR_VERBS before trusting inferred enGloss.past)
   if (tense === 'past') {
+    if (IRREGULAR_VERBS[headLower]) {
+      return `${IRREGULAR_VERBS[headLower].past}${rest}`;
+    }
     if (enGloss && typeof enGloss === 'object' && enGloss.past) {
       return String(enGloss.past).split(/[;/]/)[0].trim();
     }
     return `${conjugateHeadWord(head, 'past')}${rest}`;
   }
 
-  // Affirmative present
+  // Affirmative present (check IRREGULAR_VERBS before trusting inferred enGloss.third)
   if (subjectType === '3sg') {
+    if (IRREGULAR_VERBS[headLower]) {
+      return `${IRREGULAR_VERBS[headLower].third}${rest}`;
+    }
     if (enGloss && typeof enGloss === 'object' && enGloss.third) {
       return String(enGloss.third).split(/[;/]/)[0].trim();
     }
@@ -347,7 +385,7 @@ export function realizeSubjectEnglish(word) {
   if (h === '她') return { text: 'she', subjectType: '3sg', possessive: 'her' };
   if (h === '它') return { text: 'it', subjectType: '3sg', possessive: 'its' };
   if (h === '我们') return { text: 'we', subjectType: '1pl', possessive: 'our' };
-  if (h === '你们') return { text: 'you all', subjectType: '2sg', possessive: 'your' };
+  if (h === '你们') return { text: 'you all', subjectType: '2pl', possessive: 'your' };
   if (h === '他们' || h === '她们') return { text: 'they', subjectType: '3pl', possessive: 'their' };
   if (h === '大家') return { text: 'everyone', subjectType: '3sg', possessive: "everyone's" };
   if (h === '爸爸') return { text: 'Dad', subjectType: '3sg', possessive: "Dad's" };
@@ -447,6 +485,38 @@ function realizeGoPlaceEnglish(placeWord) {
   return `to ${realizePlaceEnglish(placeWord)}`;
 }
 
+const ENGLISH_COMPARATIVES = {
+  good: 'better',
+  bad: 'worse',
+  big: 'bigger',
+  small: 'smaller',
+  hot: 'hotter',
+  cold: 'colder',
+  fast: 'faster',
+  slow: 'slower',
+  tall: 'taller',
+  high: 'higher',
+  short: 'shorter',
+  cheap: 'cheaper',
+  far: 'farther',
+  near: 'nearer',
+  close: 'closer',
+  new: 'newer',
+  old: 'older',
+  busy: 'busier',
+  happy: 'happier',
+  long: 'longer',
+  young: 'younger',
+  warm: 'warmer',
+  cool: 'cooler',
+  easy: 'easier',
+  hard: 'harder',
+  heavy: 'heavier',
+  light: 'lighter',
+  early: 'earlier',
+  late: 'later'
+};
+
 function realizeAdjEnglish(adjWord) {
   const raw = adjWord?.enGloss?.singular || adjWord?.meaning || adjWord?.english || '';
   return String(raw)
@@ -454,6 +524,28 @@ function realizeAdjEnglish(adjWord) {
     .replace(/\([^)]*\)/g, '')
     .replace(/^to\s+be\s+/i, '')
     .trim() || 'good';
+}
+
+function realizeComparativeAdjEnglish(adjWord, { gradual = false } = {}) {
+  const baseAdj = realizeAdjEnglish(adjWord);
+  const lower = baseAdj.toLowerCase();
+  const irregularOrShort = ENGLISH_COMPARATIVES[lower];
+  if (irregularOrShort) {
+    return gradual ? `${irregularOrShort} and ${irregularOrShort}` : irregularOrShort;
+  }
+  return gradual ? `more and more ${baseAdj}` : `more ${baseAdj}`;
+}
+
+function realizeLocationPositionEnglish(locWord) {
+  const h = locWord?.hanzi || '';
+  if (h === '前面') return 'in front of';
+  if (h === '后面') return 'behind';
+  if (h === '里面') return 'inside';
+  if (h === '上面') return 'on top of';
+  if (h === '下面') return 'under';
+  if (h === '旁边') return 'next to';
+  if (h === '外面') return 'outside';
+  return realizeTimeEnglish(locWord);
 }
 
 function realizeTimeEnglish(timeWord) {
@@ -627,6 +719,7 @@ export function doesVerbMatchObject(verbWord, objWord) {
   if (v === '坐') return hasAnyFeature(objWord, ['vehicle', 'furniture']);
   if (v === '开') return hasAnyFeature(objWord, ['vehicle', 'device']);
   if (v === '去' || v === '来' || v === '回' || v === '住') {
+    if (hasAnyFeature(objWord, ['interrogative', 'location'])) return false;
     return objPos === 'place' || hasFeature(objWord, 'place');
   }
   if (v === '喜欢' || v === '爱') {
@@ -722,12 +815,14 @@ export function splitSeparableVerbParts(sepWord) {
   const v1 = String(rawV1 || '');
   const v2 = String(rawV2 || '');
   if (!v1 || !v2) return null;
-  const syllables = String(sepWord?.pinyin || '')
-    .trim()
-    .split(/\s+/)
-    .filter(Boolean);
-
+  const rawPinyin = String(sepWord?.pinyin || '').trim();
+  const whitespaceSyllables = rawPinyin.split(/\s+/).filter(Boolean);
   const v1Len = Array.from(v1).length;
+  const syllables =
+    whitespaceSyllables.length >= v1Len + 1
+      ? whitespaceSyllables
+      : segmentMandarinPinyin(rawPinyin);
+
   let v1Pinyin = '';
   let v2Pinyin = '';
 
@@ -735,8 +830,7 @@ export function splitSeparableVerbParts(sepWord) {
     v1Pinyin = syllables.slice(0, v1Len).join(' ');
     v2Pinyin = syllables.slice(v1Len).join(' ');
   } else {
-    // Fallback heuristic if pinyin has no spaces
-    v1Pinyin = sepWord.pinyin || '';
+    v1Pinyin = rawPinyin;
     v2Pinyin = '';
   }
 
@@ -791,18 +885,35 @@ function buildResult({
   schema,
   tokens = [],
   punctuation = '。',
+  clauseBreakAfterIndex = null,
   english = '',
   acceptedVariants = [],
   distractorTokens = []
 }) {
   const safeTokens = Array.isArray(tokens) ? tokens.filter(Boolean) : [];
-  const hanzi = `${safeTokens.map((t) => t.hanzi || '').join('')}${punctuation}`;
+  const hasClauseBreak =
+    typeof clauseBreakAfterIndex === 'number' &&
+    clauseBreakAfterIndex >= 0 &&
+    clauseBreakAfterIndex < safeTokens.length - 1;
+  const compactHanzi = `${safeTokens.map((t) => t.hanzi || '').join('')}${punctuation}`;
+  const hanzi = hasClauseBreak
+    ? `${safeTokens
+        .map((t, idx) => (idx === clauseBreakAfterIndex ? `${t.hanzi || ''}，` : t.hanzi || ''))
+        .join('')}${punctuation}`
+    : compactHanzi;
   const pinyin = safeTokens
-    .map((t) => t.pinyin)
+    .map((t, idx) => {
+      if (!t.pinyin) return '';
+      return hasClauseBreak && idx === clauseBreakAfterIndex ? `${t.pinyin},` : t.pinyin;
+    })
     .filter(Boolean)
     .join(' ');
   const variants = Array.from(
-    new Set([hanzi, ...(Array.isArray(acceptedVariants) ? acceptedVariants.filter(Boolean) : [])])
+    new Set([
+      hanzi,
+      ...(hasClauseBreak ? [compactHanzi] : []),
+      ...(Array.isArray(acceptedVariants) ? acceptedVariants.filter(Boolean) : [])
+    ])
   );
 
   return {
@@ -956,7 +1067,8 @@ export const GRAMMAR_SCHEMAS = [
     realize(slots, poolMap) {
       const shi = getParticleEntry('是', poolMap);
       const subj = realizeSubjectEnglish(slots.subject);
-      const isPlural = subj.subjectType === '1pl' || subj.subjectType === '3pl';
+      const isPlural =
+        subj.subjectType === '1pl' || subj.subjectType === '2pl' || subj.subjectType === '3pl';
       const nounEn = realizeEnglishNoun(slots.noun.enGloss || slots.noun.meaning, {
         count: isPlural ? 2 : 1,
         indefinite: !isPlural
@@ -999,7 +1111,8 @@ export const GRAMMAR_SCHEMAS = [
       const bu = getParticleEntry('不', poolMap);
       const shi = getParticleEntry('是', poolMap);
       const subj = realizeSubjectEnglish(slots.subject);
-      const isPlural = subj.subjectType === '1pl' || subj.subjectType === '3pl';
+      const isPlural =
+        subj.subjectType === '1pl' || subj.subjectType === '2pl' || subj.subjectType === '3pl';
       const nounEn = realizeEnglishNoun(slots.noun.enGloss || slots.noun.meaning, {
         count: isPlural ? 2 : 1,
         indefinite: !isPlural
@@ -1043,7 +1156,8 @@ export const GRAMMAR_SCHEMAS = [
       const shi = getParticleEntry('是', poolMap);
       const ma = getParticleEntry('吗', poolMap);
       const subj = realizeSubjectEnglish(slots.subject);
-      const isPlural = subj.subjectType === '1pl' || subj.subjectType === '3pl';
+      const isPlural =
+        subj.subjectType === '1pl' || subj.subjectType === '2pl' || subj.subjectType === '3pl';
       const nounEn = realizeEnglishNoun(slots.noun.enGloss || slots.noun.meaning, {
         count: isPlural ? 2 : 1,
         indefinite: !isPlural
@@ -1672,7 +1786,12 @@ export const GRAMMAR_SCHEMAS = [
     ruleSummary: 'State what exists in a place with Place + Position (里面/前面/后面/上面/下面) + 有 + Num + CL + N.',
     requiredParticles: ['有'],
     slots: [
-      PLACE_SLOT,
+      {
+        role: 'place',
+        filter: (w) =>
+          PLACE_SLOT.filter(w) &&
+          !hasAnyFeature(w, ['demonstrative', 'country', 'city'])
+      },
       {
         role: 'location',
         filter: (w) => hasFeature(w, 'location')
@@ -1687,7 +1806,7 @@ export const GRAMMAR_SCHEMAS = [
       const beExist = nVal === 1 ? 'there is' : 'there are';
       const phraseEn = realizeClassifierPhraseEnglish(slots.number, slots.classifier, slots.noun);
       const placeEn = realizePlaceEnglish(slots.place);
-      const locEn = realizeTimeEnglish(slots.location);
+      const locEn = realizeLocationPositionEnglish(slots.location);
 
       return buildResult({
         schema: this,
@@ -2284,7 +2403,7 @@ export const GRAMMAR_SCHEMAS = [
       const bi = getParticleEntry('比', poolMap);
       const aEn = realizeSubjectEnglish(slots.nounA).text;
       const bEn = realizeSubjectEnglish(slots.nounB).text;
-      const adjEn = realizeAdjEnglish(slots.adj);
+      const compEn = realizeComparativeAdjEnglish(slots.adj, { gradual: false });
 
       return buildResult({
         schema: this,
@@ -2295,7 +2414,7 @@ export const GRAMMAR_SCHEMAS = [
           tokenFromWord(slots.adj, 'adj', 3)
         ],
         punctuation: '。',
-        english: capitalizeSentence(`${aEn} is more ${adjEn} than ${bEn}`, '.'),
+        english: capitalizeSentence(`${aEn} is ${compEn} than ${bEn}`, '.'),
         distractorTokens: buildDistractors([
           { hanzi: '很', pinyin: 'hěn', reason: 'Never use 很 inside an A + 比 + B + Adj comparison' },
           { hanzi: '是', pinyin: 'shì', reason: 'Use 比 directly without 是' }
@@ -2361,9 +2480,45 @@ export const GRAMMAR_SCHEMAS = [
       STANDARD_SUBJECT_SLOT,
       {
         role: 'causeAdj',
-        filter: (w, chosen) => Boolean(chosen?.subject) && doesAdjMatchSubject(w, chosen.subject)
+        filter: (w, chosen) =>
+          Boolean(chosen?.subject) &&
+          doesAdjMatchSubject(w, chosen.subject) &&
+          (['累', '忙', '高兴', '饿', '渴', '冷', '热', '舒服', '开心', '难过', '生气', '紧张', '好'].includes(
+            w.hanzi
+          ) ||
+            hasAnyFeature(w, ['emotion', 'human_pred', 'weather', 'temperature']))
       },
-      TRANSITIVE_VERB_SLOT,
+      {
+        role: 'verb',
+        filter: (w, chosen) => {
+          if (!TRANSITIVE_VERB_SLOT.filter(w)) return false;
+          const adjH = chosen?.causeAdj?.hanzi || '';
+          const coherentMap = {
+            饿: ['吃', '买', '做'],
+            渴: ['喝', '买'],
+            冷: ['喝', '穿', '回', '买'],
+            热: ['喝', '买', '回', '开'],
+            累: ['回', '坐', '喝', '吃', '听', '看'],
+            忙: ['买', '吃', '喝', '做', '写', '学习', '学', '回'],
+            高兴: ['吃', '喝', '买', '去', '看', '听', '学', '学习', '喜欢'],
+            开心: ['吃', '喝', '买', '去', '看', '听', '学', '学习', '喜欢'],
+            好: ['喜欢', '爱', '买', '去', '看', '吃', '喝', '学', '学习']
+          };
+          const allowed = coherentMap[adjH] || [
+            '去',
+            '回',
+            '吃',
+            '喝',
+            '买',
+            '看',
+            '听',
+            '学',
+            '学习',
+            '喜欢'
+          ];
+          return allowed.includes(w.hanzi);
+        }
+      },
       OBJECT_FOR_VERB_SLOT
     ],
     realize(slots, poolMap) {
@@ -2395,16 +2550,13 @@ export const GRAMMAR_SCHEMAS = [
         tokenFromWord(slots.verb, 'verb', 6),
         tokenFromWord(slots.object, 'object', 7)
       ];
-      const commaVariant = `${clause1Tokens.map((t) => t.hanzi).join('')}，${clause2Tokens
-        .map((t) => t.hanzi)
-        .join('')}。`;
 
       return buildResult({
         schema: this,
         tokens: [...clause1Tokens, ...clause2Tokens],
+        clauseBreakAfterIndex: clause1Tokens.length - 1,
         punctuation: '。',
         english: capitalizeSentence(`Because ${subj.text} ${beEn} ${adjEn}, ${subj.text} ${voEn}`, '.'),
-        acceptedVariants: [commaVariant],
         distractorTokens: buildDistractors([
           { hanzi: '但是', pinyin: 'dànshì', reason: '因为 pairs with 所以 (cause/effect), not 但是' },
           { hanzi: '虽然', pinyin: 'suīrán', reason: 'Use 因为 to introduce a reason/cause' }
@@ -2423,9 +2575,40 @@ export const GRAMMAR_SCHEMAS = [
       STANDARD_SUBJECT_SLOT,
       {
         role: 'adj',
-        filter: (w, chosen) => Boolean(chosen?.subject) && doesAdjMatchSubject(w, chosen.subject)
+        filter: (w, chosen) =>
+          Boolean(chosen?.subject) &&
+          doesAdjMatchSubject(w, chosen.subject) &&
+          (['累', '忙', '冷', '热', '难过', '紧张', '高兴', '好'].includes(w.hanzi) ||
+            hasAnyFeature(w, ['emotion', 'human_pred', 'weather', 'temperature']))
       },
-      TRANSITIVE_VERB_SLOT,
+      {
+        role: 'verb',
+        filter: (w, chosen) => {
+          if (!TRANSITIVE_VERB_SLOT.filter(w)) return false;
+          const adjH = chosen?.adj?.hanzi || '';
+          const coherentMap = {
+            累: ['去', '学', '学习', '看', '读', '写', '做', '帮助', '来', '买'],
+            忙: ['去', '来', '学', '学习', '看', '读', '写', '做', '帮助', '吃', '喝'],
+            冷: ['去', '来', '吃', '喝', '买', '学', '学习'],
+            热: ['去', '来', '吃', '喝', '买', '学', '学习']
+          };
+          const allowed = coherentMap[adjH] || [
+            '去',
+            '来',
+            '学',
+            '学习',
+            '看',
+            '读',
+            '写',
+            '做',
+            '买',
+            '吃',
+            '喝',
+            '喜欢'
+          ];
+          return allowed.includes(w.hanzi);
+        }
+      },
       OBJECT_FOR_VERB_SLOT
     ],
     realize(slots, poolMap) {
@@ -2457,16 +2640,13 @@ export const GRAMMAR_SCHEMAS = [
         tokenFromWord(slots.verb, 'verb', 6),
         tokenFromWord(slots.object, 'object', 7)
       ];
-      const commaVariant = `${clause1Tokens.map((t) => t.hanzi).join('')}，${clause2Tokens
-        .map((t) => t.hanzi)
-        .join('')}。`;
 
       return buildResult({
         schema: this,
         tokens: [...clause1Tokens, ...clause2Tokens],
+        clauseBreakAfterIndex: clause1Tokens.length - 1,
         punctuation: '。',
         english: capitalizeSentence(`Although ${subj.text} ${beEn} ${adjEn}, ${subj.text} ${voEn}`, '.'),
-        acceptedVariants: [commaVariant],
         distractorTokens: buildDistractors([
           { hanzi: '所以', pinyin: 'suǒyǐ', reason: '虽然 pairs with 但是 (contrast), not 所以' },
           { hanzi: '因为', pinyin: 'yīnwèi', reason: 'Use 虽然 for "although", not 因为' }
@@ -2497,10 +2677,29 @@ export const GRAMMAR_SCHEMAS = [
       },
       {
         role: 'adj2',
-        filter: (w, chosen) =>
-          Boolean(chosen?.subject && chosen?.adj1) &&
-          w.hanzi !== chosen.adj1.hanzi &&
-          doesAdjMatchSubject(w, chosen.subject)
+        filter: (w, chosen) => {
+          if (!chosen?.subject || !chosen?.adj1) return false;
+          if (w.hanzi === chosen.adj1.hanzi) return false;
+          const antonymPairs = [
+            ['大', '小'],
+            ['热', '冷'],
+            ['贵', '便宜'],
+            ['快', '慢'],
+            ['高', '矮'],
+            ['多', '少'],
+            ['远', '近'],
+            ['新', '旧'],
+            ['长', '短'],
+            ['好', '坏']
+          ];
+          const isAntonym = antonymPairs.some(
+            ([a, b]) =>
+              (w.hanzi === a && chosen.adj1.hanzi === b) ||
+              (w.hanzi === b && chosen.adj1.hanzi === a)
+          );
+          if (isAntonym) return false;
+          return doesAdjMatchSubject(w, chosen.subject);
+        }
       }
     ],
     realize(slots, poolMap) {
@@ -2523,19 +2722,16 @@ export const GRAMMAR_SCHEMAS = [
         tokenFromWord(erqie, 'conj', 3),
         tokenFromWord(slots.adj2, 'adj2', 4)
       ];
-      const commaVariant = `${part1Tokens.map((t) => t.hanzi).join('')}，${part2Tokens
-        .map((t) => t.hanzi)
-        .join('')}。`;
 
       return buildResult({
         schema: this,
         tokens: [...part1Tokens, ...part2Tokens],
+        clauseBreakAfterIndex: part1Tokens.length - 1,
         punctuation: '。',
         english: capitalizeSentence(
           `${subj.text} ${beEn} not only ${adj1En}, but also ${adj2En}`,
           '.'
         ),
-        acceptedVariants: [commaVariant],
         distractorTokens: buildDistractors([
           { hanzi: '但是', pinyin: 'dànshì', reason: '不但 pairs with 而且 to add qualities, not 但是' },
           { hanzi: '虽然', pinyin: 'suīrán', reason: 'Use 不但 ... 而且 for "not only ... but also"' }
@@ -2570,7 +2766,7 @@ export const GRAMMAR_SCHEMAS = [
       if (!yuelaiyue || !slots?.subject || !slots?.adj) return null;
       const subj = realizeSubjectEnglish(slots.subject);
       const beEn = getBeForm(subj.subjectType, 'present');
-      const adjEn = realizeAdjEnglish(slots.adj);
+      const gradualCompEn = realizeComparativeAdjEnglish(slots.adj, { gradual: true });
 
       return buildResult({
         schema: this,
@@ -2580,7 +2776,7 @@ export const GRAMMAR_SCHEMAS = [
           tokenFromWord(slots.adj, 'adj', 2)
         ],
         punctuation: '。',
-        english: capitalizeSentence(`${subj.text} ${beEn} getting more and more ${adjEn}`, '.'),
+        english: capitalizeSentence(`${subj.text} ${beEn} getting ${gradualCompEn}`, '.'),
         distractorTokens: buildDistractors([
           { hanzi: '很', pinyin: 'hěn', reason: 'Never insert 很 between 越来越 and the adjective' },
           { hanzi: '比', pinyin: 'bǐ', reason: '越来越 shows gradual change over time, not A vs B comparison' }
@@ -2601,30 +2797,17 @@ export const GRAMMAR_SCHEMAS = [
         role: 'verb',
         filter: (w) =>
           TRANSITIVE_VERB_SLOT.filter(w) &&
-          [
-            '吃',
-            '喝',
-            '看',
-            '读',
-            '写',
-            '买',
-            '做',
-            '拿',
-            '放',
-            '洗',
-            '关',
-            '开',
-            '用',
-            '卖',
-            '借',
-            '还',
-            '带',
-            '送',
-            '学',
-            '学习'
-          ].includes(w.hanzi)
+          ['吃', '喝', '看', '读', '写', '买', '做', '洗', '关', '开', '卖', '学', '学习'].includes(
+            w.hanzi
+          )
       },
-      OBJECT_FOR_VERB_SLOT
+      {
+        role: 'object',
+        filter: (w, chosen) =>
+          Boolean(chosen?.verb) &&
+          !(chosen.verb.hanzi === '看' && hasFeature(w, 'human')) &&
+          doesVerbMatchObject(chosen.verb, w)
+      }
     ],
     realize(slots, poolMap) {
       const ba = getParticleEntry('把', poolMap);
@@ -2634,7 +2817,7 @@ export const GRAMMAR_SCHEMAS = [
       const wan = getParticleEntry('完', poolMap);
       const canUseWan =
         Boolean(wan) &&
-        ['吃', '喝', '看', '读', '写', '做', '洗', '用', '学', '学习'].includes(slots.verb.hanzi);
+        ['吃', '喝', '看', '读', '写', '做', '洗', '学', '学习'].includes(slots.verb.hanzi);
 
       const subj = realizeSubjectEnglish(slots.subject);
       const objEn = realizeEnglishNoun(slots.object.enGloss || slots.object.meaning || slots.object.hanzi, {
@@ -2698,7 +2881,7 @@ export const GRAMMAR_SCHEMAS = [
         role: 'verb',
         filter: (w) =>
           TRANSITIVE_VERB_SLOT.filter(w) &&
-          ['吃', '喝', '看', '读', '写', '买', '做', '拿', '用', '卖', '借', '带', '送', '洗'].includes(
+          ['吃', '喝', '读', '写', '买', '做', '洗', '关', '开', '卖', '学', '学习'].includes(
             w.hanzi
           )
       },

@@ -901,6 +901,8 @@ export function ToneSandhiDrillModal({
   const [xpPopupAmount, setXpPopupAmount] = useState(5);
 
   const feedbackTimerRef = useRef(null);
+  const passedWordsRef = useRef(new window.Map());
+  const failedWordKeysRef = useRef(new Set());
   const currentWord = drillQueue[stepIdx] || drillQueue[0];
   const drillData = useMemo(
     () => buildToneSandhiOptions(currentWord, stepIdx),
@@ -944,6 +946,9 @@ export function ToneSandhiDrillModal({
       setCardAnim('correct');
       setTimeout(() => setCardAnim('idle'), 500);
       onRecordSkillEvent?.(currentWord, 'listening', { mistakesDelta: 0, completionsDelta: 1 });
+      if (currentWord?.hanzi && !failedWordKeysRef.current.has(currentWord.hanzi)) {
+        passedWordsRef.current.set(currentWord.hanzi, currentWord);
+      }
 
       const nextCombo = combo + 1;
       nextMaxCombo = Math.max(maxCombo, nextCombo);
@@ -964,6 +969,13 @@ export function ToneSandhiDrillModal({
       setCardAnim('wrong');
       setTimeout(() => setCardAnim('idle'), 450);
       onRecordSkillEvent?.(currentWord, 'listening', { mistakesDelta: 1, completionsDelta: 0 });
+      if (currentWord?.hanzi) {
+        failedWordKeysRef.current.add(currentWord.hanzi);
+        passedWordsRef.current.delete(currentWord.hanzi);
+      }
+      if (currentWord?.id) {
+        failedWordKeysRef.current.add(currentWord.id);
+      }
       speakMandarin(currentWord.hanzi);
     }
 
@@ -973,7 +985,12 @@ export function ToneSandhiDrillModal({
         setStepIdx((prev) => prev + 1);
       } else {
         flushSessionTime();
-        onComplete(drillQueue, 25 + nextBonusXp, nextMaxCombo);
+        onComplete(
+          Array.from(passedWordsRef.current.values()),
+          25 + nextBonusXp,
+          nextMaxCombo,
+          Array.from(failedWordKeysRef.current)
+        );
       }
     }, delayMs);
   };
@@ -1231,9 +1248,15 @@ export function HskMockExamModal({
   const examReport = useMemo(() => {
     let listeningCorrect = 0;
     let readingCorrect = 0;
+    let listeningTotal = 0;
+    let readingTotal = 0;
     const missedItems = [];
+    const failedKeys = new Set();
+    const correctWordsByHanzi = new window.Map();
 
     questions.forEach((q) => {
+      if (q.section === 'Listening') listeningTotal += 1;
+      else readingTotal += 1;
       const chosenId = answersMap[q.qNumber];
       const chosenOption = q.options.find((o) => o.id === chosenId);
       const isCorrect = chosenId === q.correctOptionId;
@@ -1241,7 +1264,12 @@ export function HskMockExamModal({
       if (isCorrect) {
         if (q.section === 'Listening') listeningCorrect += 1;
         else readingCorrect += 1;
+        if (q.word?.hanzi) {
+          correctWordsByHanzi.set(q.word.hanzi, q.word);
+        }
       } else {
+        if (q.word?.hanzi) failedKeys.add(q.word.hanzi);
+        if (q.word?.id) failedKeys.add(q.word.id);
         missedItems.push({
           ...q,
           userAnswerLabel: chosenOption ? chosenOption.label : 'No Answer Selected'
@@ -1249,18 +1277,29 @@ export function HskMockExamModal({
       }
     });
 
+    const totalQuestions = Math.max(1, questions.length);
     const totalCorrect = listeningCorrect + readingCorrect;
-    const percentage = Math.round((totalCorrect / questions.length) * 100);
-    const passed = totalCorrect >= 12;
+    const percentage = Math.round((totalCorrect / totalQuestions) * 100);
+    const passThreshold = Math.ceil(totalQuestions * 0.6);
+    const passed = totalCorrect >= passThreshold;
     const xpReward = 40 + (passed ? 25 : 0);
+    const passedWords = Array.from(correctWordsByHanzi.values()).filter(
+      (w) => !failedKeys.has(w.hanzi) && (!w.id || !failedKeys.has(w.id))
+    );
 
     return {
+      totalQuestions,
+      listeningTotal,
+      readingTotal,
+      passThreshold,
       listeningCorrect,
       readingCorrect,
       totalCorrect,
       percentage,
       passed,
       missedItems,
+      passedWords,
+      failedWordKeys: Array.from(failedKeys),
       xpReward
     };
   }, [questions, answersMap]);
@@ -1291,7 +1330,7 @@ export function HskMockExamModal({
               <span className="text-[10px] text-slate-400 block truncate">
                 {submitted
                   ? 'Official Score Report'
-                  : `Answered ${answeredCount} / 20 • No Instant Feedback`}
+                  : `Answered ${answeredCount} / ${examReport.totalQuestions} • No Instant Feedback`}
               </span>
             </div>
 
@@ -1353,10 +1392,13 @@ export function HskMockExamModal({
                       : 'bg-sky-500/20 text-sky-300 border-sky-400/40'
                   }`}
                 >
-                  Part {currentQ.section === 'Listening' ? 'I • Listening (1–10)' : 'II • Reading (11–20)'}
+                  Part{' '}
+                  {currentQ.section === 'Listening'
+                    ? `I • Listening (1–${examReport.listeningTotal})`
+                    : `II • Reading (${examReport.listeningTotal + 1}–${examReport.totalQuestions})`}
                 </span>
                 <span className="text-xs font-black text-slate-300">
-                  Question {currentQ.qNumber} / 20
+                  Question {currentQ.qNumber} / {examReport.totalQuestions}
                 </span>
               </div>
 
@@ -1437,7 +1479,7 @@ export function HskMockExamModal({
             {confirmEarlySubmit && (
               <div className="rounded-2xl bg-amber-500/15 border border-amber-400/50 p-3.5 space-y-2.5 text-xs">
                 <p className="font-bold text-amber-200">
-                  You have answered {answeredCount} of 20 questions. Submit your HSK Mock Exam now?
+                  You have answered {answeredCount} of {examReport.totalQuestions} questions. Submit your HSK Mock Exam now?
                 </p>
                 <div className="flex gap-2">
                   <button
@@ -1472,12 +1514,14 @@ export function HskMockExamModal({
                 {examReport.passed ? (
                   <span className="text-emerald-400">★ HSK Mock Exam Passed (<span className="font-hanzi">合格</span>)</span>
                 ) : (
-                  <span className="text-rose-400">Needs Review • Pass Mark: 12/20 (60%)</span>
+                  <span className="text-rose-400">
+                    Needs Review • Pass Mark: {examReport.passThreshold}/{examReport.totalQuestions} (60%)
+                  </span>
                 )}
               </div>
 
               <div className="text-4xl font-black text-white">
-                {examReport.totalCorrect} / 20{' '}
+                {examReport.totalCorrect} / {examReport.totalQuestions}{' '}
                 <span className="text-lg text-amber-300">({examReport.percentage}%)</span>
               </div>
 
@@ -1487,7 +1531,7 @@ export function HskMockExamModal({
                     Listening (<span className="font-hanzi">听力</span>)
                   </div>
                   <div className="text-base font-black text-white mt-0.5">
-                    {examReport.listeningCorrect} / 10
+                    {examReport.listeningCorrect} / {examReport.listeningTotal}
                   </div>
                 </div>
                 <div className="rounded-2xl bg-slate-950/80 border border-slate-800 p-2.5">
@@ -1495,7 +1539,7 @@ export function HskMockExamModal({
                     Reading (<span className="font-hanzi">阅读</span>)
                   </div>
                   <div className="text-base font-black text-white mt-0.5">
-                    {examReport.readingCorrect} / 10
+                    {examReport.readingCorrect} / {examReport.readingTotal}
                   </div>
                 </div>
               </div>
@@ -1514,7 +1558,7 @@ export function HskMockExamModal({
 
               {examReport.missedItems.length === 0 ? (
                 <div className="rounded-xl bg-emerald-500/15 border border-emerald-400/40 p-3 text-center text-xs font-bold text-emerald-200">
-                  Perfect 20/20 Score! Zero missed questions!
+                  Perfect {examReport.totalQuestions}/{examReport.totalQuestions} Score! Zero missed questions!
                 </div>
               ) : (
                 <div className="space-y-2 max-h-56 overflow-y-auto pr-1">
@@ -1573,7 +1617,7 @@ export function HskMockExamModal({
               type="button"
               onClick={() => {
                 clearFeedbackTimer();
-                if (answeredCount < 20 && !confirmEarlySubmit) {
+                if (answeredCount < examReport.totalQuestions && !confirmEarlySubmit) {
                   setConfirmEarlySubmit(true);
                 } else {
                   handleFinalizeExam();
@@ -1581,21 +1625,20 @@ export function HskMockExamModal({
               }}
               className="game-btn-3d flex-1 py-3.5 rounded-xl bg-gradient-to-r from-amber-500 to-emerald-500 text-slate-950 font-black text-xs shadow-lg border-b-4 border-emerald-700"
             >
-              Submit Exam ({answeredCount}/20 Answered)
+              Submit Exam ({answeredCount}/{examReport.totalQuestions} Answered)
             </button>
           </div>
         ) : (
           <button
             type="button"
             onClick={() => {
-              const uniqueWords = [];
-              questions.forEach((q) => {
-                if (!uniqueWords.some((w) => w.hanzi === q.word.hanzi)) {
-                  uniqueWords.push(q.word);
-                }
-              });
               flushSessionTime();
-              onComplete(uniqueWords, examReport.xpReward, examReport.totalCorrect);
+              onComplete(
+                examReport.passedWords,
+                examReport.xpReward,
+                examReport.totalCorrect,
+                examReport.failedWordKeys
+              );
             }}
             className="game-btn-3d w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-500 via-rose-500 to-emerald-500 text-slate-950 font-black text-xs shadow-lg border-b-4 border-emerald-700 flex items-center justify-center gap-2"
           >
@@ -1654,6 +1697,7 @@ export function AdaptiveMixedSessionModal({
     ).initialStage
   );
   const [scriptStatus, setScriptStatus] = useState('loading');
+  const [charLoadError, setCharLoadError] = useState(false);
   const [writerModeStatus, setWriterModeStatus] = useState('quiz');
   const [strokeStats, setStrokeStats] = useState({
     completedStrokes: 0,
@@ -1675,6 +1719,8 @@ export function AdaptiveMixedSessionModal({
   const writerStageTransitionTimerRef = useRef(null);
   const feedbackTimerRef = useRef(null);
   const charMissCountRef = useRef(0);
+  const passedWordsRef = useRef(new window.Map());
+  const failedWordKeysRef = useRef(new Set());
 
   // Sub-state for 'listening' modality
   const [dictationSubMode, setDictationSubMode] = useState('pinyin');
@@ -1700,6 +1746,7 @@ export function AdaptiveMixedSessionModal({
   const [confusableSelectedHanzi, setConfusableSelectedHanzi] = useState(null);
   const [showPinyinHint, setShowPinyinHint] = useState(false);
   const [isInspectingExample, setIsInspectingExample] = useState(false);
+  const [pauseAutoAdvance, setPauseAutoAdvance] = useState(false);
 
   const currentItem = queue[stepIdx] || queue[0];
   const currentWord = currentItem?.word || UNIT_1_WORDS[0];
@@ -1707,9 +1754,6 @@ export function AdaptiveMixedSessionModal({
   const nodeLevel = Number(sessionConfig?.nodeLevel || 0);
   const isRun2OrHigher = nodeLevel >= 1;
   const isMasteryTrial = nodeLevel >= 2;
-  const isPinyinMeaningComboStep =
-    currentModality === 'meaning_mc' && stepIdx % 2 === 1;
-  const isReverseMeaningStep = currentModality === 'reverse_meaning_mc';
   const currentWordChars = useMemo(() => extractWritableCjkChars(currentWord), [currentWord]);
   const currentChar = currentWordChars[charIndex] || currentWordChars[0] || '';
   const masteryLv = getWordMasteryLevel(progress?.mastery, currentWord);
@@ -1717,6 +1761,22 @@ export function AdaptiveMixedSessionModal({
   const writingConfig = getAdaptiveWritingConfig(masteryLv, nodeLevel);
 
   const autoAdvanceDelayRef = useRef(1400);
+
+  const recordStepOutcome = useCallback((wordObj, passed) => {
+    if (!wordObj || !wordObj.hanzi) return;
+    if (passed) {
+      if (
+        !failedWordKeysRef.current.has(wordObj.hanzi) &&
+        (!wordObj.id || !failedWordKeysRef.current.has(wordObj.id))
+      ) {
+        passedWordsRef.current.set(wordObj.hanzi, wordObj);
+      }
+    } else {
+      failedWordKeysRef.current.add(wordObj.hanzi);
+      if (wordObj.id) failedWordKeysRef.current.add(wordObj.id);
+      passedWordsRef.current.delete(wordObj.hanzi);
+    }
+  }, []);
 
   const clearWriterTransitionTimer = useCallback(() => {
     if (writerStageTransitionTimerRef.current) {
@@ -1835,11 +1895,45 @@ export function AdaptiveMixedSessionModal({
     }
   }, [isGenerativeModality, currentItem, currentModality, currentWord, enrichedUnlockedWords, lessonWordPool, stepIdx]);
 
+  const activeClassifierItem = useMemo(() => {
+    if (currentModality !== 'classifier_drill') return null;
+    return (
+      currentItem?.classifierItem ||
+      fallbackClassifierItems[stepIdx % Math.max(1, fallbackClassifierItems.length)] ||
+      null
+    );
+  }, [currentModality, currentItem, fallbackClassifierItems, stepIdx]);
+
+  const activeDialoguePair = useMemo(() => {
+    if (currentModality !== 'dialogue_qa') return null;
+    return (
+      currentItem?.dialoguePair ||
+      fallbackDialoguePairs[stepIdx % Math.max(1, fallbackDialoguePairs.length)] ||
+      null
+    );
+  }, [currentModality, currentItem, fallbackDialoguePairs, stepIdx]);
+
+  const activeConfusableItem = useMemo(() => {
+    if (currentModality !== 'confusable_chars') return null;
+    return (
+      currentItem?.confusableItem ||
+      buildConfusableDrillItems(lessonWordPool, {}, 1)[0] ||
+      null
+    );
+  }, [currentModality, currentItem, lessonWordPool]);
+
   const effectiveModality =
     (isGenerativeModality && !activeGenerativeItem) ||
-    (currentModality === 'writing' && currentWordChars.length === 0)
+    (currentModality === 'writing' && currentWordChars.length === 0) ||
+    (currentModality === 'classifier_drill' && !activeClassifierItem) ||
+    (currentModality === 'dialogue_qa' && !activeDialoguePair) ||
+    (currentModality === 'confusable_chars' && !activeConfusableItem)
       ? 'meaning_mc'
       : currentModality;
+
+  const isPinyinMeaningComboStep =
+    effectiveModality === 'meaning_mc' && stepIdx % 2 === 1;
+  const isReverseMeaningStep = effectiveModality === 'reverse_meaning_mc';
 
   const liveSessionRef = useRef({
     queue,
@@ -1853,7 +1947,7 @@ export function AdaptiveMixedSessionModal({
     wordWritingXpAwarded,
     currentWord,
     currentWordChars,
-    currentModality,
+    effectiveModality,
     isPinyinMeaningComboStep,
     charIndex,
     writingConfig,
@@ -1871,7 +1965,7 @@ export function AdaptiveMixedSessionModal({
     wordWritingXpAwarded,
     currentWord,
     currentWordChars,
-    currentModality,
+    effectiveModality,
     isPinyinMeaningComboStep,
     charIndex,
     writingConfig,
@@ -1881,18 +1975,16 @@ export function AdaptiveMixedSessionModal({
   const finishMixedSession = useCallback(
     (finalBonusXp = liveSessionRef.current.bonusXp, finalMaxCombo = liveSessionRef.current.maxCombo) => {
       const {
-        queue: liveQueue,
         flushSessionTime: flushTime,
         onComplete: completeCb
       } = liveSessionRef.current;
-      const uniqueWords = [];
-      liveQueue.forEach((item) => {
-        if (item?.word && !uniqueWords.some((w) => w.hanzi === item.word.hanzi)) {
-          uniqueWords.push(item.word);
-        }
-      });
       flushTime();
-      completeCb(uniqueWords, finalBonusXp, finalMaxCombo);
+      completeCb(
+        Array.from(passedWordsRef.current.values()),
+        finalBonusXp,
+        finalMaxCombo,
+        Array.from(failedWordKeysRef.current)
+      );
     },
     []
   );
@@ -1913,6 +2005,7 @@ export function AdaptiveMixedSessionModal({
       feedbackTimerRef.current = null;
     }
     setIsInspectingExample(false);
+    setPauseAutoAdvance(false);
     const {
       queue: liveQueue,
       bonusXp: liveBonus,
@@ -1932,10 +2025,10 @@ export function AdaptiveMixedSessionModal({
     }
   }, [stepIdx, finishMixedSession, progress?.mastery, nodeLevel]);
 
-  // Dedicated auto-advance effect strictly tied to [stepCompleted, stepIdx, isInspectingExample]
-  // Pauses cleanly if the learner taps a character in the post-answer Character Inspector.
+  // Dedicated auto-advance effect strictly tied to [stepCompleted, stepIdx, isInspectingExample, pauseAutoAdvance]
+  // Pauses cleanly if the learner inspects a character or needs time to read a diagnostic / passage translation.
   useEffect(() => {
-    if (!stepCompleted || isInspectingExample) {
+    if (!stepCompleted || isInspectingExample || pauseAutoAdvance) {
       if (feedbackTimerRef.current) {
         clearTimeout(feedbackTimerRef.current);
         feedbackTimerRef.current = null;
@@ -1953,7 +2046,7 @@ export function AdaptiveMixedSessionModal({
         feedbackTimerRef.current = null;
       }
     };
-  }, [stepCompleted, stepIdx, isInspectingExample, advanceMixedStepNow]);
+  }, [stepCompleted, stepIdx, isInspectingExample, pauseAutoAdvance, advanceMixedStepNow]);
 
   const awardComboXp = useCallback((base = 5) => {
     const next = (liveSessionRef.current.combo || 0) + 1;
@@ -2020,8 +2113,11 @@ export function AdaptiveMixedSessionModal({
         uniqueDistractors.push(w);
       }
     });
-    while (uniqueDistractors.length < 3) {
-      uniqueDistractors.push(UNIT_1_WORDS[uniqueDistractors.length % UNIT_1_WORDS.length]);
+    const safeUnit1Distractors = UNIT_1_WORDS.filter((w) => w.hanzi !== currentWord.hanzi);
+    while (uniqueDistractors.length < 3 && safeUnit1Distractors.length > 0) {
+      uniqueDistractors.push(
+        safeUnit1Distractors[uniqueDistractors.length % safeUnit1Distractors.length]
+      );
     }
     const formatOptionLabel = (w) => {
       if (isReverseMeaningStep) {
@@ -2086,7 +2182,7 @@ export function AdaptiveMixedSessionModal({
     clearAllSessionTimers();
     const {
       writingConfig: liveWritingCfg,
-      currentModality: liveModality,
+      effectiveModality: liveModality,
       isPinyinMeaningComboStep: liveOptionsHavePinyin,
       currentWord: liveWord,
       speakMandarin: speakFn
@@ -2094,6 +2190,8 @@ export function AdaptiveMixedSessionModal({
 
     setStepCompleted(false);
     setIsInspectingExample(false);
+    setPauseAutoAdvance(false);
+    setCharLoadError(false);
     setCardAnim('idle');
     setIsCardFlipped(false);
     setRecogAnswered(false);
@@ -2133,7 +2231,7 @@ export function AdaptiveMixedSessionModal({
     setConfusableSelectedHanzi(null);
 
     // FUTURE-PROOF ANTI-SPOILER GUARDRAIL:
-    // Always check canExposeAudioBeforeAnswer(...) before auto-playing audio on mount.
+    // Always check canExposeAudioBeforeAnswer(...) on effectiveModality before auto-playing audio on mount.
     // Writing also plays word audio on mount (essential for Lv. 7+ Blind Recall).
     // Reading, meaning_mc, recognition, cloze, and sentence_builder MUST remain silent until answered.
     if (
@@ -2224,6 +2322,7 @@ export function AdaptiveMixedSessionModal({
           if (nextCharMiss === 3) {
             const { currentWord: liveWord, onRecordSkillEvent: recordEvt } = liveSessionRef.current;
             recordEvt?.(liveWord, 'writing', { mistakesDelta: 1, completionsDelta: 0 });
+            recordStepOutcome(liveWord, false);
           }
           setStrokeStats((prev) => ({
             ...prev,
@@ -2327,6 +2426,7 @@ export function AdaptiveMixedSessionModal({
                   mistakesDelta: 0,
                   completionsDelta: 1
                 });
+                recordStepOutcome(liveWord, true);
                 const res = awardComboXp(5);
                 updatedBonus = res.nextBonus;
                 updatedMax = res.nextMax;
@@ -2349,7 +2449,7 @@ export function AdaptiveMixedSessionModal({
         }, 60);
       }
     },
-    [awardComboXp, clearWriterTransitionTimer, registerMistakeFeedback, scheduleNextQueueItem]
+    [awardComboXp, clearWriterTransitionTimer, recordStepOutcome, registerMistakeFeedback, scheduleNextQueueItem]
   );
 
   useEffect(() => {
@@ -2374,6 +2474,8 @@ export function AdaptiveMixedSessionModal({
     }
     containerEl.innerHTML = '';
     writerInstanceRef.current = null;
+    setCharLoadError(false);
+    setMixedCharStrokeMeta({ strokeCount: null, radStrokes: [] });
 
     const currentStageConfig = getWritingStageMeta(charStage);
 
@@ -2394,7 +2496,13 @@ export function AdaptiveMixedSessionModal({
       highlightColor: '#38bdf8',
       showHintAfterMisses: currentStageConfig.showHintAfterMisses,
       highlightOnComplete: true,
+      onLoadCharDataError: () => {
+        if (!writerInstanceRef.current || writerInstanceRef.current === writer) {
+          setCharLoadError(true);
+        }
+      },
       onLoadCharDataSuccess: (charData) => {
+        setCharLoadError(false);
         const radStrokes = Array.isArray(charData.radStrokes) ? charData.radStrokes : [];
         setMixedCharStrokeMeta({
           strokeCount: charData.strokes.length,
@@ -2467,16 +2575,23 @@ export function AdaptiveMixedSessionModal({
     setRecogAnswered(true);
     setStepCompleted(true);
 
+    const recogSkillKey =
+      effectiveModality === 'meaning_mc' || effectiveModality === 'reverse_meaning_mc'
+        ? effectiveModality
+        : 'recognition';
+
     if (opt.isCorrect) {
       setCardAnim('correct');
       setTimeout(() => setCardAnim('idle'), 500);
-      onRecordSkillEvent?.(currentWord, 'recognition', { mistakesDelta: 0, completionsDelta: 1 });
+      onRecordSkillEvent?.(currentWord, recogSkillKey, { mistakesDelta: 0, completionsDelta: 1 });
+      recordStepOutcome(currentWord, true);
       const { nextBonus, nextMax } = awardComboXp(5);
       speakMandarin(currentWord.hanzi);
       scheduleNextQueueItem(1400, nextBonus, nextMax);
     } else {
       registerMistakeFeedback();
-      onRecordSkillEvent?.(currentWord, 'recognition', { mistakesDelta: 1, completionsDelta: 0 });
+      onRecordSkillEvent?.(currentWord, recogSkillKey, { mistakesDelta: 1, completionsDelta: 0 });
+      recordStepOutcome(currentWord, false);
       scheduleNextQueueItem(1800, bonusXp, maxCombo);
     }
   };
@@ -2492,12 +2607,14 @@ export function AdaptiveMixedSessionModal({
       setCardAnim('correct');
       setTimeout(() => setCardAnim('idle'), 500);
       onRecordSkillEvent?.(currentWord, 'listening', { mistakesDelta: 0, completionsDelta: 1 });
+      recordStepOutcome(currentWord, true);
       const { nextBonus, nextMax } = awardComboXp(5);
       speakMandarin(currentWord.hanzi);
       scheduleNextQueueItem(1400, nextBonus, nextMax);
     } else {
       registerMistakeFeedback();
       onRecordSkillEvent?.(currentWord, 'listening', { mistakesDelta: 1, completionsDelta: 0 });
+      recordStepOutcome(currentWord, false);
       scheduleNextQueueItem(1800, bonusXp, maxCombo);
     }
   };
@@ -2516,6 +2633,7 @@ export function AdaptiveMixedSessionModal({
           mistakesDelta: 0,
           completionsDelta: 1
         });
+        recordStepOutcome(currentWord, true);
         const { nextBonus, nextMax } = awardComboXp(5);
         speakMandarin(sentencePuzzle.cleanSentence);
         scheduleNextQueueItem(1400, nextBonus, nextMax);
@@ -2526,6 +2644,7 @@ export function AdaptiveMixedSessionModal({
           mistakesDelta: 1,
           completionsDelta: 0
         });
+        recordStepOutcome(currentWord, false);
         scheduleNextQueueItem(1800, bonusXp, maxCombo);
       }
     },
@@ -2535,6 +2654,7 @@ export function AdaptiveMixedSessionModal({
       currentWord,
       maxCombo,
       onRecordSkillEvent,
+      recordStepOutcome,
       registerMistakeFeedback,
       scheduleNextQueueItem,
       sentencePuzzle.cleanSentence,
@@ -2545,11 +2665,8 @@ export function AdaptiveMixedSessionModal({
 
   const handleTapAvailableTile = (tile) => {
     if (stepCompleted) return;
+    // Strict Anti-Spoiler Rule: Keep sentence_builder word tiles silent on tap
     soundFX.playPop();
-    // Anti-Spoiler Rule: Keep individual word tiles silent when tapped if mastery is Lv. 4+ or Run 2+
-    if (masteryLv < 4 && !isRun2OrHigher) {
-      speakMandarin(tile.text);
-    }
     const nextSelected = [...selectedSentenceTiles, tile];
     setSelectedSentenceTiles(nextSelected);
     setSentenceCheckStatus(null);
@@ -2602,11 +2719,13 @@ export function AdaptiveMixedSessionModal({
           setCardAnim('correct');
           setTimeout(() => setCardAnim('idle'), 500);
           onRecordSkillEvent?.(currentWord, 'speaking', { mistakesDelta: 0, completionsDelta: 1 });
+          recordStepOutcome(currentWord, true);
           const { nextBonus, nextMax } = awardComboXp(5);
           scheduleNextQueueItem(1400, nextBonus, nextMax);
         } else {
           registerMistakeFeedback();
           onRecordSkillEvent?.(currentWord, 'speaking', { mistakesDelta: 1, completionsDelta: 0 });
+          recordStepOutcome(currentWord, false);
           scheduleNextQueueItem(1800, bonusXp, maxCombo);
         }
       };
@@ -2625,9 +2744,10 @@ export function AdaptiveMixedSessionModal({
   };
 
   const handleGenerativeCardResult = useCallback(
-    ({ isCorrect, item }) => {
+    ({ isCorrect, item, skippedOffline = false }) => {
       if (stepCompleted) return;
       setStepCompleted(true);
+      const telemetryWord = item?.targetWord || currentWord;
       const spokenHanzi =
         item?.expectedSentence?.hanzi ||
         item?.correctedHanzi ||
@@ -2640,16 +2760,35 @@ export function AdaptiveMixedSessionModal({
         item?.hanzi ||
         currentWord?.hanzi ||
         '';
-      const correctDelayMs = currentModality === 'micro_reading' ? 2600 : 1700;
-      const wrongDelayMs = currentModality === 'micro_reading' ? 3200 : 2400;
+      const correctDelayMs = effectiveModality === 'micro_reading' ? 2600 : 1700;
+      const wrongDelayMs = effectiveModality === 'micro_reading' ? 3200 : 2400;
+      const shouldPauseForReading =
+        effectiveModality === 'micro_reading' ||
+        (!isCorrect &&
+          (effectiveModality === 'translation_prod' ||
+            effectiveModality === 'open_cloze' ||
+            effectiveModality === 'syntax_transform' ||
+            effectiveModality === 'error_spotter' ||
+            effectiveModality === 'grammar_lab'));
+
+      if (skippedOffline) {
+        setPauseAutoAdvance(true);
+        scheduleNextQueueItem(wrongDelayMs, bonusXp, maxCombo);
+        return;
+      }
+
+      if (shouldPauseForReading) {
+        setPauseAutoAdvance(true);
+      }
 
       if (isCorrect) {
         setCardAnim('correct');
         setTimeout(() => setCardAnim('idle'), 500);
-        onRecordSkillEvent?.(currentWord, currentModality, {
+        onRecordSkillEvent?.(telemetryWord, effectiveModality, {
           mistakesDelta: 0,
           completionsDelta: 1
         });
+        recordStepOutcome(telemetryWord, true);
         const { nextBonus, nextMax } = awardComboXp(6);
         if (spokenHanzi) {
           speakMandarin(spokenHanzi);
@@ -2657,11 +2796,12 @@ export function AdaptiveMixedSessionModal({
         scheduleNextQueueItem(correctDelayMs, nextBonus, nextMax);
       } else {
         registerMistakeFeedback();
-        onRecordSkillEvent?.(currentWord, currentModality, {
+        onRecordSkillEvent?.(telemetryWord, effectiveModality, {
           mistakesDelta: 1,
           completionsDelta: 0
         });
-        if (spokenHanzi && currentModality === 'grammar_lab') {
+        recordStepOutcome(telemetryWord, false);
+        if (spokenHanzi && effectiveModality === 'grammar_lab') {
           speakMandarin(spokenHanzi);
         }
         scheduleNextQueueItem(wrongDelayMs, bonusXp, maxCombo);
@@ -2670,8 +2810,9 @@ export function AdaptiveMixedSessionModal({
     [
       stepCompleted,
       currentWord,
-      currentModality,
+      effectiveModality,
       onRecordSkillEvent,
+      recordStepOutcome,
       awardComboXp,
       speakMandarin,
       scheduleNextQueueItem,
@@ -2804,7 +2945,7 @@ export function AdaptiveMixedSessionModal({
                     : 'Read & Deduce'}
                 </span>
                 {canExposeAudioBeforeAnswer(
-                  currentModality,
+                  effectiveModality,
                   isPinyinMeaningComboStep || isReverseMeaningStep
                 ) && (
                   <MandarinAudioControls
@@ -3231,28 +3372,34 @@ export function AdaptiveMixedSessionModal({
                 <line x1="6" y1="234" x2="234" y2="6" stroke="#f59e0b" strokeWidth="1" strokeDasharray="6 6" />
               </svg>
 
-              {scriptStatus === 'error' && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    if (charStage < 3) {
-                      setCharStage((s) => s + 1);
-                    } else {
-                      const next = [...completedCharsInWord, charIndex];
-                      setCompletedCharsInWord(next);
-                      if (next.length >= Math.max(1, currentWordChars.length)) {
-                        setStepCompleted(true);
-                        scheduleNextQueueItem(1200, bonusXp, maxCombo);
+              {(scriptStatus === 'error' || charLoadError) && (
+                <div className="z-20 absolute inset-0 bg-slate-950/90 flex flex-col items-center justify-center p-4 text-center space-y-2">
+                  <p className="text-xs font-bold text-rose-300">
+                    Stroke data unavailable offline for "{currentChar}".
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      soundFX.playPop();
+                      if (charStage < 3) {
+                        setCharStage((s) => s + 1);
                       } else {
-                        setCharStage(writingConfig.initialStage);
-                        setCharIndex((c) => c + 1);
+                        const next = [...completedCharsInWord, charIndex];
+                        setCompletedCharsInWord(next);
+                        if (next.length >= Math.max(1, currentWordChars.length)) {
+                          setStepCompleted(true);
+                          scheduleNextQueueItem(1200, bonusXp, maxCombo);
+                        } else {
+                          setCharStage(writingConfig.initialStage);
+                          setCharIndex((c) => c + 1);
+                        }
                       }
-                    }
-                  }}
-                  className="z-20 px-3 py-1.5 rounded-lg bg-amber-500 text-slate-950 font-bold text-xs"
-                >
-                  Mark "{currentChar}" Stage {charStage} Complete
-                </button>
+                    }}
+                    className="px-3 py-1.5 rounded-lg bg-amber-500 text-slate-950 font-bold text-xs"
+                  >
+                    Mark "{currentChar}" Stage {charStage} Complete
+                  </button>
+                </div>
               )}
 
               {stepCompleted && (
@@ -3299,7 +3446,7 @@ export function AdaptiveMixedSessionModal({
         )}
 
         {/* MODALITY 3: LISTENING (DICTATION) */}
-        {currentModality === 'listening' && (
+        {effectiveModality === 'listening' && (
           <div
             className={`my-auto rounded-3xl bg-slate-800/90 border p-4 space-y-3.5 shadow-xl ${
               cardAnim === 'wrong'
@@ -3445,7 +3592,7 @@ export function AdaptiveMixedSessionModal({
         )}
 
         {/* MODALITY 4: SPEAKING (PRONUNCIATION) */}
-        {currentModality === 'speaking' && (
+        {effectiveModality === 'speaking' && (
           <div className="my-auto rounded-3xl bg-slate-800/90 border border-slate-700 p-4 space-y-3.5 shadow-xl">
             <div className="flex items-center justify-between gap-2">
               <span className="text-[10px] font-extrabold uppercase text-sky-300">
@@ -3579,7 +3726,7 @@ export function AdaptiveMixedSessionModal({
         )}
 
         {/* MODALITY 5: SENTENCE BUILDER (WORD ORDER PUZZLE) */}
-        {currentModality === 'sentence_builder' && (
+        {effectiveModality === 'sentence_builder' && (
           <div
             className={`my-auto rounded-3xl bg-slate-800/90 border p-4 space-y-3.5 shadow-xl transition-all ${
               cardAnim === 'wrong'
@@ -3762,7 +3909,7 @@ export function AdaptiveMixedSessionModal({
         )}
 
         {/* MODALITY 6: FILL-IN-THE-BLANK (选词填空 CLOZE EXERCISE) */}
-        {currentModality === 'cloze' && (
+        {effectiveModality === 'cloze' && (
           <ClozeExerciseCard
             word={currentWord}
             masteryLv={masteryLv}
@@ -3790,6 +3937,7 @@ export function AdaptiveMixedSessionModal({
                   mistakesDelta: 0,
                   completionsDelta: 1
                 });
+                recordStepOutcome(currentWord, true);
                 const { nextBonus, nextMax } = awardComboXp(5);
                 speakMandarin(clozeData.mandarinSentence);
                 scheduleNextQueueItem(1400, nextBonus, nextMax);
@@ -3799,6 +3947,7 @@ export function AdaptiveMixedSessionModal({
                   mistakesDelta: 1,
                   completionsDelta: 0
                 });
+                recordStepOutcome(currentWord, false);
                 scheduleNextQueueItem(1800, bonusXp, maxCombo);
               }
             }}
@@ -3806,14 +3955,9 @@ export function AdaptiveMixedSessionModal({
         )}
 
         {/* MODALITY 7: MEASURE WORDS / CLASSIFIERS TRAINER (量词) */}
-        {currentModality === 'classifier_drill' && (
+        {effectiveModality === 'classifier_drill' && activeClassifierItem && (
           <ClassifierExerciseCard
-            item={
-              currentItem?.classifierItem ||
-              fallbackClassifierItems[
-                stepIdx % Math.max(1, fallbackClassifierItems.length)
-              ]
-            }
+            item={activeClassifierItem}
             masteryMap={progress?.mastery}
             courseWords={
               Array.isArray(courseWords) && courseWords.length > 0
@@ -3841,6 +3985,7 @@ export function AdaptiveMixedSessionModal({
                   mistakesDelta: 0,
                   completionsDelta: 1
                 });
+                recordStepOutcome(currentWord, true);
                 const { nextBonus, nextMax } = awardComboXp(5);
                 speakMandarin(classifierData.fullPhraseHanzi);
                 scheduleNextQueueItem(1600, nextBonus, nextMax);
@@ -3850,6 +3995,7 @@ export function AdaptiveMixedSessionModal({
                   mistakesDelta: 1,
                   completionsDelta: 0
                 });
+                recordStepOutcome(currentWord, false);
                 scheduleNextQueueItem(2000, bonusXp, maxCombo);
               }
             }}
@@ -3857,14 +4003,9 @@ export function AdaptiveMixedSessionModal({
         )}
 
         {/* MODALITY 8: CONVERSATIONAL Q&A MINI-DIALOGUES (问答) */}
-        {currentModality === 'dialogue_qa' && (
+        {effectiveModality === 'dialogue_qa' && activeDialoguePair && (
           <DialogueQaExerciseCard
-            pair={
-              currentItem?.dialoguePair ||
-              fallbackDialoguePairs[
-                stepIdx % Math.max(1, fallbackDialoguePairs.length)
-              ]
-            }
+            pair={activeDialoguePair}
             masteryLv={masteryLv}
             masteryMap={progress?.mastery}
             courseWords={
@@ -3894,6 +4035,7 @@ export function AdaptiveMixedSessionModal({
                   mistakesDelta: 0,
                   completionsDelta: 1
                 });
+                recordStepOutcome(currentWord, true);
                 const { nextBonus, nextMax } = awardComboXp(5);
                 speakMandarin(dialogueData.correctReply.hanzi);
                 scheduleNextQueueItem(1700, nextBonus, nextMax);
@@ -3903,6 +4045,7 @@ export function AdaptiveMixedSessionModal({
                   mistakesDelta: 1,
                   completionsDelta: 0
                 });
+                recordStepOutcome(currentWord, false);
                 scheduleNextQueueItem(2100, bonusXp, maxCombo);
               }
             }}
@@ -3910,13 +4053,9 @@ export function AdaptiveMixedSessionModal({
         )}
 
         {/* MODALITY 8B: CONFUSABLE CHARACTERS (形近字 Visual Twins & 同音字 Homophones) */}
-        {currentModality === 'confusable_chars' && (
+        {effectiveModality === 'confusable_chars' && activeConfusableItem && (
           <ConfusableCharsExerciseCard
-            item={
-              currentItem?.confusableItem ||
-              buildConfusableDrillItems(lessonWordPool, {}, 1)[0] ||
-              null
-            }
+            item={activeConfusableItem}
             masteryMap={progress?.mastery}
             courseWords={
               Array.isArray(courseWords) && courseWords.length > 0
@@ -3948,6 +4087,7 @@ export function AdaptiveMixedSessionModal({
                   mistakesDelta: 0,
                   completionsDelta: 1
                 });
+                recordStepOutcome(currentWord, true);
                 const { nextBonus, nextMax } = awardComboXp(5);
                 speakMandarin(spokenTarget);
                 scheduleNextQueueItem(3000, nextBonus, nextMax);
@@ -3957,6 +4097,7 @@ export function AdaptiveMixedSessionModal({
                   mistakesDelta: 1,
                   completionsDelta: 0
                 });
+                recordStepOutcome(currentWord, false);
                 speakMandarin(spokenTarget);
                 scheduleNextQueueItem(3600, bonusXp, maxCombo);
               }
@@ -4122,7 +4263,7 @@ export function AdaptiveMixedSessionModal({
         )}
 
         <div className="pt-1 text-center text-[11px] font-bold text-slate-400">
-          {stepCompleted && isInspectingExample ? (
+          {stepCompleted && (isInspectingExample || pauseAutoAdvance) ? (
             <button
               type="button"
               onClick={advanceMixedStepNow}
@@ -4250,16 +4391,18 @@ export function BlitzMatchModal({
 
   useEffect(() => {
     if (gameEnded) return;
-    if (timeLeft <= 0) {
+    const interval = setInterval(() => {
+      setTimeLeft((prev) => Math.max(0, prev - 1));
+    }, 1000);
+    return () => clearInterval(interval);
+  }, [gameEnded]);
+
+  useEffect(() => {
+    if (!gameEnded && timeLeft <= 0) {
       clearBlitzTimers();
       setGameEnded(true);
       soundFX.playVictory();
-      return;
     }
-    const timer = setTimeout(() => {
-      setTimeLeft((prev) => Math.max(0, prev - 1));
-    }, 1000);
-    return () => clearTimeout(timer);
   }, [timeLeft, gameEnded, clearBlitzTimers]);
 
   const evaluateSelection = useCallback(
@@ -4506,8 +4649,11 @@ export function BlitzMatchModal({
                   clearBlitzTimers();
                   setTimeLeft(60);
                   setCombo(0);
+                  setMaxCombo(0);
                   setScoreXp(0);
                   setTotalPairsMatched(0);
+                  setMatchedWordsHistory([]);
+                  setTimeDeltaBanner(null);
                   setGameEnded(false);
                   dealFourPairsBoard();
                 }}
@@ -4520,11 +4666,14 @@ export function BlitzMatchModal({
                 onClick={() => {
                   clearBlitzTimers();
                   flushSessionTime();
-                  onComplete(matchedWordsHistory, Math.max(25, scoreXp), maxCombo);
+                  const claimableXp = totalPairsMatched > 0 ? Math.max(25, scoreXp) : 0;
+                  onComplete(matchedWordsHistory, claimableXp, maxCombo);
                 }}
                 className="game-btn-3d flex-1 py-3 rounded-xl bg-gradient-to-r from-amber-500 to-rose-600 text-white font-black text-xs border-b-4 border-rose-800"
               >
-                Claim +{Math.max(25, scoreXp)} XP
+                {totalPairsMatched > 0
+                  ? `Claim +${Math.max(25, scoreXp)} XP`
+                  : 'Finish (0 XP)'}
               </button>
             </div>
           </div>
@@ -4702,6 +4851,7 @@ export function StrokeRuleIntuitionModal({
   const [charIdx, setCharIdx] = useState(0);
   const [quizStep, setQuizStep] = useState(1);
   const [scriptStatus, setScriptStatus] = useState('loading');
+  const [charLoadError, setCharLoadError] = useState(false);
   const [modeStatus, setModeStatus] = useState('quiz');
   const [strokeStats, setStrokeStats] = useState({
     completedStrokes: 0,
@@ -4723,7 +4873,6 @@ export function StrokeRuleIntuitionModal({
   const currentChallenge = unseenList[charIdx] || unseenList[0];
   const currentChar = currentChallenge?.char || '干';
   const showOutlineForStep = quizStep === 1;
-  const hintMissThreshold = quizStep === 1 ? 2 : 3;
 
   useEffect(() => {
     let mounted = true;
@@ -4755,7 +4904,6 @@ export function StrokeRuleIntuitionModal({
       }
 
       const isStep1Trace = targetStep === 1;
-      const missesAllowed = isStep1Trace ? 2 : 3;
 
       setModeStatus('quiz');
       charMissCountRef.current = 0;
@@ -4777,7 +4925,7 @@ export function StrokeRuleIntuitionModal({
       }
 
       activeWriter.quiz({
-        showHintAfterMisses: missesAllowed,
+        showHintAfterMisses: false,
         highlightOnComplete: true,
         onMistake: (strokeData) => {
           const nextCharMiss = charMissCountRef.current + 1;
@@ -4882,6 +5030,7 @@ export function StrokeRuleIntuitionModal({
     }
     containerEl.innerHTML = '';
     writerInstanceRef.current = null;
+    setCharLoadError(false);
 
     const writer = window.HanziWriter.create(containerEl, currentChar, {
       width: 240,
@@ -4898,9 +5047,15 @@ export function StrokeRuleIntuitionModal({
       drawingWidth: 26,
       leniency: 1.85,
       highlightColor: '#38bdf8',
-      showHintAfterMisses: hintMissThreshold,
+      showHintAfterMisses: false,
       highlightOnComplete: true,
+      onLoadCharDataError: () => {
+        if (!writerInstanceRef.current || writerInstanceRef.current === writer) {
+          setCharLoadError(true);
+        }
+      },
       onLoadCharDataSuccess: (charData) => {
+        setCharLoadError(false);
         const radStrokes = Array.isArray(charData.radStrokes) ? charData.radStrokes : [];
         setStrokeStats({
           completedStrokes: 0,
@@ -4935,7 +5090,7 @@ export function StrokeRuleIntuitionModal({
       if (writerTargetRef.current) writerTargetRef.current.innerHTML = '';
       writerInstanceRef.current = null;
     };
-  }, [scriptStatus, charIdx, quizStep, currentChar, showOutlineForStep, hintMissThreshold, startTwoStepQuiz]);
+  }, [scriptStatus, charIdx, quizStep, currentChar, showOutlineForStep, startTwoStepQuiz]);
 
   const handleWatchHintAnimation = () => {
     const writer = writerInstanceRef.current;
@@ -4960,13 +5115,19 @@ export function StrokeRuleIntuitionModal({
   const isCurrentCharFinished =
     (quizStep === 2 && modeStatus === 'char_done') ||
     completedCharIndices.includes(charIdx);
+  const allUnseenCharsCompleted =
+    unseenList.length > 0 &&
+    unseenList.every((_, idx) => completedCharIndices.includes(idx));
+  const nextIncompleteCharIdx = unseenList.findIndex(
+    (_, idx) => !completedCharIndices.includes(idx)
+  );
 
   const handleNextOrFinish = () => {
     soundFX.playPop();
-    if (charIdx < unseenList.length - 1) {
+    if (!allUnseenCharsCompleted && nextIncompleteCharIdx !== -1) {
       setQuizStep(1);
-      setCharIdx((prev) => prev + 1);
-    } else {
+      setCharIdx(nextIncompleteCharIdx);
+    } else if (allUnseenCharsCompleted) {
       flushSessionTime();
       onCompleteRule(rule);
     }
@@ -5147,6 +5308,27 @@ export function StrokeRuleIntuitionModal({
               <line x1="6" y1="6" x2="234" y2="234" stroke="#f59e0b" strokeWidth="1" strokeDasharray="6 6" />
               <line x1="6" y1="234" x2="234" y2="6" stroke="#f59e0b" strokeWidth="1" strokeDasharray="6 6" />
             </svg>
+            {(scriptStatus === 'error' || charLoadError) && (
+              <div className="z-20 absolute inset-0 bg-slate-950/92 flex flex-col items-center justify-center p-4 text-center space-y-2">
+                <p className="text-xs font-bold text-rose-300">
+                  Stroke data unavailable offline for "{currentChar}".
+                </p>
+                <button
+                  type="button"
+                  onClick={() => {
+                    soundFX.playPop();
+                    setModeStatus('char_done');
+                    setQuizStep(2);
+                    setCompletedCharIndices((prev) =>
+                      prev.includes(charIdx) ? prev : [...prev, charIdx]
+                    );
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-amber-500 text-slate-950 font-bold text-xs"
+                >
+                  Skip "{currentChar}" (Offline)
+                </button>
+              </div>
+            )}
             <div
               ref={writerTargetRef}
               style={{ touchAction: 'none' }}
@@ -5188,8 +5370,8 @@ export function StrokeRuleIntuitionModal({
           className="game-btn-3d w-full py-3.5 rounded-xl bg-gradient-to-r from-amber-500 to-emerald-500 disabled:from-slate-800 disabled:to-slate-800 disabled:text-slate-500 text-slate-950 font-black text-xs shadow-lg border-b-4 border-emerald-700 disabled:border-slate-900 flex items-center justify-center gap-2"
         >
           <span>
-            {charIdx < unseenList.length - 1
-              ? `Next Unseen Character: "${unseenList[charIdx + 1].char}"`
+            {!allUnseenCharsCompleted && nextIncompleteCharIdx !== -1
+              ? `Next Unseen Character: "${unseenList[nextIncompleteCharIdx].char}"`
               : `Complete Rule ${rule.number} Dojo (+25 XP)`}
           </span>
           <ChevronRight className="w-4 h-4 stroke-[2.5px]" />
@@ -5358,8 +5540,15 @@ export function NumbersTimeLabModal({
     if (nextMode === subMode && !showBatchSummary) return;
     soundFX.playPop();
     setSubMode(nextMode);
-    setShowBatchSummary(false);
-    loadNextChallenge(nextMode, roundIdx);
+    if (showBatchSummary) {
+      const nextRound = roundIdx + 1;
+      setTargetRounds((prev) => prev + ROUND_BATCH_SIZE);
+      setShowBatchSummary(false);
+      setRoundIdx(nextRound);
+      loadNextChallenge(nextMode, nextRound);
+    } else {
+      loadNextChallenge(nextMode, roundIdx);
+    }
   };
 
   const handleClaimAndFinish = () => {

@@ -650,12 +650,14 @@ export function CharacterInspectModal({
   onClose
 }) {
   const [scriptStatus, setScriptStatus] = useState('loading');
+  const [charLoadError, setCharLoadError] = useState(false);
   const [charDetails, setCharDetails] = useState({ strokeCount: null, radStrokes: [] });
   const previewRef = useRef(null);
   const writerRef = useRef(null);
 
   const targetChar = charEntry?.char || '你';
   const knownInfo = KNOWN_CHARACTER_INFO[targetChar] || null;
+  const isOfflineFallback = scriptStatus === 'error' || charLoadError;
 
   useEffect(() => {
     let mounted = true;
@@ -672,14 +674,18 @@ export function CharacterInspectModal({
   }, []);
 
   useEffect(() => {
+    setCharLoadError(false);
+    setCharDetails({ strokeCount: null, radStrokes: [] });
     speakMandarin(targetChar);
   }, [targetChar, speakMandarin]);
 
   useEffect(() => {
     if (scriptStatus !== 'ready' || !previewRef.current || !window.HanziWriter) return;
+    let cancelled = false;
     const containerEl = previewRef.current;
     containerEl.innerHTML = '';
     writerRef.current = null;
+    setCharLoadError(false);
 
     const writer = window.HanziWriter.create(containerEl, targetChar, {
       width: 190,
@@ -693,22 +699,29 @@ export function CharacterInspectModal({
       radicalColor: '#dc2626',
       outlineColor: '#334155',
       onLoadCharDataSuccess: (data) => {
+        if (cancelled) return;
         const radStrokes = Array.isArray(data.radStrokes) ? data.radStrokes : [];
+        setCharLoadError(false);
         setCharDetails({
           strokeCount: Array.isArray(data.strokes) ? data.strokes.length : null,
           radStrokes
         });
         setTimeout(() => {
-          if (writerRef.current === writer) {
+          if (!cancelled && writerRef.current === writer) {
             writer.animateCharacter();
           }
         }, 120);
+      },
+      onLoadCharDataError: () => {
+        if (cancelled) return;
+        setCharLoadError(true);
       }
     });
 
     writerRef.current = writer;
 
     return () => {
+      cancelled = true;
       if (containerEl) containerEl.innerHTML = '';
       writerRef.current = null;
     };
@@ -741,7 +754,11 @@ export function CharacterInspectModal({
         <div className="flex flex-col items-center space-y-2.5">
           <div className="w-full flex items-center justify-between">
             <span className="text-xs font-extrabold text-slate-300">
-              {charDetails.strokeCount ? `${charDetails.strokeCount} Total Strokes` : 'Loading Strokes...'}
+              {isOfflineFallback
+                ? 'Offline Mode'
+                : charDetails.strokeCount
+                ? `${charDetails.strokeCount} Total Strokes`
+                : 'Loading Strokes...'}
             </span>
             <MandarinAudioControls
               text={targetChar}
@@ -762,20 +779,33 @@ export function CharacterInspectModal({
               <line x1="4" y1="98" x2="192" y2="98" stroke="#f59e0b" strokeWidth="1" strokeDasharray="5 5" />
               <line x1="98" y1="4" x2="98" y2="192" stroke="#f59e0b" strokeWidth="1" strokeDasharray="5 5" />
             </svg>
-            <div ref={previewRef} className="relative z-10 w-[190px] h-[190px] font-hanzi" />
+            {isOfflineFallback ? (
+              <div className="relative z-10 flex flex-col items-center justify-center text-center px-3 gap-2">
+                <span className="font-hanzi text-7xl text-white font-black leading-none select-none">
+                  {targetChar}
+                </span>
+                <span className="text-[10px] font-bold text-amber-300/90 leading-tight">
+                  Offline — Stroke animation unavailable
+                </span>
+              </div>
+            ) : (
+              <div ref={previewRef} className="relative z-10 w-[190px] h-[190px] font-hanzi" />
+            )}
           </div>
 
-          <button
-            type="button"
-            onClick={() => {
-              soundFX.playPop();
-              writerRef.current?.animateCharacter();
-            }}
-            className="game-btn-3d px-4 py-2 rounded-[2px] bg-amber-500/20 hover:bg-amber-500/30 border-2 border-amber-400 text-amber-300 text-xs font-extrabold flex items-center gap-1.5"
-          >
-            <Play className="w-3.5 h-3.5 fill-current" />
-            <span>Replay Stroke Animation</span>
-          </button>
+          {!isOfflineFallback && (
+            <button
+              type="button"
+              onClick={() => {
+                soundFX.playPop();
+                writerRef.current?.animateCharacter();
+              }}
+              className="game-btn-3d px-4 py-2 rounded-[2px] bg-amber-500/20 hover:bg-amber-500/30 border-2 border-amber-400 text-amber-300 text-xs font-extrabold flex items-center gap-1.5"
+            >
+              <Play className="w-3.5 h-3.5 fill-current" />
+              <span>Replay Stroke Animation</span>
+            </button>
+          )}
         </div>
 
         <div className="rounded-[2px] bg-slate-950 border-2 border-slate-700 p-3 space-y-1.5 text-xs">
@@ -829,14 +859,27 @@ export function ScrollingText({
       typeof window !== 'undefined' && window.requestAnimationFrame
         ? window.requestAnimationFrame(measureOverflow)
         : null;
+
+    let resizeObserver = null;
+    if (typeof ResizeObserver !== 'undefined') {
+      resizeObserver = new ResizeObserver(() => {
+        measureOverflow();
+      });
+      if (containerRef.current) resizeObserver.observe(containerRef.current);
+      if (contentRef.current) resizeObserver.observe(contentRef.current);
+    }
+
     window.addEventListener('resize', measureOverflow);
     return () => {
       if (rafId !== null && window.cancelAnimationFrame) {
         window.cancelAnimationFrame(rafId);
       }
+      if (resizeObserver) {
+        resizeObserver.disconnect();
+      }
       window.removeEventListener('resize', measureOverflow);
     };
-  }, [text, measureOverflow]);
+  }, [text, children, measureOverflow]);
 
   const totalDurationMs =
     overflowPx > 0

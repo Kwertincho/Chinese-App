@@ -201,3 +201,12 @@
   border-radius: 0px;
   border: 1px solid #0f172a;
 }
+
+.no-scrollbar {
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}

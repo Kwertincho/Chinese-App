@@ -275,7 +275,7 @@ export function PhoneticsStudioView({
 
     const isRight = chosenToneNum === toneQuestion.targetTone;
     if (isRight) {
-      soundFX.playCorrect();
+      soundFX.playCorrect(toneQuizStats.streak + 1);
       setToneQuizStats((prev) => ({
         correct: prev.correct + 1,
         total: prev.total + 1,

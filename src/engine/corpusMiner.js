@@ -672,6 +672,13 @@ export const STARTER_BILINGUAL_CORPUS = [
 // 2. MODULE-LEVEL CORPUS STORE & INVERTED TOKEN INDEX
 // ============================================================================
 
+const NORMALIZED_STARTER_CORPUS = STARTER_BILINGUAL_CORPUS.map((item) => ({
+  ...item,
+  tokens: item.tokens.map((t) => String(t).trim()),
+  isExternal: false
+}));
+
+let externalCorpusSentences = [];
 let activeCorpusSentences = [];
 /** @type {Map<string, number[]>} */
 let corpusTokenIndex = new Map();
@@ -754,51 +761,46 @@ export function rebuildCorpusIndex(sentences = []) {
 }
 
 // Initialize immediately with the built-in 60-sentence starter corpus
-rebuildCorpusIndex(
-  STARTER_BILINGUAL_CORPUS.map((item) => ({
-    ...item,
-    tokens: item.tokens.map((t) => String(t).trim())
-  }))
-);
+rebuildCorpusIndex([...NORMALIZED_STARTER_CORPUS]);
 
 /**
- * Merges external pre-tokenized corpus sentences (e.g., from `/data/corpus_hsk.json`),
- * deduplicating by `hanzi`, validating `tokens`, and rebuilding the inverted index.
+ * Replaces the external pre-tokenized corpus batch (e.g., from `/data/corpus_hsk.json`),
+ * keeping `STARTER_BILINGUAL_CORPUS` intact, deduplicating by `hanzi`, validating `tokens`,
+ * and rebuilding the inverted index cleanly across re-syncs.
  */
 export function registerExternalCorpusSentences(externalSentences = []) {
-  if (!Array.isArray(externalSentences) || externalSentences.length === 0) {
-    return { addedCount: 0, totalCount: activeCorpusSentences.length };
+  const starterKeys = new Set(
+    NORMALIZED_STARTER_CORPUS.map((item) => normalizeCorpusKey(item.hanzi)).filter(Boolean)
+  );
+  const nextExternal = [];
+  const seenKeys = new Set(starterKeys);
+
+  if (Array.isArray(externalSentences) && externalSentences.length > 0) {
+    for (let i = 0; i < externalSentences.length; i++) {
+      const normalized = normalizeExternalCorpusEntry(externalSentences[i]);
+      if (!normalized) continue;
+
+      const normKey = normalizeCorpusKey(normalized.hanzi);
+      if (!normKey || seenKeys.has(normKey)) continue;
+
+      seenKeys.add(normKey);
+      nextExternal.push({
+        id: normalized.id || `ext_corp_${nextExternal.length + 1}`,
+        hanzi: normalized.hanzi,
+        pinyin: normalized.pinyin,
+        english: normalized.english,
+        tokens: normalized.tokens,
+        hskLevel: normalized.hskLevel,
+        topic: normalized.topic,
+        isExternal: true
+      });
+    }
   }
 
-  const merged = [...activeCorpusSentences];
-  const seenKeys = new Set(corpusHanziSet);
-  let addedCount = 0;
+  externalCorpusSentences = nextExternal;
+  rebuildCorpusIndex([...NORMALIZED_STARTER_CORPUS, ...externalCorpusSentences]);
 
-  for (let i = 0; i < externalSentences.length; i++) {
-    const normalized = normalizeExternalCorpusEntry(externalSentences[i]);
-    if (!normalized) continue;
-
-    const normKey = normalizeCorpusKey(normalized.hanzi);
-    if (!normKey || seenKeys.has(normKey)) continue;
-
-    seenKeys.add(normKey);
-    merged.push({
-      id: normalized.id || `ext_corp_${merged.length + 1}`,
-      hanzi: normalized.hanzi,
-      pinyin: normalized.pinyin,
-      english: normalized.english,
-      tokens: normalized.tokens,
-      hskLevel: normalized.hskLevel,
-      topic: normalized.topic
-    });
-    addedCount += 1;
-  }
-
-  if (addedCount > 0) {
-    rebuildCorpusIndex(merged);
-  }
-
-  return { addedCount, totalCount: activeCorpusSentences.length };
+  return { addedCount: externalCorpusSentences.length, totalCount: activeCorpusSentences.length };
 }
 
 export function getCorpusSentenceCount() {
@@ -880,6 +882,12 @@ function evaluateSentenceComprehensibility(sentence, unlockedSet) {
   return { knownTokens, unknownTokens };
 }
 
+function classifyCorpusInputLevel(knownTokens, unknownTokens) {
+  if (unknownTokens.length === 0) return 'i+0';
+  if (unknownTokens.length === 1 && knownTokens.length >= 3) return 'i+1';
+  return 'i+2+';
+}
+
 /**
  * Mines natural Mandarin sentences matching the learner's unlocked vocabulary
  * at either strict `i+0` (`mode: 'i0_only'`) or `i+0 / i+1` (`mode: 'i0_and_i1'`).
@@ -918,38 +926,74 @@ export function mineCorpusSentences(unlockedWords = [], options = {}) {
   const candidateOrder = [];
   const seenSentenceIdx = new Set();
 
-  const addIndex = (idx) => {
-    if (
-      typeof idx === 'number' &&
-      idx >= 0 &&
-      idx < activeCorpusSentences.length &&
-      !seenSentenceIdx.has(idx)
-    ) {
-      seenSentenceIdx.add(idx);
-      candidateOrder.push(idx);
+  const pushUniqueIndices = (indices) => {
+    for (let i = 0; i < indices.length; i++) {
+      const idx = indices[i];
+      if (
+        typeof idx === 'number' &&
+        idx >= 0 &&
+        idx < activeCorpusSentences.length &&
+        !seenSentenceIdx.has(idx)
+      ) {
+        seenSentenceIdx.add(idx);
+        candidateOrder.push(idx);
+      }
     }
   };
 
-  // 1. Pull targetWord matches via inverted index first
+  const shuffleWithExternalPriority = (indices) => {
+    const ext = [];
+    const starter = [];
+    for (let i = 0; i < indices.length; i++) {
+      const idx = indices[i];
+      if (activeCorpusSentences[idx]?.isExternal) {
+        ext.push(idx);
+      } else {
+        starter.push(idx);
+      }
+    }
+    const shuffledExt = shuffleCopy(ext);
+    const shuffledStarter = shuffleCopy(starter);
+    if (shuffledExt.length === 0) return shuffledStarter;
+    if (shuffledStarter.length === 0) return shuffledExt;
+    // Interleave external textbook sentences ahead/equally with starter sentences so external corpus is never starved
+    const mixed = [];
+    let e = 0;
+    let s = 0;
+    while (e < shuffledExt.length || s < shuffledStarter.length) {
+      if (e < shuffledExt.length) mixed.push(shuffledExt[e++]);
+      if (e < shuffledExt.length) mixed.push(shuffledExt[e++]);
+      if (s < shuffledStarter.length) mixed.push(shuffledStarter[s++]);
+    }
+    return mixed;
+  };
+
+  // 1. Pull targetWord matches via inverted index first (shuffled with external priority)
   if (targetHanzi && corpusTokenIndex.has(targetHanzi)) {
     const posting = corpusTokenIndex.get(targetHanzi) || [];
-    for (let i = 0; i < posting.length; i++) addIndex(posting[i]);
+    pushUniqueIndices(shuffleWithExternalPriority(posting));
   }
 
-  // 2. Pull SRS-due word matches via inverted index next
+  // 2. Pull SRS-due word matches via inverted index next (shuffled with external priority)
   if (srsSet.size > 0) {
+    const srsIndices = [];
     srsSet.forEach((dueHanzi) => {
       const posting = corpusTokenIndex.get(dueHanzi);
       if (posting) {
-        for (let i = 0; i < posting.length; i++) addIndex(posting[i]);
+        for (let i = 0; i < posting.length; i++) {
+          if (!seenSentenceIdx.has(posting[i])) srsIndices.push(posting[i]);
+        }
       }
     });
+    pushUniqueIndices(shuffleWithExternalPriority(srsIndices));
   }
 
-  // 3. Scan remaining corpus entries in order
+  // 3. Shuffle remaining corpus entries (giving external sentences equal/higher sampling priority) BEFORE evaluation cap
+  const remainingIndices = [];
   for (let idx = 0; idx < activeCorpusSentences.length; idx++) {
-    addIndex(idx);
+    if (!seenSentenceIdx.has(idx)) remainingIndices.push(idx);
   }
+  pushUniqueIndices(shuffleWithExternalPriority(remainingIndices));
 
   const maxEvaluatedCandidates = safeLimit * 4;
   const scoredMatches = [];
@@ -960,17 +1004,14 @@ export function mineCorpusSentences(unlockedWords = [], options = {}) {
     if (topicFilter && sent.topic !== topicFilter) continue;
 
     const { knownTokens, unknownTokens } = evaluateSentenceComprehensibility(sent, unlockedSet);
+    const inputLevel = classifyCorpusInputLevel(knownTokens, unknownTokens);
 
     if (mode === 'i0_only') {
-      if (unknownTokens.length !== 0) continue;
+      if (inputLevel !== 'i+0') continue;
     } else {
-      // 'i0_and_i1': keep i+0 OR i+1 with at least 3 known tokens for rich context
-      const isI0 = unknownTokens.length === 0;
-      const isValidI1 = unknownTokens.length === 1 && knownTokens.length >= 3;
-      if (!isI0 && !isValidI1) continue;
+      if (inputLevel !== 'i+0' && inputLevel !== 'i+1') continue;
     }
 
-    const inputLevel = unknownTokens.length === 0 ? 'i+0' : 'i+1';
     const matchedTarget = Boolean(targetHanzi && sent.tokens.includes(targetHanzi));
     let srsHits = 0;
     if (srsSet.size > 0) {
@@ -980,11 +1021,13 @@ export function mineCorpusSentences(unlockedWords = [], options = {}) {
     }
 
     const lengthBonus = sent.tokens.length >= 4 && sent.tokens.length <= 8 ? 15 : 5;
+    const externalBonus = sent.isExternal ? 8 : 0;
     const score =
       (matchedTarget ? 1000 : 0) +
       srsHits * 200 +
       (inputLevel === 'i+0' ? 120 : 40) +
       lengthBonus +
+      externalBonus +
       Math.random() * 12;
 
     scoredMatches.push({
@@ -993,7 +1036,8 @@ export function mineCorpusSentences(unlockedWords = [], options = {}) {
         ...sent,
         inputLevel,
         unknownToken: unknownTokens[0] || null,
-        matchedTarget
+        matchedTarget,
+        targetHanzi: matchedTarget ? targetHanzi : null
       }
     });
   }
@@ -1021,9 +1065,10 @@ export function getCorpusReadinessStats(unlockedWords = []) {
       activeCorpusSentences[i],
       unlockedSet
     );
-    if (unknownTokens.length === 0) {
+    const level = classifyCorpusInputLevel(knownTokens, unknownTokens);
+    if (level === 'i+0') {
       i0Count += 1;
-    } else if (unknownTokens.length === 1 && knownTokens.length >= 3) {
+    } else if (level === 'i+1') {
       i1Count += 1;
     }
   }
@@ -1038,9 +1083,8 @@ export function getCorpusReadinessStats(unlockedWords = []) {
 export function annotateCorpusReadiness(unlockedWords = []) {
   const unlockedSet = buildUnlockedTokenSet(unlockedWords);
   return activeCorpusSentences.map((sentence) => {
-    const { unknownTokens } = evaluateSentenceComprehensibility(sentence, unlockedSet);
-    const inputLevel =
-      unknownTokens.length === 0 ? 'i+0' : unknownTokens.length === 1 ? 'i+1' : 'i+2+';
+    const { knownTokens, unknownTokens } = evaluateSentenceComprehensibility(sentence, unlockedSet);
+    const inputLevel = classifyCorpusInputLevel(knownTokens, unknownTokens);
     return {
       ...sentence,
       inputLevel,
@@ -1347,16 +1391,30 @@ export function minedSentenceToMicroReadingPassage(unlockedWords = [], focusWord
 
     const selectedIds = new Set(selectedTrio.map((s) => s.id));
     const selectedEnglishSet = new Set(selectedTrio.map((s) => s.english.trim().toLowerCase()));
+    const maxTrioHskLevel = Math.max(
+      1,
+      ...selectedTrio.map((s) => (Number.isFinite(Number(s.hskLevel)) ? Number(s.hskLevel) : 1))
+    );
 
-    // Gather plausible English distractor statements from other corpus sentences not in the passage
+    // Gather plausible English distractor statements from level-appropriate corpus sentences not in the passage
+    const levelBoundedDistractors = activeCorpusSentences.filter(
+      (s) =>
+        s &&
+        s.english &&
+        (Number.isFinite(Number(s.hskLevel)) ? Number(s.hskLevel) : 1) <= maxTrioHskLevel + 1 &&
+        !selectedIds.has(s.id) &&
+        !selectedEnglishSet.has(s.english.trim().toLowerCase())
+    );
     const distractorPool = shuffleCopy(
-      activeCorpusSentences.filter(
-        (s) =>
-          s &&
-          s.english &&
-          !selectedIds.has(s.id) &&
-          !selectedEnglishSet.has(s.english.trim().toLowerCase())
-      )
+      levelBoundedDistractors.length >= 6
+        ? levelBoundedDistractors
+        : activeCorpusSentences.filter(
+            (s) =>
+              s &&
+              s.english &&
+              !selectedIds.has(s.id) &&
+              !selectedEnglishSet.has(s.english.trim().toLowerCase())
+          )
     );
 
     if (distractorPool.length < 6) return null;
@@ -1396,7 +1454,7 @@ export function minedSentenceToMicroReadingPassage(unlockedWords = [], focusWord
       }
     ];
 
-    const topicLabel = TOPIC_DISPLAY_TITLES[selectedTopic] || 'Daily Mandarin';
+    const topicLabel = TOPIC_DISPLAY_TITLES[selectedTopic] || selectedTopic || 'Daily Mandarin';
     const sentences = selectedTrio.map((s) => ({
       id: s.id,
       hanzi: s.hanzi,

@@ -131,31 +131,43 @@ const EQUIVALENT_PAIR_SWAPS = [
   { aHanzi: '哪儿', bHanzi: '哪里', aPinyin: 'nǎr', bPinyin: 'nǎlǐ' },
   { aHanzi: '这儿', bHanzi: '这里', aPinyin: 'zhèr', bPinyin: 'zhèlǐ' },
   { aHanzi: '那儿', bHanzi: '那里', aPinyin: 'nàr', bPinyin: 'nàlǐ' },
-  { aHanzi: '一点儿', bHanzi: '一点', aPinyin: 'yīdiǎnr', bPinyin: 'yīdiǎn' }
+  {
+    aHanzi: '一点儿',
+    bHanzi: '一点',
+    aPinyin: 'yīdiǎnr',
+    bPinyin: 'yīdiǎn',
+    aPinyinRegex: /y[īíǐì]diǎnr/gi,
+    bPinyinRegex: /y[īíǐì]diǎn(?!r)/gi
+  }
 ];
+
+const PRONOUN_PINYIN_REGEX = {
+  我: /\bw[ōóǒòo](?=\s|$)/i,
+  你: /\bn[īíǐìi](?=\s|$)/i,
+  他: /\bt[āáǎàa](?=\s|$)/i,
+  她: /\bt[āáǎàa](?=\s|$)/i
+};
 
 function applyPairEquivalents(variants) {
   let current = [...variants];
 
   for (const pair of EQUIVALENT_PAIR_SWAPS) {
     const additions = [];
+    const aRegex = pair.aPinyinRegex || new RegExp(pair.aPinyin, 'gi');
+    const bRegex = pair.bPinyinRegex || new RegExp(pair.bPinyin, 'gi');
     for (const v of current) {
       if (!v || typeof v.hanzi !== 'string') continue;
       if (v.hanzi.includes(pair.aHanzi)) {
         additions.push({
           hanzi: v.hanzi.split(pair.aHanzi).join(pair.bHanzi),
-          pinyin: v.pinyin
-            ? v.pinyin.replace(new RegExp(pair.aPinyin, 'gi'), pair.bPinyin)
-            : '',
+          pinyin: v.pinyin ? v.pinyin.replace(aRegex, pair.bPinyin) : '',
           isPrimary: false
         });
       }
       if (v.hanzi.includes(pair.bHanzi)) {
         additions.push({
           hanzi: v.hanzi.split(pair.bHanzi).join(pair.aHanzi),
-          pinyin: v.pinyin
-            ? v.pinyin.replace(new RegExp(pair.bPinyin, 'gi'), pair.aPinyin)
-            : '',
+          pinyin: v.pinyin ? v.pinyin.replace(bRegex, pair.aPinyin) : '',
           isPrimary: false
         });
       }
@@ -197,9 +209,14 @@ function applyPairEquivalents(variants) {
             isPrimary: false
           });
         } else if (v.hanzi.includes(withoutDe)) {
+          const pronRegex = PRONOUN_PINYIN_REGEX[pron];
+          let expandedPinyin = '';
+          if (v.pinyin && pronRegex && pronRegex.test(v.pinyin)) {
+            expandedPinyin = v.pinyin.replace(pronRegex, (m) => `${m} de`).replace(/\s+/g, ' ').trim();
+          }
           deAdditions.push({
             hanzi: v.hanzi.replace(withoutDe, withDe),
-            pinyin: '',
+            pinyin: expandedPinyin,
             isPrimary: false
           });
         }
@@ -274,7 +291,7 @@ function buildExpandedEquivalenceVariants(generatedItem = {}) {
   });
 
   // Automatically derive S + Time <-> Time + S fronting with accurate paired Pinyin
-  const tokens = Array.isArray(generatedItem.tokens) ? generatedItem.tokens : [];
+  const tokens = Array.isArray(safeItem.tokens) ? safeItem.tokens : [];
   if (tokens.length >= 3) {
     const first = tokens[0];
     const second = tokens[1];
@@ -354,9 +371,9 @@ function diagnoseMandarinError(rawInput, generatedItem = {}) {
     };
   }
 
-  // 2. Place word order: ...V + 在 + Place
+  // 2. Place word order: ...V + 在 + Place (never trigger on valid S + 在 + Place where 在 is the main verb)
   const placeToken = tokens.find((t) => t.role === 'place');
-  const verbToken = tokens.find((t) => t.role === 'verb');
+  const verbToken = tokens.find((t) => (t.role === 'verb' || t.pos === 'verb') && t.hanzi !== '在');
   if (isHanzi && placeToken && verbToken) {
     const zaiPlaceIdx = cleanHanzi.indexOf(`在${placeToken.hanzi}`);
     const verbIdx = cleanHanzi.indexOf(verbToken.hanzi);
@@ -367,12 +384,18 @@ function diagnoseMandarinError(rawInput, generatedItem = {}) {
           "Word order: In Mandarin, '在 + location' goes BEFORE the main verb (Subject + 在 + Location + Verb)."
       };
     }
-  } else if (isHanzi && /[^正在]在[\u4e00-\u9fff]{1,3}$/.test(cleanHanzi) && tokens.some((t) => t.hanzi === '在')) {
-    return {
-      errorCategory: 'place_order',
-      diagnostic:
-        "Word order: In Mandarin, '在 + location' goes BEFORE the main verb (Subject + 在 + Location + Verb)."
-    };
+  } else if (isHanzi && verbToken && tokens.some((t) => t.hanzi === '在')) {
+    const verbIdx = cleanHanzi.indexOf(verbToken.hanzi);
+    if (verbIdx > -1) {
+      const afterVerb = cleanHanzi.slice(verbIdx + verbToken.hanzi.length);
+      if (/(?:^|[^正])在[\u4e00-\u9fff]{1,4}$/.test(afterVerb)) {
+        return {
+          errorCategory: 'place_order',
+          diagnostic:
+            "Word order: In Mandarin, '在 + location' goes BEFORE the main verb (Subject + 在 + Location + Verb)."
+        };
+      }
+    }
   }
 
   // 3. Time expression placed at the very end of the sentence
@@ -736,8 +759,7 @@ const TRANSFORM_READINESS_PAIRS = [
   ['you_possession', 'you_neg'],
   ['adj_hen', 'a_not_a_adj'],
   ['time_action', 'a_not_a_verb'],
-  ['time_action', 'completed_le_obj'],
-  ['past_neg_mei', 'completed_le_obj'],
+  ['completed_le_obj', 'past_neg_mei'],
   ['modal_xiang', 'progressive_zhengzai'],
   ['modal_xiang', 'suggestion_ba']
 ];

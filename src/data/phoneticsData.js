@@ -161,9 +161,9 @@ export const MANDARIN_INITIAL_GROUPS = [
         callOut: 'Like "ds" in "kids" or "ts" in "cats" without aspiration.',
         repInitial: 'z',
         repFinal: 'uo',
-        repPinyin: 'zuō',
-        repHanzi: '作',
-        repIpa: '[tsu̯ɔ˥]',
+        repPinyin: 'zuó',
+        repHanzi: '昨',
+        repIpa: '[tsu̯ɔ˧˥]',
         repMeaning: 'do / yesterday / left / sit'
       },
       {

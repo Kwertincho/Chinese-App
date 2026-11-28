@@ -16,7 +16,6 @@ import {
   Mic,
   SkipForward,
   Shield,
-  Heart,
   Clock,
   X,
   ShieldAlert,
@@ -103,8 +102,8 @@ export function FlashcardStageModal({
   const [cardIndex, setCardIndex] = useState(0);
   const [isFlipped, setIsFlipped] = useState(false);
   const [showPinyinHint, setShowPinyinHint] = useState(false);
-  const [combo, setCombo] = useState(1);
-  const [maxCombo, setMaxCombo] = useState(1);
+  const [combo, setCombo] = useState(0);
+  const [maxCombo, setMaxCombo] = useState(0);
   const [bonusXp, setBonusXp] = useState(0);
   const [xpPopupKey, setXpPopupKey] = useState(0);
   const [flippedCardsSet, setFlippedCardsSet] = useState(new Set());
@@ -124,18 +123,7 @@ export function FlashcardStageModal({
   }, [cardIndex, currentWord.hanzi, speakMandarin]);
 
   const handleNextCard = () => {
-    let updatedBonusXp = bonusXp;
-    if (!flippedCardsSet.has(cardIndex)) {
-      const nextSet = new Set(flippedCardsSet);
-      nextSet.add(cardIndex);
-      setFlippedCardsSet(nextSet);
-      soundFX.playCorrect(combo);
-      updatedBonusXp = bonusXp + 2;
-      setBonusXp(updatedBonusXp);
-      setXpPopupKey((prev) => prev + 1);
-    } else {
-      soundFX.playPop();
-    }
+    soundFX.playPop();
 
     if (cardIndex < words.length - 1) {
       setCardIndex((prev) => prev + 1);
@@ -143,7 +131,7 @@ export function FlashcardStageModal({
       setShowPinyinHint(false);
     } else {
       flushSessionTime();
-      onComplete(updatedBonusXp, maxCombo);
+      onComplete(bonusXp, maxCombo);
     }
   };
 
@@ -487,6 +475,7 @@ export function WritingStageModal({
   ); // 1: Guided, 2: Trace, 3: Memory
   const [showPinyinHint, setShowPinyinHint] = useState(false);
   const [scriptStatus, setScriptStatus] = useState('loading'); // 'loading' | 'ready' | 'error'
+  const [charLoadError, setCharLoadError] = useState(false);
   const [modeStatus, setModeStatus] = useState('quiz'); // 'animating' | 'quiz' | 'stage_transition' | 'completed'
   const [strokeStats, setStrokeStats] = useState({
     completedStrokes: 0,
@@ -518,6 +507,7 @@ export function WritingStageModal({
   const stageTransitionTimerRef = useRef(null);
   const feedbackTimerRef = useRef(null);
   const charMissCountRef = useRef(0);
+  const failedWordKeysRef = useRef(new Set());
 
   const currentWord = words[wordIndex] || words[0];
   const currentChar = currentWord.chars[charIndex] || currentWord.chars[0];
@@ -591,6 +581,8 @@ export function WritingStageModal({
     charMissCountRef.current = 0;
     setCharMissCount(0);
     setTouchNudgeMessage('');
+    setCharLoadError(false);
+    setCharStrokeMeta({ strokeCount: null, radStrokes: [], loading: false });
     speakMandarin(currentWord.hanzi);
   }, [wordIndex, currentWord.hanzi, speakMandarin]);
 
@@ -599,6 +591,8 @@ export function WritingStageModal({
     charMissCountRef.current = 0;
     setCharMissCount(0);
     setTouchNudgeMessage('');
+    setCharLoadError(false);
+    setCharStrokeMeta({ strokeCount: null, radStrokes: [], loading: false });
   }, [charIndex]);
 
   const triggerBoardFeedback = useCallback((type) => {
@@ -696,6 +690,8 @@ export function WritingStageModal({
           triggerBoardFeedback('wrong');
           if (nextCharMiss === 3) {
             const { currentWord: liveWord, onRecordSkillEvent: recordEvt } = liveStateRef.current;
+            if (liveWord?.hanzi) failedWordKeysRef.current.add(liveWord.hanzi);
+            if (liveWord?.id) failedWordKeysRef.current.add(liveWord.id);
             recordEvt?.(liveWord, 'writing', { mistakesDelta: 1, completionsDelta: 0 });
           }
           setStrokeStats((prev) => ({
@@ -832,7 +828,7 @@ export function WritingStageModal({
                   setWordIndex((prev) => prev + 1);
                 } else {
                   flushTime();
-                  completeCb(nextTotalXp, liveMaxCombo);
+                  completeCb(nextTotalXp, liveMaxCombo, Array.from(failedWordKeysRef.current));
                 }
               }, 1200);
             }
@@ -878,6 +874,8 @@ export function WritingStageModal({
     // Explicitly clear container before every HanziWriter.create() call so SVG grids never duplicate
     containerEl.innerHTML = '';
     writerInstanceRef.current = null;
+    setCharLoadError(false);
+    setCharStrokeMeta({ strokeCount: null, radStrokes: [], loading: true });
 
     const currentStageConfig = getWritingStageMeta(charStage);
 
@@ -898,7 +896,14 @@ export function WritingStageModal({
       highlightColor: '#38bdf8',
       showHintAfterMisses: currentStageConfig.showHintAfterMisses,
       highlightOnComplete: true,
+      onLoadCharDataError: () => {
+        if (!writerInstanceRef.current || writerInstanceRef.current === writer) {
+          setCharLoadError(true);
+          setCharStrokeMeta({ strokeCount: null, radStrokes: [], loading: false });
+        }
+      },
       onLoadCharDataSuccess: (charData) => {
+        setCharLoadError(false);
         const radStrokes = Array.isArray(charData.radStrokes) ? charData.radStrokes : [];
         setCharStrokeMeta({
           strokeCount: charData.strokes.length,
@@ -928,6 +933,11 @@ export function WritingStageModal({
     return () => {
       if (stageTransitionTimerRef.current) {
         clearTimeout(stageTransitionTimerRef.current);
+        stageTransitionTimerRef.current = null;
+      }
+      if (feedbackTimerRef.current) {
+        clearTimeout(feedbackTimerRef.current);
+        feedbackTimerRef.current = null;
       }
       if (writerInstanceRef.current?.cancelQuiz) {
         try {
@@ -1170,7 +1180,7 @@ export function WritingStageModal({
             <button
               type="button"
               onClick={handleReplayAnimation}
-              disabled={scriptStatus !== 'ready'}
+              disabled={scriptStatus !== 'ready' || charLoadError}
               className="game-btn-3d px-3 py-1.5 rounded-xl bg-amber-500/15 hover:bg-amber-500/25 border border-amber-400/40 text-amber-300 text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-40"
             >
               <Eye className="w-3.5 h-3.5" />
@@ -1183,7 +1193,7 @@ export function WritingStageModal({
                 soundFX.playPop();
                 startInteractiveQuiz(writerInstanceRef.current, charStage);
               }}
-              disabled={scriptStatus !== 'ready'}
+              disabled={scriptStatus !== 'ready' || charLoadError}
               className="game-btn-3d px-3 py-1.5 rounded-xl bg-slate-800 hover:bg-slate-700 border border-slate-700 text-slate-300 text-xs font-bold flex items-center gap-1.5 transition-all disabled:opacity-40"
             >
               <RotateCcw className="w-3.5 h-3.5" />
@@ -1290,46 +1300,46 @@ export function WritingStageModal({
               </div>
             )}
 
-            {scriptStatus === 'error' && (
-              <div className="z-20 text-center p-4 space-y-2">
+            {(scriptStatus === 'error' || charLoadError) && (
+              <div className="z-20 absolute inset-0 bg-slate-950/92 flex flex-col items-center justify-center p-4 space-y-2 text-center">
                 <AlertCircle className="w-6 h-6 text-rose-400 mx-auto" />
                 <p className="text-xs font-bold text-rose-300">
-                  Could not reach Hanzi Writer CDN.
+                  {scriptStatus === 'error'
+                    ? 'Could not reach Hanzi Writer CDN (offline).'
+                    : `Stroke data unavailable offline for "${currentChar}".`}
                 </p>
                 <button
                   type="button"
                   onClick={() => {
-                    if (charStage < 3) {
-                      setCharStage((s) => s + 1);
-                    } else {
-                      setModeStatus('completed');
+                    soundFX.playPop();
+                    if (currentWord?.hanzi) failedWordKeysRef.current.add(currentWord.hanzi);
+                    if (currentWord?.id) failedWordKeysRef.current.add(currentWord.id);
+                    setCharLoadError(false);
+                    if (charIndex < currentWord.chars.length - 1) {
                       setCompletedCharsInWord((prev) =>
                         prev.includes(charIndex) ? prev : [...prev, charIndex]
                       );
-                      feedbackTimerRef.current = setTimeout(() => {
-                        if (charIndex < currentWord.chars.length - 1) {
-                          setCharStage(writingConfig.initialStage);
-                          setCharIndex((prev) => prev + 1);
-                        } else if (wordIndex < words.length - 1) {
-                          const nextWord = words[wordIndex + 1];
-                          const nextWordConfig = getAdaptiveWritingConfig(
-                            getWordMasteryLevel(progress?.mastery, nextWord),
-                            nodeLevel
-                          );
-                          setCompletedCharsInWord([]);
-                          setWordXpAwarded(false);
-                          setCharStage(nextWordConfig.initialStage);
-                          setCharIndex(0);
-                          setWordIndex((prev) => prev + 1);
-                        } else {
-                          onComplete(bonusXp, maxCombo);
-                        }
-                      }, 1200);
+                      setCharStage(writingConfig.initialStage);
+                      setCharIndex((prev) => prev + 1);
+                    } else if (wordIndex < words.length - 1) {
+                      const nextWord = words[wordIndex + 1];
+                      const nextWordConfig = getAdaptiveWritingConfig(
+                        getWordMasteryLevel(progress?.mastery, nextWord),
+                        nodeLevel
+                      );
+                      setCompletedCharsInWord([]);
+                      setWordXpAwarded(false);
+                      setCharStage(nextWordConfig.initialStage);
+                      setCharIndex(0);
+                      setWordIndex((prev) => prev + 1);
+                    } else {
+                      flushSessionTime();
+                      onComplete(bonusXp, maxCombo, Array.from(failedWordKeysRef.current));
                     }
                   }}
-                  className="px-3 py-1.5 rounded-lg bg-amber-500 text-slate-950 font-bold text-xs"
+                  className="px-3 py-1.5 rounded-lg bg-amber-500 hover:bg-amber-400 text-slate-950 font-bold text-xs"
                 >
-                  Mark "{currentChar}" Stage {charStage} Complete
+                  Skip / Continue (Offline)
                 </button>
               </div>
             )}
@@ -1471,6 +1481,7 @@ export function AudioSpeechStageModal({
   const recognitionRef = useRef(null);
   const feedbackTimerRef = useRef(null);
   const pendingAdvancePayloadRef = useRef(null);
+  const failedWordKeysRef = useRef(new Set());
   const currentWord = words[stepIndex] || words[0];
   const masteryLevel = getWordMasteryLevel(progress?.mastery, currentWord);
   const tierMeta = getMasteryTierMeta(masteryLevel);
@@ -1494,7 +1505,7 @@ export function AudioSpeechStageModal({
         setStepIndex((prev) => prev + 1);
       } else {
         flushSessionTime();
-        onComplete(updatedBonusXp, updatedMaxCombo);
+        onComplete(updatedBonusXp, updatedMaxCombo, Array.from(failedWordKeysRef.current));
       }
     },
     [bonusXp, maxCombo, clearFeedbackTimer, flushSessionTime, onComplete, stepIndex, words.length]
@@ -1590,6 +1601,8 @@ export function AudioSpeechStageModal({
     } else {
       soundFX.playMistake();
       setCombo(0);
+      if (currentWord?.hanzi) failedWordKeysRef.current.add(currentWord.hanzi);
+      if (currentWord?.id) failedWordKeysRef.current.add(currentWord.id);
       onRecordSkillEvent?.(currentWord, 'listening', { mistakesDelta: 1, completionsDelta: 0 });
       setDictationAnim('wrong');
       setTimeout(() => setDictationAnim('idle'), 450);
@@ -1651,6 +1664,8 @@ export function AudioSpeechStageModal({
         } else {
           soundFX.playMistake();
           setCombo(0);
+          if (currentWord?.hanzi) failedWordKeysRef.current.add(currentWord.hanzi);
+          if (currentWord?.id) failedWordKeysRef.current.add(currentWord.id);
           onRecordSkillEvent?.(currentWord, 'speaking', { mistakesDelta: 1, completionsDelta: 0 });
         }
 
@@ -1692,6 +1707,10 @@ export function AudioSpeechStageModal({
     setIsRecording(false);
     setSpeakingSkipped(true);
     setSpeakingEvaluated(true);
+    if (!showDictation) {
+      if (currentWord?.hanzi) failedWordKeysRef.current.add(currentWord.hanzi);
+      if (currentWord?.id) failedWordKeysRef.current.add(currentWord.id);
+    }
 
     const dictationAlreadyDone = !showDictation || dictationSubmitted;
     scheduleAutoAdvanceIfReady(true, dictationAlreadyDone, true, bonusXp, maxCombo);
@@ -1858,7 +1877,7 @@ export function AudioSpeechStageModal({
                 <p className="text-[11px] text-slate-400">
                   {dictationSubMode === 'pinyin'
                     ? 'Tones required: use tone marks (nǐ hǎo) or tone numbers (ni3 hao3). Sandhi & neutral tones accepted.'
-                    : `Hint: ${currentWord.literal}`}
+                    : `${currentWord.chars?.length || Array.from(currentWord.hanzi || '').length} character(s) — Meaning: ${(currentWord.meaning || currentWord.english || '').split(/[;/]/)[0].trim()}`}
                 </p>
               </form>
 
@@ -2153,7 +2172,6 @@ export function BossChallengeModal({
   const bossPostAnswerExample =
     currentQuestionWord?.exampleHanzi || currentQuestion?.speechText || '';
   const maxBossHp = questions.length;
-  const bossHpPercent = Math.max(0, Math.round((bossHp / Math.max(1, maxBossHp)) * 100));
 
   const clearFeedbackTimer = useCallback(() => {
     if (feedbackTimerRef.current) {
@@ -2238,7 +2256,7 @@ export function BossChallengeModal({
       setTimeout(() => setPlayerDamageAnim(false), 500);
       if (currentQuestion) {
         onRecordSkillEvent?.(
-          { id: currentQuestion.wordId, hanzi: currentQuestion.focusHanzi },
+          currentQuestionWord || { id: currentQuestion.wordId, hanzi: currentQuestion.focusHanzi },
           'recognition',
           { mistakesDelta: 1, completionsDelta: 0 }
         );
@@ -2262,6 +2280,7 @@ export function BossChallengeModal({
     isAnswered,
     hearts,
     currentQuestion,
+    currentQuestionWord,
     onRecordSkillEvent,
     scheduleBossTurnAdvance
   ]);
@@ -2278,7 +2297,7 @@ export function BossChallengeModal({
       setBossDamageAnim(true);
       setTimeout(() => setBossDamageAnim(false), 550);
       onRecordSkillEvent?.(
-        { id: currentQuestion.wordId, hanzi: currentQuestion.focusHanzi },
+        currentQuestionWord || { id: currentQuestion.wordId, hanzi: currentQuestion.focusHanzi },
         'recognition',
         { mistakesDelta: 0, completionsDelta: 1 }
       );
@@ -2305,7 +2324,7 @@ export function BossChallengeModal({
       setPlayerDamageAnim(true);
       setTimeout(() => setPlayerDamageAnim(false), 500);
       onRecordSkillEvent?.(
-        { id: currentQuestion.wordId, hanzi: currentQuestion.focusHanzi },
+        currentQuestionWord || { id: currentQuestion.wordId, hanzi: currentQuestion.focusHanzi },
         'recognition',
         { mistakesDelta: 1, completionsDelta: 0 }
       );
@@ -2690,7 +2709,9 @@ export function BossChallengeModal({
             <Trophy className="w-12 h-12 text-amber-400 mx-auto" />
             <h2 className="font-pixel-header text-sm text-amber-300">Guardian Boss Defeated!</h2>
             <p className="text-xs text-slate-300">
-              You depleted the Boss HP to 0 with{' '}
+              {bossHp <= 0
+                ? 'You depleted the Boss HP to 0 with '
+                : 'You survived the Jade Dragon Boss with '}
               <span className="text-rose-400 font-bold">{hearts} heart(s)</span> remaining and a{' '}
               <span className="text-amber-300 font-bold">{maxCombo}x max combo</span>!
             </p>

@@ -104,7 +104,8 @@ export function mapIctclasTagsToPos(rawTags) {
     if (tag === 'vg' || tag === 'vd' || tag === 'vn' || prefix === 'v') return 'verb';
     if (tag === 't' || tag === 'tg') return 'time';
     if (tag === 'f' || tag === 's' || tag === 'ns') return 'place';
-    if (tag === 'q' || tag === 'mq' || tag === 'm') return 'classifier';
+    if (tag === 'q' || tag === 'mq') return 'classifier';
+    if (tag === 'm') return 'num';
     if (tag === 'r' || tag === 'rr' || tag === 'ry' || tag === 'rz') return 'pron';
     if (tag === 'a' || tag === 'ad' || tag === 'an' || tag === 'ag') return 'adj';
     if (tag === 'd' || tag === 'dg') return 'adv';
@@ -323,19 +324,34 @@ function normalizeCurriculumPayload(payload) {
 
   const courses = rawCourses
     .filter((c) => c && typeof c === 'object' && Array.isArray(c.lessons))
-    .map((course, idx) => ({
-      id: String(course.id || `preloaded_hsk_${idx + 1}`),
-      courseName: String(course.courseName || course.name || `HSK Course ${idx + 1}`),
-      hskBand: course.hskBand != null ? String(course.hskBand) : null,
-      sourceType: 'preloaded-hsk',
-      lessons: course.lessons
-        .filter((l) => l && typeof l === 'object' && Array.isArray(l.words))
-        .map((lesson, lIdx) => ({
-          id: String(lesson.id || `lesson_${idx + 1}_${lIdx + 1}`),
-          title: String(lesson.title || `Lesson ${lIdx + 1}`),
-          words: lesson.words
-        }))
-    }))
+    .map((course, idx) => {
+      const parsedHskBand =
+        course.hskBand !== undefined && course.hskBand !== null && course.hskBand !== ''
+          ? Number(course.hskBand)
+          : NaN;
+      return {
+        id: String(course.id || `preloaded_hsk_${idx + 1}`),
+        courseName: String(course.courseName || course.name || `HSK Course ${idx + 1}`),
+        hskBand: Number.isFinite(parsedHskBand) ? parsedHskBand : null,
+        sourceType: 'preloaded-hsk',
+        lessons: course.lessons
+          .filter((l) => l && typeof l === 'object' && Array.isArray(l.words))
+          .map((lesson, lIdx) => {
+            const normalizedLesson = {
+              id: String(lesson.id || `lesson_${idx + 1}_${lIdx + 1}`),
+              title: String(lesson.title || `Lesson ${lIdx + 1}`),
+              words: lesson.words
+            };
+            if (typeof lesson.lessonNumber === 'number' && Number.isFinite(lesson.lessonNumber)) {
+              normalizedLesson.lessonNumber = lesson.lessonNumber;
+            }
+            if (Array.isArray(lesson.grammarPoints) && lesson.grammarPoints.length > 0) {
+              normalizedLesson.grammarPoints = [...lesson.grammarPoints];
+            }
+            return normalizedLesson;
+          })
+      };
+    })
     .filter((c) => c.lessons.length > 0);
 
   return {

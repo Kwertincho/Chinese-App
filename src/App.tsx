@@ -49,6 +49,7 @@ import {
   getNodeCompletionLevel,
   migrateLessonProgressNodeLevels,
   computeNodeLevelXpMultiplier,
+  getWordSrsEntry,
   writeWordSrsEntry,
   sampleWeightedWordsWithoutReplacement,
   SRS_ACTIVATION_MIN_WORDS,
@@ -738,7 +739,9 @@ export default function App() {
       maxCombo = 1,
       isBossWin = false,
       heartsRemaining = 3,
-      completedModeKeys = []
+      completedModeKeys = [],
+      failedWordKeys = [],
+      sessionStartedAt = null
     }: any) => {
       soundFX.playVictory();
       const now = new Date();
@@ -767,28 +770,66 @@ export default function App() {
         const nextSrsData = { ...(prev.srsData || {}) };
         const masteryStep = isBossWin ? 2 : 1;
         const reviewTimestamp = Date.now();
+        const TEN_MINUTES_MS = 10 * 60 * 1000;
+        const tenMinWindowStart = reviewTimestamp - TEN_MINUTES_MS;
+        const sessionWindowStart =
+          typeof sessionStartedAt === 'number' &&
+          Number.isFinite(sessionStartedAt) &&
+          sessionStartedAt > 0
+            ? sessionStartedAt
+            : tenMinWindowStart;
+        const failWindowStart = Math.min(tenMinWindowStart, sessionWindowStart);
+        const failedKeySet = new Set(
+          (Array.isArray(failedWordKeys) ? failedWordKeys : [])
+            .map((k: any) => String(k || '').trim())
+            .filter(Boolean)
+        );
         const seenWordKeys = new Set<string>();
         (Array.isArray(wordsPracticed) ? wordsPracticed : []).forEach((w: any) => {
           if (!w) return;
-          const dedupeKey = String(w.hanzi || w.id || '').trim();
+          const wordHanzi = String(w.hanzi || '').trim();
+          const wordId = String(w.id || '').trim();
+          const dedupeKey = wordHanzi || wordId;
           if (!dedupeKey || seenWordKeys.has(dedupeKey)) return;
           seenWordKeys.add(dedupeKey);
+
+          const existingSrs = getWordSrsEntry(prev.srsData, w);
+          const existingLastReviewedAt = Number(existingSrs?.lastReviewedAt || 0);
+          const failedExplicitly =
+            (wordHanzi && failedKeySet.has(wordHanzi)) || (wordId && failedKeySet.has(wordId));
+          const failedInCurrentSession =
+            Boolean(existingSrs) &&
+            existingSrs.consecutiveCorrect === 0 &&
+            existingLastReviewedAt > 0 &&
+            existingLastReviewedAt >= failWindowStart;
+
+          // Never grant mastery boost or overwrite a recent SRS fail with a pass
+          if (failedExplicitly || failedInCurrentSession) {
+            return;
+          }
+
           const curLv = getWordMasteryLevel(nextMastery, w);
           const nextLv = Math.max(0, Math.min(10, curLv + masteryStep));
           if (w.id) nextMastery[w.id] = nextLv;
           if (w.hanzi) nextMastery[w.hanzi] = nextLv;
-          const enrichedForSrs =
-            typeof w.srsMultiplier === 'number'
-              ? w
-              : enrichWordEntry(w, prev.wordLinguisticOverrides, prev.wordPriorityOverrides);
-          writeWordSrsEntry(
-            nextSrsData,
-            enrichedForSrs,
-            nextLv,
-            reviewTimestamp,
-            enrichedForSrs.srsMultiplier,
-            'pass'
-          );
+
+          // Avoid double-boosting easeFactor/consecutiveCorrect when per-step telemetry already wrote SRS in this session
+          const srsAlreadyWrittenThisSession =
+            existingLastReviewedAt > 0 && existingLastReviewedAt >= sessionWindowStart;
+          if (!srsAlreadyWrittenThisSession) {
+            const enrichedForSrs =
+              typeof w.srsMultiplier === 'number'
+                ? w
+                : enrichWordEntry(w, prev.wordLinguisticOverrides, prev.wordPriorityOverrides);
+            writeWordSrsEntry(
+              nextSrsData,
+              enrichedForSrs,
+              nextLv,
+              reviewTimestamp,
+              enrichedForSrs.srsMultiplier,
+              'pass'
+            );
+          }
         });
 
         const prevLessonProg = prev.lessonProgress?.[lessonKey] || {
@@ -980,14 +1021,109 @@ export default function App() {
     });
   }, []);
 
-  const handleSetDailyGoalXp = useCallback(
-    (newTarget: number) => {
-      const cleanTarget = Math.max(10, Number(newTarget) || 30);
-      setProgress((prev: any) => ({
-        ...prev,
-        dailyGoalXp: cleanTarget
-      }));
-      triggerToast(`Daily XP Goal: ${cleanTarget} XP`, 'Saved your new daily study target.');
+  const handleExportAllData = useCallback(() => {
+    const payload = {
+      exportedAt: new Date().toISOString(),
+      progress: {
+        ...progress,
+        srsData: progress.srsData || {},
+        wordLinguisticOverrides: progress.wordLinguisticOverrides || {},
+        wordPriorityOverrides: progress.wordPriorityOverrides || {}
+      },
+      courses,
+      customDecks
+    };
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: 'application/json'
+    });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `hanziapp-backup-${getLocalIsoDate()}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+    triggerToast('Backup Exported!', 'Saved JSON snapshot of courses, decks & mastery.');
+  }, [progress, courses, customDecks, triggerToast]);
+
+  const handleImportBackupData = useCallback(
+    (parsedBackup: any) => {
+      if (
+        !parsedBackup ||
+        typeof parsedBackup !== 'object' ||
+        Array.isArray(parsedBackup) ||
+        (!parsedBackup.progress && !parsedBackup.courses && !parsedBackup.customDecks)
+      ) {
+        triggerToast('Invalid Backup', 'Backup file structure was not recognized.');
+        return;
+      }
+
+      if (parsedBackup.progress && typeof parsedBackup.progress === 'object') {
+        const {
+          dailyQuests: _legacyDq,
+          achievements: _legacyAch,
+          unlockedAchievements: _legacyUnlockedAch,
+          ...cleanBackupProgress
+        } = parsedBackup.progress;
+        const migratedLessonProgress = migrateLessonProgressNodeLevels(
+          cleanBackupProgress.lessonProgress || {},
+          cleanBackupProgress.completedStages || []
+        );
+        const restoredSlow = Boolean(
+          cleanBackupProgress.isSlowMode ||
+            cleanBackupProgress.preferredSpeed === SLOW_SPEECH_RATE ||
+            cleanBackupProgress.preferredSpeed === 0.5
+        );
+        const restoredMuted = Boolean(cleanBackupProgress.soundMuted);
+        setGlobalIsSlowMode(restoredSlow);
+        soundFX.setMuted(restoredMuted);
+
+        setProgress((prev: any) => ({
+          ...prev,
+          ...cleanBackupProgress,
+          isSlowMode: restoredSlow,
+          preferredSpeed: restoredSlow ? SLOW_SPEECH_RATE : NORMAL_SPEECH_RATE,
+          soundMuted: restoredMuted,
+          lessonProgress: migratedLessonProgress,
+          wordLinguisticOverrides:
+            cleanBackupProgress.wordLinguisticOverrides &&
+            typeof cleanBackupProgress.wordLinguisticOverrides === 'object'
+              ? { ...cleanBackupProgress.wordLinguisticOverrides }
+              : prev.wordLinguisticOverrides || {},
+          wordPriorityOverrides:
+            cleanBackupProgress.wordPriorityOverrides &&
+            typeof cleanBackupProgress.wordPriorityOverrides === 'object'
+              ? { ...cleanBackupProgress.wordPriorityOverrides }
+              : prev.wordPriorityOverrides || {},
+          srsData:
+            cleanBackupProgress.srsData && typeof cleanBackupProgress.srsData === 'object'
+              ? { ...cleanBackupProgress.srsData }
+              : prev.srsData || {},
+          totalStudySeconds: Math.max(
+            0,
+            Number(cleanBackupProgress.totalStudySeconds ?? prev.totalStudySeconds) || 0
+          ),
+          dailyStudySeconds:
+            cleanBackupProgress.dailyStudySeconds &&
+            typeof cleanBackupProgress.dailyStudySeconds === 'object'
+              ? {
+                  date: cleanBackupProgress.dailyStudySeconds.date || null,
+                  seconds: Math.max(0, Number(cleanBackupProgress.dailyStudySeconds.seconds) || 0)
+                }
+              : prev.dailyStudySeconds || { date: null, seconds: 0 }
+        }));
+      }
+
+      if (Array.isArray(parsedBackup.courses) && parsedBackup.courses.length > 0) {
+        setCourses(
+          sortCoursesCanonically(
+            parsedBackup.courses.map((c: any) => sortCourseLessonsNumerically(c))
+          )
+        );
+      }
+      if (Array.isArray(parsedBackup.customDecks)) {
+        setCustomDecks(parsedBackup.customDecks);
+      }
+      triggerToast('Backup Restored!', 'Courses, custom decks, and mastery levels loaded.');
     },
     [triggerToast]
   );
@@ -1215,8 +1351,11 @@ export default function App() {
   const studiedToday = progress.lastStudyDate === todayIso && rawStreak > 0;
   const streakAtRisk = progress.lastStudyDate === yesterdayIso && rawStreak > 0;
   const effectiveStreak = studiedToday || streakAtRisk ? rawStreak : 0;
-  const dailyGoalXp = Number(progress.dailyGoalXp) > 0 ? Number(progress.dailyGoalXp) : 30;
-  const todayXpEarned = progress.dailyXpDate === todayIso ? Number(progress.dailyXpEarned || 0) : 0;
+
+  const discoveredWordsCount = useMemo(
+    () => allUniqueWordsArray.filter((w: any) => isWordDiscovered(w, progress)).length,
+    [allUniqueWordsArray, progress]
+  );
 
   const srsDueCount = useMemo(() => {
     const nowMs = Date.now();
@@ -1595,7 +1734,7 @@ export default function App() {
           });
           enrichedLeeches.forEach((lw: any) => {
             if (lw?.hanzi && !openClozeByHanzi[lw.hanzi]) {
-              const single = generateSentenceForWord(enrichedUnlockedWords, lw);
+              const single = generateSentenceForWord(lw, enrichedUnlockedWords);
               if (single && single.targetWord?.hanzi) {
                 openClozeByHanzi[lw.hanzi] = single;
               }
@@ -1652,6 +1791,7 @@ export default function App() {
   const studyModesHubProps = useMemo(
     () => ({
       unlockedWordsCount,
+      discoveredWordsCount,
       srsDueCount,
       leechCount: leechWordsList.length,
       generativeReadiness,
@@ -1712,6 +1852,7 @@ export default function App() {
     }),
     [
       unlockedWordsCount,
+      discoveredWordsCount,
       srsDueCount,
       leechWordsList,
       generativeReadiness,
@@ -1782,7 +1923,7 @@ export default function App() {
               <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-[2px] bg-slate-950 border-2 border-amber-500/70">
                 <Sparkles className="w-3.5 h-3.5 text-amber-400" />
                 <span className="font-pixel-ui text-xs font-bold uppercase tracking-widest text-amber-300">
-                  HSK 1 Mandarin RPG
+                  New HSK 1–9 Mandarin RPG
                 </span>
               </div>
               <p className="font-clarity text-sm text-slate-300 max-w-xs mx-auto pt-0.5">
@@ -2377,84 +2518,8 @@ export default function App() {
                   words: targetPool
                 });
               }}
-              onExportAllData={() => {
-                const payload = {
-                  exportedAt: new Date().toISOString(),
-                  progress: {
-                    ...progress,
-                    srsData: progress.srsData || {},
-                    wordLinguisticOverrides: progress.wordLinguisticOverrides || {},
-                    wordPriorityOverrides: progress.wordPriorityOverrides || {}
-                  },
-                  courses,
-                  customDecks
-                };
-                const blob = new Blob([JSON.stringify(payload, null, 2)], {
-                  type: 'application/json'
-                });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `hanziapp-backup-${getLocalIsoDate()}.json`;
-                a.click();
-                URL.revokeObjectURL(url);
-                triggerToast('Backup Exported!', 'Saved JSON snapshot of courses, decks & mastery.');
-              }}
-              onImportBackupData={(parsedBackup: any) => {
-                if (!parsedBackup || typeof parsedBackup !== 'object') {
-                  triggerToast('Invalid Backup', 'Backup file structure was not recognized.');
-                  return;
-                }
-                if (parsedBackup.progress && typeof parsedBackup.progress === 'object') {
-                  const {
-                    dailyQuests: _legacyDq,
-                    achievements: _legacyAch,
-                    unlockedAchievements: _legacyUnlockedAch,
-                    ...cleanBackupProgress
-                  } = parsedBackup.progress;
-                  setProgress((prev: any) => ({
-                    ...prev,
-                    ...cleanBackupProgress,
-                    wordLinguisticOverrides:
-                      parsedBackup.progress.wordLinguisticOverrides &&
-                      typeof parsedBackup.progress.wordLinguisticOverrides === 'object'
-                        ? { ...parsedBackup.progress.wordLinguisticOverrides }
-                        : prev.wordLinguisticOverrides || {},
-                    wordPriorityOverrides:
-                      parsedBackup.progress.wordPriorityOverrides &&
-                      typeof parsedBackup.progress.wordPriorityOverrides === 'object'
-                        ? { ...parsedBackup.progress.wordPriorityOverrides }
-                        : prev.wordPriorityOverrides || {},
-                    srsData:
-                      parsedBackup.progress.srsData &&
-                      typeof parsedBackup.progress.srsData === 'object'
-                        ? { ...parsedBackup.progress.srsData }
-                        : prev.srsData || {},
-                    totalStudySeconds: Math.max(
-                      0,
-                      Number(parsedBackup.progress.totalStudySeconds ?? prev.totalStudySeconds) || 0
-                    ),
-                    dailyStudySeconds:
-                      parsedBackup.progress.dailyStudySeconds &&
-                      typeof parsedBackup.progress.dailyStudySeconds === 'object'
-                        ? {
-                            date: parsedBackup.progress.dailyStudySeconds.date || null,
-                            seconds: Math.max(
-                              0,
-                              Number(parsedBackup.progress.dailyStudySeconds.seconds) || 0
-                            )
-                          }
-                        : prev.dailyStudySeconds || { date: null, seconds: 0 }
-                  }));
-                }
-                if (Array.isArray(parsedBackup.courses) && parsedBackup.courses.length > 0) {
-                  setCourses(sortCoursesCanonically(parsedBackup.courses));
-                }
-                if (Array.isArray(parsedBackup.customDecks)) {
-                  setCustomDecks(parsedBackup.customDecks);
-                }
-                triggerToast('Backup Restored!', 'Courses, custom decks, and mastery levels loaded.');
-              }}
+              onExportAllData={handleExportAllData}
+              onImportBackupData={handleImportBackupData}
               onCompleteStrokeRuleDojo={(completedRule: any) => {
                 const today = getLocalIsoDate();
                 setProgress((prev: any) => {
@@ -2505,6 +2570,7 @@ export default function App() {
               courses={courses}
               customDecks={customDecks}
               currentLevel={currentLevel}
+              effectiveStreak={effectiveStreak}
               studyModesHubProps={studyModesHubProps}
               linguisticDataStatus={linguisticDataStatus}
               isSyncingData={isSyncingData}
@@ -2513,80 +2579,9 @@ export default function App() {
               getDataBaseUrl={getDataBaseUrl}
               onToggleSpeed={handleToggleSpeed}
               speakMandarin={speakMandarin}
-              onExportAllData={() => {
-                const payload = {
-                  exportedAt: new Date().toISOString(),
-                  progress: {
-                    ...progress,
-                    srsData: progress.srsData || {},
-                    wordLinguisticOverrides: progress.wordLinguisticOverrides || {},
-                    wordPriorityOverrides: progress.wordPriorityOverrides || {}
-                  },
-                  courses,
-                  customDecks
-                };
-                const blob = new Blob([JSON.stringify(payload, null, 2)], {
-                  type: 'application/json'
-                });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `hanziapp-backup-${getLocalIsoDate()}.json`;
-                a.click();
-                URL.revokeObjectURL(url);
-                triggerToast('Backup Exported!', 'Downloaded full study backup JSON.');
-              }}
-              onImportBackupData={(parsedBackup: any) => {
-                if (parsedBackup?.progress && typeof parsedBackup.progress === 'object') {
-                  const {
-                    dailyQuests: _legacyDq,
-                    achievements: _legacyAch,
-                    unlockedAchievements: _legacyUnlockedAch,
-                    ...cleanBackupProgress
-                  } = parsedBackup.progress;
-                  setProgress((prev: any) => ({
-                    ...prev,
-                    ...cleanBackupProgress,
-                    wordLinguisticOverrides:
-                      parsedBackup.progress.wordLinguisticOverrides &&
-                      typeof parsedBackup.progress.wordLinguisticOverrides === 'object'
-                        ? { ...parsedBackup.progress.wordLinguisticOverrides }
-                        : prev.wordLinguisticOverrides || {},
-                    wordPriorityOverrides:
-                      parsedBackup.progress.wordPriorityOverrides &&
-                      typeof parsedBackup.progress.wordPriorityOverrides === 'object'
-                        ? { ...parsedBackup.progress.wordPriorityOverrides }
-                        : prev.wordPriorityOverrides || {},
-                    srsData:
-                      parsedBackup.progress.srsData &&
-                      typeof parsedBackup.progress.srsData === 'object'
-                        ? { ...parsedBackup.progress.srsData }
-                        : prev.srsData || {},
-                    totalStudySeconds: Math.max(
-                      0,
-                      Number(parsedBackup.progress.totalStudySeconds ?? prev.totalStudySeconds) || 0
-                    ),
-                    dailyStudySeconds:
-                      parsedBackup.progress.dailyStudySeconds &&
-                      typeof parsedBackup.progress.dailyStudySeconds === 'object'
-                        ? {
-                            date: parsedBackup.progress.dailyStudySeconds.date || null,
-                            seconds: Math.max(
-                              0,
-                              Number(parsedBackup.progress.dailyStudySeconds.seconds) || 0
-                            )
-                          }
-                        : prev.dailyStudySeconds || { date: null, seconds: 0 }
-                  }));
-                }
-                if (Array.isArray(parsedBackup?.courses) && parsedBackup.courses.length > 0) {
-                  setCourses(sortCoursesCanonically(parsedBackup.courses));
-                }
-                if (Array.isArray(parsedBackup?.customDecks)) {
-                  setCustomDecks(parsedBackup.customDecks);
-                }
-                triggerToast('Backup Restored!', 'All progress and courses restored.');
-              }}
+              onExportAllData={handleExportAllData}
+              onImportBackupData={handleImportBackupData}
+              triggerToast={triggerToast}
               confirmResetOpen={confirmResetOpen}
               setConfirmResetOpen={setConfirmResetOpen}
               onConfirmReset={() => {
@@ -2663,7 +2658,8 @@ export default function App() {
                   activeLessonIndex,
                   [],
                   0,
-                  unlockedWords
+                  enrichedUnlockedWords,
+                  generativeReadiness
                 );
                 setActiveModal({
                   type: 'mixed_session',
@@ -2753,13 +2749,14 @@ export default function App() {
             onRecordSkillEvent={handleRecordSkillEvent}
             onRecordStudySeconds={handleRecordStudySeconds}
             onClose={() => setActiveModal(null)}
-            onComplete={(bonusXp = 0, maxCombo = 1) =>
+            onComplete={(bonusXp = 0, maxCombo = 1, failedWordKeys: string[] = []) =>
               handleCompleteStageSession({
                 stageId: activeModal.stageId,
                 wordsPracticed: activeModal.words || activeWords,
                 xpEarned: 25 + bonusXp,
                 maxCombo,
-                completedModeKeys: ['writing']
+                completedModeKeys: ['writing'],
+                failedWordKeys
               })
             }
           />
@@ -2779,7 +2776,7 @@ export default function App() {
             onRecordSkillEvent={handleRecordSkillEvent}
             onRecordStudySeconds={handleRecordStudySeconds}
             onClose={() => setActiveModal(null)}
-            onComplete={(bonusXp = 0, maxCombo = 1) => {
+            onComplete={(bonusXp = 0, maxCombo = 1, failedWordKeys: string[] = []) => {
               const focusMode = activeModal.focusMode || 'combined';
               const audioModeKeys = [
                 focusMode === 'dictation' || focusMode === 'combined' ? 'dictation' : null,
@@ -2790,7 +2787,8 @@ export default function App() {
                 wordsPracticed: activeModal.words || activeWords,
                 xpEarned: 25 + bonusXp,
                 maxCombo,
-                completedModeKeys: audioModeKeys
+                completedModeKeys: audioModeKeys,
+                failedWordKeys
               });
             }}
           />
@@ -2848,16 +2846,22 @@ export default function App() {
             onRecordSkillEvent={handleRecordSkillEvent}
             onRecordStudySeconds={handleRecordStudySeconds}
             onClose={() => setActiveModal(null)}
-            onComplete={(wordsPracticed: any[], bonusXp = 0, maxCombo = 1) => {
+            onComplete={(
+              wordsPracticed: any[],
+              bonusXp = 0,
+              maxCombo = 1,
+              failedWordKeys: string[] = []
+            ) => {
               const modalitiesInQueue = Array.from(
                 new Set((activeModal.sessionConfig?.queue || []).map((q: any) => q.modality))
               );
               handleCompleteStageSession({
                 stageId: activeModal.stageId,
-                wordsPracticed: wordsPracticed || activeWords,
+                wordsPracticed: Array.isArray(wordsPracticed) ? wordsPracticed : [],
                 xpEarned: (activeModal.sessionConfig?.xpReward || 25) + bonusXp,
                 maxCombo,
-                completedModeKeys: modalitiesInQueue.filter(Boolean)
+                completedModeKeys: modalitiesInQueue.filter(Boolean),
+                failedWordKeys
               });
             }}
           />
@@ -2872,8 +2876,7 @@ export default function App() {
             onComplete={(matchedWords: any[], scoreXp = 25, maxCombo = 1) =>
               handleCompleteStageSession({
                 stageId: null,
-                wordsPracticed:
-                  matchedWords && matchedWords.length > 0 ? matchedWords : activeWords,
+                wordsPracticed: Array.isArray(matchedWords) ? matchedWords : [],
                 xpEarned: scoreXp,
                 maxCombo,
                 completedModeKeys: ['blitz_match']
@@ -2892,14 +2895,19 @@ export default function App() {
             onRecordSkillEvent={handleRecordSkillEvent}
             onRecordStudySeconds={handleRecordStudySeconds}
             onClose={() => setActiveModal(null)}
-            onComplete={(practicedWords: any[], totalXp = 25, maxCombo = 1) =>
+            onComplete={(
+              practicedWords: any[],
+              totalXp = 25,
+              maxCombo = 1,
+              failedWordKeys: string[] = []
+            ) =>
               handleCompleteStageSession({
                 stageId: null,
-                wordsPracticed:
-                  practicedWords && practicedWords.length > 0 ? practicedWords : activeWords,
+                wordsPracticed: Array.isArray(practicedWords) ? practicedWords : [],
                 xpEarned: totalXp,
                 maxCombo,
-                completedModeKeys: ['tone_sandhi_drill']
+                completedModeKeys: ['tone_sandhi_drill'],
+                failedWordKeys
               })
             }
           />
@@ -2915,14 +2923,19 @@ export default function App() {
             onRecordSkillEvent={handleRecordSkillEvent}
             onRecordStudySeconds={handleRecordStudySeconds}
             onClose={() => setActiveModal(null)}
-            onComplete={(practicedWords: any[], totalXp = 40, totalCorrect = 12) =>
+            onComplete={(
+              practicedWords: any[],
+              totalXp = 40,
+              totalCorrect = 12,
+              failedWordKeys: string[] = []
+            ) =>
               handleCompleteStageSession({
                 stageId: null,
-                wordsPracticed:
-                  practicedWords && practicedWords.length > 0 ? practicedWords : activeWords,
+                wordsPracticed: Array.isArray(practicedWords) ? practicedWords : [],
                 xpEarned: totalXp,
                 maxCombo: totalCorrect,
-                completedModeKeys: ['hsk_mock_exam']
+                completedModeKeys: ['hsk_mock_exam'],
+                failedWordKeys
               })
             }
           />
@@ -2975,8 +2988,10 @@ export default function App() {
           enrichedUnlockedWords={enrichedUnlockedWords}
           activeLessonWords={activeWords}
           srsSchedule={progress.srsData || (progress as any).srsSchedule || {}}
+          progress={progress}
           speechRate={NORMAL_SPEECH_RATE}
           selectedVoiceURI={getGlobalPreferredVoiceURI()}
+          onRecordStudySeconds={handleRecordStudySeconds}
         />
       </div>
     </div>

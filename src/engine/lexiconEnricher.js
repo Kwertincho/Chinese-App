@@ -638,6 +638,15 @@ const TIME_SUFFIXES = ['月', '年', '日', '号', '点', '分'];
 const FOOD_SUFFIXES = ['菜', '饭', '面', '果'];
 const DRINK_SUFFIXES = ['茶', '水', '奶'];
 const HUMAN_ROLE_SUFFIXES = ['师', '生', '员', '长'];
+const AMBIGUOUS_POS_SUFFIXES = new Set(['家', '点', '分', '号', '面', '果', '生', '长']);
+const NON_COUNTRY_GUO_WORDS = new Set([
+  '全国', '外国', '国内', '国外', '国家', '国际', '出国', '回国', '王国', '帝国', '祖国', '我国', '本国', '母国'
+]);
+const NON_LANGUAGE_YU_WEN_WORDS = new Set([
+  '课文', '作文', '口语', '词语', '成语', '书面语', '母语', '外语', '语言', '文字', '文化', '文明',
+  '文学', '文章', '文件', '文本', '论文', '新闻', '语文', '语气', '语法', '语义', '标语', '谚语',
+  '俗语', '术语', '谜语', '短语', '话语', '手语', '双语'
+]);
 const CLAUSE_PUNCT_REGEX = /[，。！？、；：“”‘’,!?;:]/;
 
 /**
@@ -726,42 +735,55 @@ export function inferMorphologicalLinguistics(rawWord = {}) {
   // Rule 2: Morphological suffix & prefix inference
   if (hanzi.length > 0) {
     const lastChar = hanzi[hanzi.length - 1];
+    const hasResolvedIctclasPos = Boolean(ictclasPos);
+    const isAmbiguousSuffix = AMBIGUOUS_POS_SUFFIXES.has(lastChar);
+    const canOverridePos = !hasResolvedIctclasPos || (!isAmbiguousSuffix && ictclasPos === 'noun');
 
-    if (lastChar === '国') {
-      pos = 'place';
+    if (lastChar === '国' && hanzi.length >= 2 && !NON_COUNTRY_GUO_WORDS.has(hanzi) && ictclasPos !== 'verb') {
+      if (canOverridePos) pos = 'place';
       pushUnique(features, 'place');
       pushUnique(features, 'country');
-    } else if (lastChar === '人') {
-      pos = 'noun';
+    } else if (lastChar === '人' && ictclasPos !== 'verb') {
+      if (canOverridePos) pos = 'noun';
       pushUnique(features, 'human');
       pushUnique(classifiers, '个');
       pushUnique(classifiers, '位');
-    } else if (lastChar === '语' || lastChar === '文') {
-      pos = 'noun';
+    } else if ((lastChar === '语' || lastChar === '文') && hanzi.length >= 2 && !NON_LANGUAGE_YU_WEN_WORDS.has(hanzi) && ictclasPos !== 'verb') {
+      if (canOverridePos) pos = 'noun';
       pushUnique(features, 'language');
       pushUnique(features, 'learnable');
     } else if (PLACE_SUFFIXES.includes(lastChar)) {
-      pos = 'place';
-      pushUnique(features, 'place');
-      pushUnique(features, 'indoor');
-      pushUnique(classifiers, '家');
+      if (canOverridePos) {
+        pos = 'place';
+        pushUnique(features, 'place');
+        pushUnique(features, 'indoor');
+        pushUnique(classifiers, '家');
+      }
     } else if (TIME_SUFFIXES.includes(lastChar) || hanzi.startsWith('星期')) {
-      pos = 'time';
-      pushUnique(features, 'time');
+      if (!hasResolvedIctclasPos || (!isAmbiguousSuffix && ictclasPos === 'noun') || hanzi.startsWith('星期')) {
+        pos = 'time';
+        pushUnique(features, 'time');
+      }
     } else if (FOOD_SUFFIXES.includes(lastChar)) {
-      pos = 'noun';
-      pushUnique(features, 'food');
-      pushUnique(features, 'buyable');
+      if (canOverridePos) {
+        pos = 'noun';
+        pushUnique(features, 'food');
+        pushUnique(features, 'buyable');
+      }
     } else if (DRINK_SUFFIXES.includes(lastChar)) {
-      pos = 'noun';
-      pushUnique(features, 'drink');
-      pushUnique(features, 'buyable');
-      pushUnique(classifiers, '杯');
+      if (canOverridePos) {
+        pos = 'noun';
+        pushUnique(features, 'drink');
+        pushUnique(features, 'buyable');
+        pushUnique(classifiers, '杯');
+      }
     } else if (HUMAN_ROLE_SUFFIXES.includes(lastChar)) {
-      pos = 'noun';
-      pushUnique(features, 'human');
-      pushUnique(classifiers, '位');
-      pushUnique(classifiers, '个');
+      if (canOverridePos) {
+        pos = 'noun';
+        pushUnique(features, 'human');
+        pushUnique(classifiers, '位');
+        pushUnique(classifiers, '个');
+      }
     }
   }
 
@@ -858,18 +880,24 @@ export function computeWordPriorityMeta(enrichedWord, userPriorityOverride = nul
 
   const isCoreException = CORE_PRIORITY_EXCEPTIONS.has(hanzi);
 
-  // 1. Check 'niche' (foreign countries, nationalities, non-core languages, or very rare freqRank > 4500)
+  // 1. Check 'niche' strictly for foreign countries/nationalities/languages (excluding verbs & core exceptions) or very rare freqRank > 4500
   if (!isCoreException) {
-    const hasNicheFeature = features.includes('country') || features.includes('language');
-    const hasNicheSuffix =
+    const isVerb = pos === 'verb' || isSeparable;
+    const isNonNicheUtilityWord =
+      NON_COUNTRY_GUO_WORDS.has(hanzi) || NON_LANGUAGE_YU_WEN_WORDS.has(hanzi);
+    const hasNicheFeature =
+      !isVerb &&
+      !isNonNicheUtilityWord &&
+      (features.includes('country') || features.includes('language'));
+    const hasNationalitySuffix =
+      !isVerb &&
+      !isNonNicheUtilityWord &&
+      !(freqRank !== null && freqRank <= 1500) &&
       hanzi.length >= 2 &&
-      (hanzi.endsWith('国人') ||
-        hanzi.endsWith('国') ||
-        hanzi.endsWith('语') ||
-        hanzi.endsWith('文'));
+      hanzi.endsWith('国人');
     const isLowFreqNiche = freqRank !== null && freqRank > 4500;
 
-    if (hasNicheFeature || hasNicheSuffix || isLowFreqNiche) {
+    if (hasNicheFeature || hasNationalitySuffix || isLowFreqNiche) {
       return { ...PRIORITY_TIER_PRESETS.niche };
     }
   }
@@ -918,57 +946,91 @@ export function enrichWordEntry(rawWord, userOverrides = {}, priorityOverrides =
     ictclasPos: staticEntry?.ictclasPos || safeWord.ictclasPos || safeWord.p
   });
 
-  // Strict priority order: userOverrides > staticLexicon > coreOntology > morphological inference
-  const tiers = [overrideEntry, staticEntry, coreEntry, inferred].filter(Boolean);
+  // Semantic precedence: userOverrides > coreOntology > staticLexicon > morphological inference
+  // (ensures curated CORE_SEMANTIC_ONTOLOGY is never degraded by autogenerated hsk_lexicon.json)
+  const semanticTiers = [overrideEntry, coreEntry, staticEntry, inferred].filter(Boolean);
+  // Catalog/lexical metadata precedence: userOverrides > staticLexicon > coreOntology > morphological inference
+  const catalogTiers = [overrideEntry, staticEntry, coreEntry, inferred].filter(Boolean);
 
-  const pickFirst = (selector, fallback = null) => {
-    for (let i = 0; i < tiers.length; i++) {
-      const val = selector(tiers[i]);
+  const pickFirstFrom = (tierList, selector, fallback = null) => {
+    for (let i = 0; i < tierList.length; i++) {
+      const val = selector(tierList[i]);
       if (val !== undefined && val !== null && val !== '') return val;
     }
     return fallback;
   };
 
-  const pickFirstNonEmptyArray = (selector) => {
-    for (let i = 0; i < tiers.length; i++) {
-      const val = selector(tiers[i]);
+  const pickFirstNonEmptyArrayFrom = (tierList, selector) => {
+    for (let i = 0; i < tierList.length; i++) {
+      const val = selector(tierList[i]);
       if (Array.isArray(val) && val.length > 0) return [...val];
     }
     return [];
   };
 
-  const pos = pickFirst((t) => t.pos, 'noun');
-  const features = pickFirstNonEmptyArray((t) => t.features);
-  const valence = pickFirst((t) => (t.valence && typeof t.valence === 'object' ? t.valence : null), null);
-  const classifiers = pickFirstNonEmptyArray((t) => t.classifiers);
+  const pos = pickFirstFrom(semanticTiers, (t) => t.pos, 'noun');
+
+  let features;
+  if (Array.isArray(overrideEntry?.features) && overrideEntry.features.length > 0) {
+    features = [...overrideEntry.features];
+  } else {
+    const mergedFeatures = [];
+    const pushUniqueFeature = (f) => {
+      if (f && !mergedFeatures.includes(f)) mergedFeatures.push(f);
+    };
+    if (Array.isArray(coreEntry?.features)) coreEntry.features.forEach(pushUniqueFeature);
+    if (Array.isArray(staticEntry?.features)) staticEntry.features.forEach(pushUniqueFeature);
+    if (mergedFeatures.length === 0 && Array.isArray(inferred?.features)) {
+      inferred.features.forEach(pushUniqueFeature);
+    }
+    features = mergedFeatures;
+  }
+
+  const valence = pickFirstFrom(
+    semanticTiers,
+    (t) => (t.valence && typeof t.valence === 'object' ? t.valence : null),
+    null
+  );
+  const classifiers = pickFirstNonEmptyArrayFrom(catalogTiers, (t) => t.classifiers);
   const isSeparable = Boolean(
-    pickFirst(
+    pickFirstFrom(
+      semanticTiers,
       (t) => (typeof t.isSeparable === 'boolean' ? t.isSeparable : null),
       false
     )
   );
-  const sepParts = pickFirst(
+  const sepParts = pickFirstFrom(
+    semanticTiers,
     (t) => (Array.isArray(t.sepParts) && t.sepParts.length === 2 ? [...t.sepParts] : null),
     null
   );
-  const enGloss = pickFirst(
+  const resolvedMeaning =
+    safeWord.meaning ||
+    safeWord.english ||
+    overrideEntry?.meaning ||
+    staticEntry?.meaning ||
+    coreEntry?.meaning ||
+    '';
+  const enGloss = pickFirstFrom(
+    semanticTiers,
     (t) => (t.enGloss && typeof t.enGloss === 'object' ? t.enGloss : null),
-    inferEnGloss(pos, safeWord.meaning || safeWord.english || staticEntry?.meaning || '')
+    inferEnGloss(pos, resolvedMeaning)
   );
 
-  const hskLevels = pickFirstNonEmptyArray((t) => t.hskLevels);
-  const freqRank = pickFirst(
+  const hskLevels = pickFirstNonEmptyArrayFrom(catalogTiers, (t) => t.hskLevels);
+  const freqRank = pickFirstFrom(
+    catalogTiers,
     (t) => (typeof t.freqRank === 'number' && Number.isFinite(t.freqRank) ? t.freqRank : null),
     null
   );
-  const radical = pickFirst((t) => t.radical, null);
+  const radical = pickFirstFrom(catalogTiers, (t) => t.radical, null);
 
   const enrichmentSource = overrideEntry
     ? 'user_override'
-    : staticEntry
-    ? 'static_lexicon'
     : coreEntry
     ? 'core_ontology'
+    : staticEntry
+    ? 'static_lexicon'
     : 'morphological_inference';
 
   const manualPriorityOverride =
@@ -1010,9 +1072,9 @@ export function enrichWordEntry(rawWord, userOverrides = {}, priorityOverrides =
   return {
     ...safeWord,
     hanzi: hanzi || safeWord.hanzi || '',
-    pinyin: safeWord.pinyin || staticEntry?.pinyin || '',
-    pinyinNum: safeWord.pinyinNum || staticEntry?.pinyinNum || '',
-    meaning: safeWord.meaning || safeWord.english || staticEntry?.meaning || '',
+    pinyin: safeWord.pinyin || overrideEntry?.pinyin || staticEntry?.pinyin || coreEntry?.pinyin || '',
+    pinyinNum: safeWord.pinyinNum || overrideEntry?.pinyinNum || staticEntry?.pinyinNum || '',
+    meaning: resolvedMeaning,
     pos,
     features,
     valence,

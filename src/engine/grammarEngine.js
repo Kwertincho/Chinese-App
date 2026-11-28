@@ -381,17 +381,52 @@ export function generateGenerativeBatch(
   const seenHanzi = new Set();
   const usedSchemaIds = [];
 
-  // Hybrid Phase 5A Blending: mine ~50% i+0 natural corpus sentences when available
+  // Hybrid Phase 5A Blending: mine ~50% i+0 natural corpus sentences rotating across focusList
   const corpusTargetCount = Math.floor(count / 2);
   const backupCorpusItems = [];
   if (corpusTargetCount > 0) {
     try {
-      const minedList = mineCorpusSentences(pool, {
-        mode: 'i0_only',
-        targetWord: focusList[0] || null,
-        srsDueHanziSet: srsSet,
-        limit: count
-      });
+      const shuffledFocus = weightedShuffleWords(focusList);
+      const focusTargets =
+        shuffledFocus.length > 0
+          ? shuffledFocus.slice(0, Math.min(shuffledFocus.length, Math.max(2, corpusTargetCount)))
+          : [null];
+      const minedList = [];
+      const seenMinedHanzi = new Set();
+
+      const perTargetLimit = Math.max(2, Math.ceil(count / focusTargets.length));
+      for (let fIdx = 0; fIdx < focusTargets.length && minedList.length < count * 2; fIdx++) {
+        const partial = mineCorpusSentences(pool, {
+          mode: 'i0_only',
+          targetWord: focusTargets[fIdx] || null,
+          srsDueHanziSet: srsSet,
+          limit: perTargetLimit
+        });
+        for (let p = 0; p < partial.length; p++) {
+          const m = partial[p];
+          if (m && m.hanzi && !seenMinedHanzi.has(m.hanzi)) {
+            seenMinedHanzi.add(m.hanzi);
+            minedList.push(m);
+          }
+        }
+      }
+
+      if (minedList.length < count) {
+        const extraMined = mineCorpusSentences(pool, {
+          mode: 'i0_only',
+          targetWord: null,
+          srsDueHanziSet: srsSet,
+          limit: count
+        });
+        for (let p = 0; p < extraMined.length; p++) {
+          const m = extraMined[p];
+          if (m && m.hanzi && !seenMinedHanzi.has(m.hanzi)) {
+            seenMinedHanzi.add(m.hanzi);
+            minedList.push(m);
+          }
+        }
+      }
+
       for (let i = 0; i < minedList.length; i++) {
         const mined = minedList[i];
         if (!mined || !mined.hanzi || seenHanzi.has(mined.hanzi)) continue;
@@ -496,18 +531,6 @@ const SYNTAX_TRANSFORM_PAIRS = [
     instruction: 'Turn the core action into an A-not-A question (V + 不 + V, no 吗).'
   },
   {
-    transformType: 'to_past_completed',
-    baseSchemaId: 'time_action',
-    targetSchemaId: 'completed_le_obj',
-    instruction: 'Rewrite this as a completed past action with quantity using 了 (le).'
-  },
-  {
-    transformType: 'to_past_completed',
-    baseSchemaId: 'past_neg_mei',
-    targetSchemaId: 'completed_le_obj',
-    instruction: 'Rewrite this as an affirmative completed past action using 了 (le).'
-  },
-  {
     transformType: 'to_past_negative',
     baseSchemaId: 'completed_le_obj',
     targetSchemaId: 'past_neg_mei',
@@ -584,6 +607,20 @@ export function generateSyntaxTransformItem(enrichedUnlockedWords = [], focusWor
         if (women) sharedSlots.subject = women;
       }
 
+      // For time_action -> a_not_a_verb, restrict time slot to non-past so present V不V matches naturally
+      if (pair.baseSchemaId === 'time_action' && pair.targetSchemaId === 'a_not_a_verb') {
+        const nonPastTime = shuffleCopy(
+          pool.filter(
+            (w) =>
+              getWordPos(w) === 'time' &&
+              !hasFeature(w, 'time_past') &&
+              hasAnyFeature(w, ['time_present', 'time_future', 'part_of_day', 'weekday', 'habitual'])
+          )
+        )[0];
+        if (!nonPastTime) continue;
+        sharedSlots.time = nonPastTime;
+      }
+
       const baseSlots = findSlotAssignment(baseSchema, pool, poolMap, {
         fixedSlots: sharedSlots
       });
@@ -622,6 +659,7 @@ function buildErrorItem({
   errorType,
   brokenTokens,
   errorTokenIndex,
+  errorTokenIndices = null,
   correctedSentence,
   fixOptions,
   explanation
@@ -629,12 +667,17 @@ function buildErrorItem({
   const punct = correctedSentence.hanzi.slice(-1).match(/[。！？]/)
     ? correctedSentence.hanzi.slice(-1)
     : '。';
+  const normalizedErrorIndices =
+    Array.isArray(errorTokenIndices) && errorTokenIndices.length > 0
+      ? Array.from(new Set([errorTokenIndex, ...errorTokenIndices]))
+      : [errorTokenIndex];
   return {
     id: `err_${errorType}_${Date.now()}_${Math.floor(Math.random() * 1000)}`,
     errorType,
     brokenTokens,
     brokenHanzi: `${brokenTokens.map((t) => t.hanzi).join('')}${punct}`,
     errorTokenIndex,
+    errorTokenIndices: normalizedErrorIndices,
     correctedTokens: correctedSentence.tokens,
     correctedHanzi: correctedSentence.hanzi,
     correctedPinyin: correctedSentence.pinyin,
@@ -663,12 +706,14 @@ export function generateErrorSpotterItem(enrichedUnlockedWords = [], focusWord =
       const slots = findSlotAssignment(schema, pool, poolMap, { targetWord: enrichedFocus });
       if (!slots) return null;
       const correct = finalizeGeneratedSentence(schema, slots, poolMap, enrichedFocus);
+      if (!correct) return null;
       const [tSubj, tZai, tPlace, tVerb, tObj] = correct.tokens;
       const brokenTokens = [tSubj, tVerb, tObj, tZai, tPlace];
       return buildErrorItem({
         errorType: 'place_after_verb',
         brokenTokens,
         errorTokenIndex: 3,
+        errorTokenIndices: [3, 4],
         correctedSentence: correct,
         fixOptions: [
           { id: 'fix_ok', text: `Move 在${tPlace.hanzi} BEFORE ${tVerb.hanzi}${tObj.hanzi}`, isCorrect: true },
@@ -688,6 +733,7 @@ export function generateErrorSpotterItem(enrichedUnlockedWords = [], focusWord =
       const slots = findSlotAssignment(schema, pool, poolMap, { targetWord: enrichedFocus });
       if (!slots) return null;
       const correct = finalizeGeneratedSentence(schema, slots, poolMap, enrichedFocus);
+      if (!correct) return null;
       const [tSubj, , tNoun] = correct.tokens;
       const brokenTokens = [
         tSubj,
@@ -699,6 +745,7 @@ export function generateErrorSpotterItem(enrichedUnlockedWords = [], focusWord =
         errorType: 'bu_with_you',
         brokenTokens,
         errorTokenIndex: 1,
+        errorTokenIndices: [1],
         correctedSentence: correct,
         fixOptions: [
           { id: 'fix_ok', text: 'Replace 不 with 没 (没有)', isCorrect: true },
@@ -717,6 +764,7 @@ export function generateErrorSpotterItem(enrichedUnlockedWords = [], focusWord =
       const slots = findSlotAssignment(schema, pool, poolMap, { targetWord: enrichedFocus });
       if (!slots) return null;
       const correct = finalizeGeneratedSentence(schema, slots, poolMap, enrichedFocus);
+      if (!correct) return null;
       const brokenTokens = correct.tokens.map((t, idx) =>
         idx === 2 ? { ...t, id: 'err_bu_past', hanzi: '不', pinyin: bu.pinyin || 'bù', sourceWord: bu } : t
       );
@@ -724,6 +772,7 @@ export function generateErrorSpotterItem(enrichedUnlockedWords = [], focusWord =
         errorType: 'bu_with_past',
         brokenTokens,
         errorTokenIndex: 2,
+        errorTokenIndices: [2],
         correctedSentence: correct,
         fixOptions: [
           { id: 'fix_ok', text: 'Replace 不 with 没 for past negation', isCorrect: true },
@@ -746,6 +795,7 @@ export function generateErrorSpotterItem(enrichedUnlockedWords = [], focusWord =
       });
       if (!slots) return null;
       const correct = finalizeGeneratedSentence(schema, slots, poolMap, enrichedFocus);
+      if (!correct) return null;
       const brokenTokens = correct.tokens.map((t, idx) =>
         idx === 2 ? { ...t, id: 'err_er', hanzi: '二', pinyin: er.pinyin || 'èr', sourceWord: er } : t
       );
@@ -753,6 +803,7 @@ export function generateErrorSpotterItem(enrichedUnlockedWords = [], focusWord =
         errorType: 'er_before_classifier',
         brokenTokens,
         errorTokenIndex: 2,
+        errorTokenIndices: [2],
         correctedSentence: correct,
         fixOptions: [
           { id: 'fix_ok', text: `Replace 二 with 两 before ${slots.classifier.hanzi}`, isCorrect: true },
@@ -768,7 +819,7 @@ export function generateErrorSpotterItem(enrichedUnlockedWords = [], focusWord =
       const schema = SCHEMA_BY_ID.get('you_possession');
       const slots = findSlotAssignment(schema, pool, poolMap, { targetWord: enrichedFocus });
       if (!slots) return null;
-      const wrongCl = pool.find(
+      const wrongCl = shuffleCopy(pool).find(
         (w) =>
           getWordPos(w) === 'classifier' &&
           w.hanzi !== slots.classifier.hanzi &&
@@ -777,6 +828,7 @@ export function generateErrorSpotterItem(enrichedUnlockedWords = [], focusWord =
       );
       if (!wrongCl) return null;
       const correct = finalizeGeneratedSentence(schema, slots, poolMap, enrichedFocus);
+      if (!correct) return null;
       const brokenTokens = correct.tokens.map((t, idx) =>
         idx === 3
           ? { ...t, id: `err_cl_${wrongCl.hanzi}`, hanzi: wrongCl.hanzi, pinyin: wrongCl.pinyin || '', sourceWord: wrongCl }
@@ -786,6 +838,7 @@ export function generateErrorSpotterItem(enrichedUnlockedWords = [], focusWord =
         errorType: 'wrong_classifier',
         brokenTokens,
         errorTokenIndex: 3,
+        errorTokenIndices: [3],
         correctedSentence: correct,
         fixOptions: [
           { id: 'fix_ok', text: `Replace ${wrongCl.hanzi} with ${slots.classifier.hanzi}`, isCorrect: true },
@@ -802,12 +855,14 @@ export function generateErrorSpotterItem(enrichedUnlockedWords = [], focusWord =
       const slots = findSlotAssignment(schema, pool, poolMap, { targetWord: enrichedFocus });
       if (!slots) return null;
       const correct = finalizeGeneratedSentence(schema, slots, poolMap, enrichedFocus);
+      if (!correct) return null;
       const [tSubj, tDou, tVerb, tObj] = correct.tokens;
       const brokenTokens = [tDou, tSubj, tVerb, tObj];
       return buildErrorItem({
         errorType: 'misplaced_adverb_ye_dou',
         brokenTokens,
         errorTokenIndex: 0,
+        errorTokenIndices: [0],
         correctedSentence: correct,
         fixOptions: [
           { id: 'fix_ok', text: `Move 都 AFTER ${tSubj.hanzi} (before ${tVerb.hanzi})`, isCorrect: true },
@@ -824,12 +879,14 @@ export function generateErrorSpotterItem(enrichedUnlockedWords = [], focusWord =
       const slots = findSlotAssignment(schema, pool, poolMap, { targetWord: enrichedFocus });
       if (!slots) return null;
       const correct = finalizeGeneratedSentence(schema, slots, poolMap, enrichedFocus);
+      if (!correct) return null;
       const [tSubj, tV1, tMod, tV2] = correct.tokens;
       const brokenTokens = [tSubj, tV1, tV2, tMod];
       return buildErrorItem({
         errorType: 'separable_object_error',
         brokenTokens,
         errorTokenIndex: 3,
+        errorTokenIndices: [2, 3],
         correctedSentence: correct,
         fixOptions: [
           { id: 'fix_ok', text: `Insert ${tMod.hanzi} INSIDE ${tV1.hanzi} + ${tV2.hanzi} (${tV1.hanzi}${tMod.hanzi}${tV2.hanzi})`, isCorrect: true },
@@ -1035,8 +1092,19 @@ function pickDistractorWords(correctWord, pool, predicate, count = 3) {
   return [...sameCategory, ...generalFallback].slice(0, count);
 }
 
-function buildComprehensionQuestionFromSentence(sentence, protagonistEn, pool, qIndex) {
+function buildComprehensionQuestionFromSentence(
+  sentence,
+  protagonistEn,
+  pool,
+  qIndex,
+  protagonistWord = null
+) {
   const { slots, schemaId } = sentence;
+  const isFirstPerson = protagonistWord?.hanzi === '我' || protagonistEn === 'I';
+  const displayProtagonist = isFirstPerson ? 'the speaker' : protagonistEn;
+  const possessiveProtagonist = isFirstPerson
+    ? "the speaker's"
+    : `${displayProtagonist}'s`;
 
   if (schemaId === 'shi_identity' && slots?.noun) {
     const ans = slots.noun;
@@ -1044,7 +1112,7 @@ function buildComprehensionQuestionFromSentence(sentence, protagonistEn, pool, q
     if (distractors.length < 3) return null;
     return {
       id: `mr_q_${qIndex}_${schemaId}`,
-      prompt: `According to the passage, who is ${protagonistEn}?`,
+      prompt: `According to the passage, who is ${displayProtagonist}?`,
       options: shuffleCopy([
         { id: `mr_opt_ok_${qIndex}`, text: realizeEnglishNoun(ans.enGloss || ans.meaning, { count: 1, indefinite: true }), hanzi: ans.hanzi, isCorrect: true },
         ...distractors.map((d, idx) => ({
@@ -1064,7 +1132,7 @@ function buildComprehensionQuestionFromSentence(sentence, protagonistEn, pool, q
     if (distractors.length < 3) return null;
     return {
       id: `mr_q_${qIndex}_${schemaId}`,
-      prompt: `Where does ${protagonistEn} go or do the activity in the passage?`,
+      prompt: `Where does ${displayProtagonist} go or do the activity in the passage?`,
       options: shuffleCopy([
         { id: `mr_opt_ok_${qIndex}`, text: realizeEnglishNoun(ans.enGloss || ans.meaning, { count: 1 }), hanzi: ans.hanzi, isCorrect: true },
         ...distractors.map((d, idx) => ({
@@ -1085,7 +1153,7 @@ function buildComprehensionQuestionFromSentence(sentence, protagonistEn, pool, q
     if (distractors.length < 3) return null;
     return {
       id: `mr_q_${qIndex}_${schemaId}`,
-      prompt: `What does ${protagonistEn} ${verbBase} in the passage?`,
+      prompt: `What does ${displayProtagonist} ${verbBase} in the passage?`,
       options: shuffleCopy([
         { id: `mr_opt_ok_${qIndex}`, text: realizeEnglishNoun(ans.enGloss || ans.meaning, { count: 1 }), hanzi: ans.hanzi, isCorrect: true },
         ...distractors.map((d, idx) => ({
@@ -1105,10 +1173,10 @@ function buildComprehensionQuestionFromSentence(sentence, protagonistEn, pool, q
     if (distractors.length < 3) return null;
     const prompt =
       schemaId === 'you_neg'
-        ? `What does ${protagonistEn} NOT have?`
+        ? `What does ${displayProtagonist} NOT have?`
         : schemaId === 'completed_le_obj'
-        ? `Which item did ${protagonistEn} mention in the past event?`
-        : `What does ${protagonistEn} have?`;
+        ? `Which item did ${displayProtagonist} mention in the past event?`
+        : `What does ${displayProtagonist} have?`;
     return {
       id: `mr_q_${qIndex}_${schemaId}`,
       prompt,
@@ -1129,9 +1197,13 @@ function buildComprehensionQuestionFromSentence(sentence, protagonistEn, pool, q
     const ans = slots.adj;
     const distractors = pickDistractorWords(ans, pool, (w) => getWordPos(w) === 'adj');
     if (distractors.length < 3) return null;
+    const describedTarget =
+      schemaId === 'de_possessive' && slots?.noun
+        ? `${possessiveProtagonist} ${realizeEnglishNoun(slots.noun.enGloss || slots.noun.meaning, { count: 1 })}`
+        : displayProtagonist;
     return {
       id: `mr_q_${qIndex}_${schemaId}`,
-      prompt: `How is ${protagonistEn} described in the passage?`,
+      prompt: `How is ${describedTarget} described in the passage?`,
       options: shuffleCopy([
         { id: `mr_opt_ok_${qIndex}`, text: (ans.meaning || ans.english || '').split(/[;/]/)[0].trim(), hanzi: ans.hanzi, isCorrect: true },
         ...distractors.map((d, idx) => ({
@@ -1148,34 +1220,7 @@ function buildComprehensionQuestionFromSentence(sentence, protagonistEn, pool, q
   return null;
 }
 
-/**
- * Generates a coherent 3-sentence micro-reading passage centered on a single
- * topic or protagonist using ONLY `enrichedUnlockedWords`, plus 2 anti-spoiler
- * reading comprehension questions. Prefers natural corpus passages when >= 3
- * compatible sentences exist, falling back to procedural generation otherwise.
- * @param {any[]} [enrichedUnlockedWords]
- * @param {any} [focusWord]
- */
-export function generateMicroReadingPassage(enrichedUnlockedWords = [], focusWord = null) {
-  const pool = normalizeUnlockedPool(enrichedUnlockedWords);
-  if (pool.length < 6) return null;
-
-  // Phase 5A: attempt natural corpus micro-reading passage first (allowing up to one i+1 sentence)
-  try {
-    const corpusPassage = minedSentenceToMicroReadingPassage(pool, focusWord);
-    if (
-      corpusPassage &&
-      Array.isArray(corpusPassage.sentences) &&
-      corpusPassage.sentences.length >= 3 &&
-      Array.isArray(corpusPassage.questions) &&
-      corpusPassage.questions.length >= 2
-    ) {
-      return corpusPassage;
-    }
-  } catch (err) {
-    console.warn('[GrammarEngine] Corpus micro-reading fallback to procedural:', err);
-  }
-
+function buildProceduralMicroReadingPassage(pool) {
   const poolMap = buildUnlockedPoolMap(pool);
 
   const protagonists = weightedShuffleWords(
@@ -1248,7 +1293,8 @@ export function generateMicroReadingPassage(enrichedUnlockedWords = [], focusWor
           sentences[i],
           protagonistInfo.text,
           pool,
-          questions.length
+          questions.length,
+          protagonist
         );
         if (q && !questions.some((prev) => prev.prompt === q.prompt)) {
           questions.push(q);
@@ -1268,9 +1314,47 @@ export function generateMicroReadingPassage(enrichedUnlockedWords = [], focusWor
       fullHanzi: sentences.map((s) => s.hanzi).join(''),
       fullPinyin: sentences.map((s) => s.pinyin).join(' '),
       fullEnglish: sentences.map((s) => s.english).join(' '),
-      questions
+      questions,
+      sourceType: 'procedural'
     };
   }
 
   return null;
+}
+
+/**
+ * Generates a coherent 3-sentence micro-reading passage centered on a single
+ * topic or protagonist using ONLY `enrichedUnlockedWords`, plus 2 anti-spoiler
+ * reading comprehension questions. Blends ~50% natural corpus passages and
+ * ~50% procedural passages when both are available.
+ * @param {any[]} [enrichedUnlockedWords]
+ * @param {any} [focusWord]
+ */
+export function generateMicroReadingPassage(enrichedUnlockedWords = [], focusWord = null) {
+  const pool = normalizeUnlockedPool(enrichedUnlockedWords);
+  if (pool.length < 6) return null;
+
+  const tryCorpus = () => {
+    try {
+      const corpusPassage = minedSentenceToMicroReadingPassage(pool, focusWord);
+      if (
+        corpusPassage &&
+        Array.isArray(corpusPassage.sentences) &&
+        corpusPassage.sentences.length >= 3 &&
+        Array.isArray(corpusPassage.questions) &&
+        corpusPassage.questions.length >= 2
+      ) {
+        return corpusPassage;
+      }
+    } catch (err) {
+      console.warn('[GrammarEngine] Corpus micro-reading fallback to procedural:', err);
+    }
+    return null;
+  };
+
+  const preferCorpus = Math.random() < 0.5;
+  if (preferCorpus) {
+    return tryCorpus() || buildProceduralMicroReadingPassage(pool);
+  }
+  return buildProceduralMicroReadingPassage(pool) || tryCorpus();
 }

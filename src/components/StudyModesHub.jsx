@@ -15,6 +15,7 @@ import {
   X
 } from 'lucide-react';
 import { soundFX } from '../audio/soundEngine.js';
+import { ADVANCED_MODE_UNLOCK_THRESHOLDS } from '../data/curriculumData.js';
 
 const GENERATIVE_DRILL_KEYS = [
   'translation_prod',
@@ -22,13 +23,14 @@ const GENERATIVE_DRILL_KEYS = [
   'syntax_transform',
   'error_spotter',
   'contextual_writing',
-  'separable_particle_drill',
+  'grammar_lab',
   'micro_reading'
 ];
 
 /** @param {any} props */
 export function StudyModesHub({
   unlockedWordsCount = 0,
+  discoveredWordsCount = 0,
   srsDueCount = 0,
   leechCount = 0,
   generativeReadiness = {},
@@ -49,8 +51,10 @@ export function StudyModesHub({
     (key) => Boolean(generativeReadiness?.[key]?.unlocked)
   ).length;
   const i0ReadyCount = Number(corpusStats?.i0Count || 0);
-  const isBlitzUnlocked = unlockedWordsCount >= 25;
-  const isWorkbookReady = unlockedWordsCount >= 12;
+  const blitzThreshold = ADVANCED_MODE_UNLOCK_THRESHOLDS.blitz_match;
+  const workbookThreshold = ADVANCED_MODE_UNLOCK_THRESHOLDS.sentence_builder;
+  const isBlitzUnlocked = unlockedWordsCount >= blitzThreshold;
+  const isWorkbookReady = unlockedWordsCount >= workbookThreshold;
   const isCorpusDrillReady = i0ReadyCount >= 6;
   const isConfusableReady = confusableCount >= 3;
 
@@ -96,9 +100,16 @@ export function StudyModesHub({
           desc: 'Adaptive SRS queue prioritizing core words and due reviews.',
           icon: Dumbbell,
           iconBg: 'bg-amber-500/20 text-amber-300 border-amber-400/40',
-          statusLabel: srsDueCount > 0 ? `${srsDueCount} Due` : 'Queue Ready',
+          statusLabel:
+            Number(discoveredWordsCount || 0) <= 0
+              ? 'Complete 1 Lesson'
+              : srsDueCount > 0
+              ? `${srsDueCount} Due`
+              : `${discoveredWordsCount} Ready`,
           statusClass:
-            srsDueCount > 0
+            Number(discoveredWordsCount || 0) <= 0
+              ? 'bg-slate-800 text-slate-400 border-slate-700'
+              : srsDueCount > 0
               ? 'bg-amber-500/20 text-amber-200 border-amber-400/50'
               : 'bg-emerald-500/15 text-emerald-300 border-emerald-400/40',
           actionLabel: 'Launch',
@@ -138,7 +149,7 @@ export function StudyModesHub({
           desc: 'Timed rapid-recognition speed sprint for reflex reading.',
           icon: Zap,
           iconBg: 'bg-yellow-500/20 text-yellow-300 border-yellow-400/40',
-          statusLabel: isBlitzUnlocked ? 'Ready' : `${unlockedWordsCount}/25 Words`,
+          statusLabel: isBlitzUnlocked ? 'Ready' : `${unlockedWordsCount}/${blitzThreshold} Words`,
           statusClass: isBlitzUnlocked
             ? 'bg-emerald-500/20 text-emerald-300 border-emerald-400/40'
             : 'bg-slate-800 text-slate-400 border-slate-700',
@@ -214,7 +225,7 @@ export function StudyModesHub({
           desc: 'Cloze, Tone & Sandhi Drill, Numbers & Time Lab, and HSK Mock Exam.',
           icon: Target,
           iconBg: 'bg-sky-500/20 text-sky-300 border-sky-400/40',
-          statusLabel: isWorkbookReady ? 'Ready' : `${unlockedWordsCount}/12 Words`,
+          statusLabel: isWorkbookReady ? 'Ready' : `${unlockedWordsCount}/${workbookThreshold} Words`,
           statusClass: isWorkbookReady
             ? 'bg-sky-500/20 text-sky-200 border-sky-400/40'
             : 'bg-slate-800 text-slate-400 border-slate-700',

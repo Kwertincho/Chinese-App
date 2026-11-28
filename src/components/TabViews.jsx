@@ -1,7 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   BookOpen,
-  User,
   Flame,
   Star,
   Lock,
@@ -108,7 +107,6 @@ import {
   PixelCoinSprite,
   PixelCrownSprite,
   PixelPadlockSprite,
-  PixelBlockGauge,
   ScrollingText,
   InteractiveExampleText
 } from './SharedHudAndAudio.jsx';
@@ -144,6 +142,7 @@ export function ProgressionMapView({
   const [selectedStagePreview, setSelectedStagePreview] = useState(null);
   const [courseBandFilter, setCourseBandFilter] = useState('all');
   const [lessonPage, setLessonPage] = useState(0);
+  const [isGrammarDrawerOpen, setIsGrammarDrawerOpen] = useState(false);
 
   const filteredMapCourses = useMemo(
     () =>
@@ -207,6 +206,7 @@ export function ProgressionMapView({
 
   useEffect(() => {
     setSelectedStagePreview(null);
+    setIsGrammarDrawerOpen(false);
   }, [activeCourse.id, activeLesson.id]);
 
   useEffect(() => {
@@ -563,6 +563,85 @@ export function ProgressionMapView({
           />
         </div>
       </div>
+
+      {/* COLLAPSIBLE LESSON GRAMMAR FOCUS DRAWER (小语讲堂) */}
+      {Array.isArray(activeLesson?.grammarPoints) && activeLesson.grammarPoints.length > 0 && (
+        <div className="rounded-2xl bg-slate-900/90 border border-amber-500/35 overflow-hidden shadow-lg">
+          <button
+            type="button"
+            onClick={() => {
+              soundFX.playPop();
+              setIsGrammarDrawerOpen((prev) => !prev);
+            }}
+            className="w-full px-3.5 py-2.5 flex items-center justify-between gap-2 text-left hover:bg-slate-800/70 transition-colors"
+          >
+            <div className="flex items-center gap-2 min-w-0">
+              <span className="w-6 h-6 rounded-lg bg-amber-500/20 border border-amber-400/40 flex items-center justify-center text-amber-300 shrink-0">
+                <BookMarked className="w-3.5 h-3.5" />
+              </span>
+              <span className="text-xs font-extrabold text-amber-200 truncate">
+                Grammar Focus • <span className="font-hanzi">小语讲堂</span> (
+                {activeLesson.grammarPoints.length})
+              </span>
+            </div>
+            <ChevronDown
+              className={`w-4 h-4 text-amber-300 shrink-0 transition-transform duration-200 ${
+                isGrammarDrawerOpen ? 'rotate-180' : ''
+              }`}
+            />
+          </button>
+
+          {isGrammarDrawerOpen && (
+            <div className="px-3.5 pb-3.5 pt-2 border-t border-slate-800 space-y-2">
+              {activeLesson.grammarPoints.map((gp, gpIdx) => {
+                const isObj = gp && typeof gp === 'object';
+                const titleText = isObj
+                  ? gp.title || gp.pattern || gp.name || gp.point || ''
+                  : String(gp || '');
+                const patternText =
+                  isObj && gp.pattern && gp.pattern !== titleText ? gp.pattern : '';
+                const explanationText = isObj
+                  ? gp.explanation || gp.description || gp.note || ''
+                  : '';
+                const exampleText = isObj ? gp.example || gp.exampleHanzi || '' : '';
+
+                return (
+                  <div
+                    key={`gp_${activeLesson.id}_${gpIdx}`}
+                    className="rounded-xl bg-slate-950/90 border border-slate-800 p-2.5 space-y-1"
+                  >
+                    <div className="flex items-start gap-2">
+                      <span className="w-5 h-5 rounded-md bg-amber-500/20 border border-amber-400/40 text-amber-300 text-[10px] font-black flex items-center justify-center shrink-0 mt-0.5">
+                        {gpIdx + 1}
+                      </span>
+                      <div className="min-w-0 flex-1 space-y-0.5">
+                        <p className="font-hanzi text-xs font-bold text-white leading-snug">
+                          {titleText}
+                        </p>
+                        {patternText && (
+                          <p className="font-hanzi text-[11px] font-bold text-amber-300 leading-snug">
+                            {patternText}
+                          </p>
+                        )}
+                        {explanationText && (
+                          <p className="font-clarity text-[11px] text-slate-300 leading-snug">
+                            {explanationText}
+                          </p>
+                        )}
+                        {exampleText && (
+                          <p className="font-hanzi text-[11px] text-emerald-300/95 leading-snug pt-0.5">
+                            {exampleText}
+                          </p>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
+        </div>
+      )}
 
       {/* WINDING VERTICAL ADVENTURE PATH OF SQUARE PIXEL GAME NODES */}
       <div className="rounded-3xl bg-gradient-to-b from-slate-900 via-slate-900/95 to-slate-950 border border-slate-800 p-5 relative overflow-hidden shadow-2xl">
@@ -1067,46 +1146,35 @@ export function SmartReviewArenaView({
     const masteredWords = [];
     let dueWordsCount = 0;
 
-    const modalitySummary = {
-      recognition: { key: 'recognition', label: 'Recognition', mistakes: 0, completions: 0 },
-      writing: { key: 'writing', label: 'Writing (Strokes)', mistakes: 0, completions: 0 },
-      listening: { key: 'listening', label: 'Listening (Dictation)', mistakes: 0, completions: 0 },
-      speaking: { key: 'speaking', label: 'Speaking (Tones)', mistakes: 0, completions: 0 },
-      sentence_builder: {
-        key: 'sentence_builder',
-        label: 'Sentence Builder',
-        mistakes: 0,
-        completions: 0
-      },
-      cloze: {
-        key: 'cloze',
-        label: 'Fill-in-the-Blank (Cloze)',
-        mistakes: 0,
-        completions: 0
-      },
-      ...(isClassifierUnlocked
-        ? {
-            classifier_drill: {
-              key: 'classifier_drill',
-              label: 'Measure Words (量词)',
-              mistakes: 0,
-              completions: 0
-            }
-          }
-        : {}),
-      ...(isDialogueQaUnlocked
-        ? {
-            dialogue_qa: {
-              key: 'dialogue_qa',
-              label: 'Conversational Q&A (问答)',
-              mistakes: 0,
-              completions: 0
-            }
-          }
-        : {})
-    };
+    const ALL_TELEMETRY_MODALITY_KEYS = [
+      'recognition',
+      'writing',
+      'listening',
+      'speaking',
+      'sentence_builder',
+      'cloze',
+      'classifier_drill',
+      'dialogue_qa',
+      'translation_prod',
+      'open_cloze',
+      'syntax_transform',
+      'error_spotter',
+      'contextual_writing',
+      'grammar_lab',
+      'micro_reading',
+      'confusable_chars'
+    ];
 
-    const activeSummaryKeys = Object.keys(modalitySummary);
+    const modalitySummary = {};
+    ALL_TELEMETRY_MODALITY_KEYS.forEach((mKey) => {
+      modalitySummary[mKey] = {
+        key: mKey,
+        label: MODALITY_META[mKey]?.label || mKey,
+        mistakes: 0,
+        completions: 0
+      };
+    });
+
     const activeTelemetryMap = progress.wordSkillTelemetry || progress.skillTelemetry || {};
 
     // Deduplicate candidate pool across unlocked, active-course scanned, and tracked words,
@@ -1149,9 +1217,15 @@ export function SmartReviewArenaView({
         : 0;
       if (isDue) dueWordsCount += 1;
 
-      activeSummaryKeys.forEach((mKey) => {
-        modalitySummary[mKey].mistakes += telemetry[mKey]?.mistakes || 0;
-        modalitySummary[mKey].completions += telemetry[mKey]?.completions || 0;
+      let totalMistakes = 0;
+      let totalCompletions = 0;
+      ALL_TELEMETRY_MODALITY_KEYS.forEach((mKey) => {
+        const mMistakes = telemetry[mKey]?.mistakes || 0;
+        const mCompletions = telemetry[mKey]?.completions || 0;
+        modalitySummary[mKey].mistakes += mMistakes;
+        modalitySummary[mKey].completions += mCompletions;
+        totalMistakes += mMistakes;
+        totalCompletions += mCompletions;
       });
 
       const rankModalities = (allowedKeys) => {
@@ -1181,26 +1255,6 @@ export function SmartReviewArenaView({
         ...(isClozeUnlocked ? ['cloze'] : []),
         ...(isSentenceBuilderUnlocked ? ['sentence_builder'] : [])
       ])[0];
-
-      const totalMistakes =
-        telemetry.recognition.mistakes +
-        telemetry.writing.mistakes +
-        telemetry.listening.mistakes +
-        telemetry.speaking.mistakes +
-        telemetry.sentence_builder.mistakes +
-        telemetry.cloze.mistakes +
-        (telemetry.classifier_drill?.mistakes || 0) +
-        (telemetry.dialogue_qa?.mistakes || 0);
-
-      const totalCompletions =
-        telemetry.recognition.completions +
-        telemetry.writing.completions +
-        telemetry.listening.completions +
-        telemetry.speaking.completions +
-        telemetry.sentence_builder.completions +
-        telemetry.cloze.completions +
-        (telemetry.classifier_drill?.completions || 0) +
-        (telemetry.dialogue_qa?.completions || 0);
 
       const mistakeRate =
         totalMistakes + totalCompletions > 0
@@ -1237,12 +1291,32 @@ export function SmartReviewArenaView({
       return enriched;
     });
 
-    const sortedModalities = Object.values(modalitySummary).sort((a, b) => {
-      if (b.mistakes !== a.mistakes) return b.mistakes - a.mistakes;
-      return a.completions - b.completions;
-    });
+    const isModalityVisibleInIndicator = (mod) => {
+      if (mod.mistakes > 0 || mod.completions > 0) return true;
+      if (
+        mod.key === 'recognition' ||
+        mod.key === 'writing' ||
+        mod.key === 'listening' ||
+        mod.key === 'speaking' ||
+        mod.key === 'sentence_builder' ||
+        mod.key === 'cloze'
+      ) {
+        return true;
+      }
+      if (mod.key === 'classifier_drill') return isClassifierUnlocked;
+      if (mod.key === 'dialogue_qa') return isDialogueQaUnlocked;
+      if (mod.key === 'confusable_chars') return confusableItemsPreview.length >= 3;
+      return Boolean(generativeReadiness?.[mod.key]?.unlocked);
+    };
 
-    const weakestGlobalModality = sortedModalities[0];
+    const sortedModalities = Object.values(modalitySummary)
+      .filter(isModalityVisibleInIndicator)
+      .sort((a, b) => {
+        if (b.mistakes !== a.mistakes) return b.mistakes - a.mistakes;
+        return a.completions - b.completions;
+      });
+
+    const weakestGlobalModality = sortedModalities[0] || modalitySummary.recognition;
 
     return {
       enrichedWords,
@@ -1265,7 +1339,9 @@ export function SmartReviewArenaView({
     isClozeUnlocked,
     isSentenceBuilderUnlocked,
     isClassifierUnlocked,
-    isDialogueQaUnlocked
+    isDialogueQaUnlocked,
+    generativeReadiness,
+    confusableItemsPreview.length
   ]);
 
   const adaptiveSmartQueue = useMemo(() => {
@@ -1437,24 +1513,30 @@ export function SmartReviewArenaView({
       let stepWord = candidate.word;
 
       if (chosenMode === 'classifier_drill') {
-        if (isClassifierUnlocked && classifierStatus.items.length > 0) {
+        const discoveredClassifierItems = (classifierStatus.items || []).filter(
+          (it) => it?.sourceWord && isWordDiscovered(it.sourceWord, progress)
+        );
+        if (isClassifierUnlocked && discoveredClassifierItems.length > 0) {
           classifierItem =
-            classifierStatus.items.find(
+            discoveredClassifierItems.find(
               (it) => it.sourceWord?.hanzi === candidate.word.hanzi
             ) ||
-            classifierStatus.items[classifierCursor % classifierStatus.items.length];
+            discoveredClassifierItems[classifierCursor % discoveredClassifierItems.length];
           classifierCursor += 1;
           stepWord = classifierItem.sourceWord || candidate.word;
         } else {
           chosenMode = 'recognition';
         }
       } else if (chosenMode === 'dialogue_qa') {
-        if (isDialogueQaUnlocked && dialogueStatus.pairs.length > 0) {
+        const discoveredDialoguePairs = (dialogueStatus.pairs || []).filter(
+          (p) => p?.sourceWord && isWordDiscovered(p.sourceWord, progress)
+        );
+        if (isDialogueQaUnlocked && discoveredDialoguePairs.length > 0) {
           dialoguePair =
-            dialogueStatus.pairs.find(
+            discoveredDialoguePairs.find(
               (p) => p.sourceWord?.hanzi === candidate.word.hanzi
             ) ||
-            dialogueStatus.pairs[dialogueCursor % dialogueStatus.pairs.length];
+            discoveredDialoguePairs[dialogueCursor % discoveredDialoguePairs.length];
           dialogueCursor += 1;
           stepWord = dialoguePair.sourceWord || candidate.word;
         } else {
@@ -1500,7 +1582,8 @@ export function SmartReviewArenaView({
     isDialogueQaUnlocked,
     classifierStatus.items,
     dialogueStatus.pairs,
-    generativeReadiness
+    generativeReadiness,
+    progress
   ]);
 
   return (
@@ -1816,7 +1899,7 @@ export function SmartReviewArenaView({
                 );
                 return;
               }
-              onLaunchToneSandhiDrill(scannedPool);
+              onLaunchToneSandhiDrill(effectiveUnlockedPool);
             }}
             className={`game-btn-3d p-3 rounded-2xl border text-left flex flex-col justify-between transition-all ${
               isToneDrillUnlocked
@@ -1958,7 +2041,7 @@ export function SmartReviewArenaView({
                 );
                 return;
               }
-              onLaunchClozeDrill(scannedPool);
+              onLaunchClozeDrill(effectiveUnlockedPool);
             }}
             className={`game-btn-3d p-3 rounded-2xl border text-left flex flex-col justify-between transition-all ${
               isClozeUnlocked
@@ -2004,7 +2087,7 @@ export function SmartReviewArenaView({
                 );
                 return;
               }
-              onLaunchBlitzMatch(scannedPool);
+              onLaunchBlitzMatch(effectiveUnlockedPool);
             }}
             className={`game-btn-3d p-3 rounded-2xl border text-left flex flex-col justify-between transition-all ${
               isBlitzUnlocked
@@ -2331,7 +2414,7 @@ export function SmartReviewArenaView({
               );
               return;
             }
-            onLaunchHskMockExam(scannedPool);
+            onLaunchHskMockExam(effectiveUnlockedPool);
           }}
           className={`game-btn-3d w-full p-3.5 rounded-2xl border flex items-center justify-between gap-3 shadow-lg transition-all ${
             isHskMockUnlocked
@@ -2391,45 +2474,56 @@ export function SmartReviewArenaView({
         </div>
 
         <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
-          {adaptiveSmartQueue.map((item, idx) => {
-            const modMeta = MODALITY_META[item.modality] || MODALITY_META.recognition;
-            return (
-              <div
-                key={item.stepId}
-                className="p-2.5 rounded-xl bg-slate-900/95 border border-slate-800 flex items-center justify-between gap-2"
-              >
-                <div className="flex items-center gap-2.5 min-w-0 flex-1">
-                  <span className="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 font-black text-[11px] flex items-center justify-center shrink-0">
-                    {idx + 1}
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex items-center gap-1.5 flex-wrap">
-                      <span className="font-hanzi text-sm font-black text-white">{item.word.hanzi}</span>
-                      <span className="font-clarity text-xs font-bold text-rose-400">{item.word.pinyin}</span>
-                      {isSrsActive && item.isDue && (
-                        <span className="px-1.5 py-0.5 rounded-[2px] bg-rose-600/90 border border-rose-300 text-white font-pixel-header text-[7px] uppercase tracking-wider leading-none">
-                          Due
-                        </span>
-                      )}
+          {adaptiveSmartQueue.length === 0 ? (
+            <div className="p-3.5 rounded-xl bg-slate-900/90 border border-slate-800 text-center space-y-1">
+              <p className="text-xs font-bold text-slate-300">
+                No discovered words queued yet.
+              </p>
+              <p className="font-clarity text-[11px] text-slate-400">
+                Complete a lesson on the Map to populate your adaptive SRS review queue.
+              </p>
+            </div>
+          ) : (
+            adaptiveSmartQueue.map((item, idx) => {
+              const modMeta = MODALITY_META[item.modality] || MODALITY_META.recognition;
+              return (
+                <div
+                  key={item.stepId}
+                  className="p-2.5 rounded-xl bg-slate-900/95 border border-slate-800 flex items-center justify-between gap-2"
+                >
+                  <div className="flex items-center gap-2.5 min-w-0 flex-1">
+                    <span className="w-6 h-6 rounded-lg bg-slate-800 text-slate-400 font-black text-[11px] flex items-center justify-center shrink-0">
+                      {idx + 1}
+                    </span>
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap">
+                        <span className="font-hanzi text-sm font-black text-white">{item.word.hanzi}</span>
+                        <span className="font-clarity text-xs font-bold text-rose-400">{item.word.pinyin}</span>
+                        {isSrsActive && item.isDue && (
+                          <span className="px-1.5 py-0.5 rounded-[2px] bg-rose-600/90 border border-rose-300 text-white font-pixel-header text-[7px] uppercase tracking-wider leading-none">
+                            Due
+                          </span>
+                        )}
+                      </div>
+                      <p className="text-[10px] text-slate-400 truncate">{item.reason}</p>
                     </div>
-                    <p className="text-[10px] text-slate-400 truncate">{item.reason}</p>
+                  </div>
+
+                  <div className="flex items-center gap-1.5 shrink-0">
+                    <span className={`inline-flex flex-col items-center justify-center leading-tight px-2 py-1 shrink-0 rounded-lg border ${getMasteryTierMeta(item.mastery).badgeClass}`}>
+                      <span className="text-[11px] font-black leading-tight">Lv.{item.mastery}/10</span>
+                      <span className="text-[10px] font-bold leading-tight">{getMasteryTierMeta(item.mastery).tier}</span>
+                    </span>
+                    <span
+                      className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-full border shrink-0 ${modMeta.badgeClass}`}
+                    >
+                      {modMeta.shortLabel}
+                    </span>
                   </div>
                 </div>
-
-                <div className="flex items-center gap-1.5 shrink-0">
-                  <span className={`inline-flex flex-col items-center justify-center leading-tight px-2 py-1 shrink-0 rounded-lg border ${getMasteryTierMeta(item.mastery).badgeClass}`}>
-                    <span className="text-[11px] font-black leading-tight">Lv.{item.mastery}/10</span>
-                    <span className="text-[10px] font-bold leading-tight">{getMasteryTierMeta(item.mastery).tier}</span>
-                  </span>
-                  <span
-                    className={`text-[10px] font-black uppercase px-2.5 py-1 rounded-full border shrink-0 ${modMeta.badgeClass}`}
-                  >
-                    {modMeta.shortLabel}
-                  </span>
-                </div>
-              </div>
-            );
-          })}
+              );
+            })
+          )}
         </div>
       </div>
 
@@ -2962,11 +3056,17 @@ export function LibraryView({
     [courses, courseBandFilter]
   );
   const [vocabVisibleCount, setVocabVisibleCount] = useState(50);
+  const [charGridVisibleCount, setCharGridVisibleCount] = useState(60);
+  const [expandedRadicalIds, setExpandedRadicalIds] = useState({});
   const [selectedCharEntry, setSelectedCharEntry] = useState(null);
 
   useEffect(() => {
     setVocabVisibleCount(50);
   }, [searchQuery, vocabFilterMode]);
+
+  useEffect(() => {
+    setCharGridVisibleCount(60);
+  }, [activeCourse?.id]);
 
   useEffect(() => {
     setCorpusVisibleCount(50);
@@ -3386,69 +3486,94 @@ export function LibraryView({
 
   const librarySrsMap = progress.srsData || progress.srsSchedule || {};
 
-  const { filteredWordsList, libraryLeechCount } = useMemo(() => {
-    const q = searchQuery.trim().toLowerCase();
-    const list = [];
-    const seen = new Set();
-    let leechCount = 0;
+  const deduplicatedVocabCatalog = useMemo(() => {
+    const byHanzi = new window.Map();
+
+    const registerWord = (rawWord, idx, badge) => {
+      const norm = normalizeWordEntry(rawWord, idx);
+      if (!norm.hanzi) return;
+      if (!byHanzi.has(norm.hanzi)) {
+        byHanzi.set(norm.hanzi, {
+          ...norm,
+          sourceBadges: [badge],
+          sourceBadge: badge,
+          _searchHanzi: norm.hanzi.toLowerCase(),
+          _searchPinyin: (norm.pinyin || '').toLowerCase(),
+          _searchToneless: (norm.pinyinToneless || '').toLowerCase(),
+          _searchMeaning: (norm.meaning || '').toLowerCase()
+        });
+      } else {
+        const existing = byHanzi.get(norm.hanzi);
+        if (!existing.sourceBadges.includes(badge)) {
+          existing.sourceBadges.push(badge);
+          existing.sourceBadge = existing.sourceBadges.join(' • ');
+        }
+      }
+    };
 
     sortCoursesCanonically(courses).forEach((c) => {
       (c.lessons || []).forEach((l) => {
-        (l.words || []).forEach((w, idx) => {
-          const norm = normalizeWordEntry(w, idx);
-          const key = `${norm.hanzi}_${c.courseName}`;
-          if (!seen.has(key)) {
-            seen.add(key);
-            const srsEntry = getWordSrsEntry(librarySrsMap, norm);
-            const isLeech = Boolean(srsEntry?.isLeech);
-            if (isLeech) leechCount += 1;
-            list.push({
-              ...norm,
-              sourceBadge: `${c.courseName} • ${l.title}`,
-              _srsEntry: srsEntry,
-              _isLeech: isLeech
-            });
-          }
-        });
+        const badge = `${c.courseName} • ${l.title}`;
+        (l.words || []).forEach((w, idx) => registerWord(w, idx, badge));
       });
     });
 
     customDecks.forEach((d) => {
-      (d.words || []).forEach((w, idx) => {
-        const norm = normalizeWordEntry(w, idx);
-        const key = `${norm.hanzi}_${d.name}`;
-        if (!seen.has(key)) {
-          seen.add(key);
-          const srsEntry = getWordSrsEntry(librarySrsMap, norm);
-          const isLeech = Boolean(srsEntry?.isLeech);
-          if (isLeech) leechCount += 1;
-          list.push({
-            ...norm,
-            sourceBadge: `Deck: ${d.name}`,
-            _srsEntry: srsEntry,
-            _isLeech: isLeech
-          });
-        }
-      });
+      const badge = `Deck: ${d.name}`;
+      (d.words || []).forEach((w, idx) => registerWord(w, idx, badge));
+    });
+
+    return Array.from(byHanzi.values());
+  }, [courses, customDecks]);
+
+  const { filteredWordsList, libraryLeechCount } = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    let leechCount = 0;
+    const withSrs = deduplicatedVocabCatalog.map((item) => {
+      const srsEntry = getWordSrsEntry(librarySrsMap, item);
+      const isLeech = Boolean(srsEntry?.isLeech);
+      if (isLeech) leechCount += 1;
+      return {
+        ...item,
+        _srsEntry: srsEntry,
+        _isLeech: isLeech
+      };
     });
 
     const filteredByMode =
       vocabFilterMode === 'leeches' && leechCount > 0
-        ? list.filter((item) => item._isLeech)
-        : list;
+        ? withSrs.filter((item) => item._isLeech)
+        : withSrs;
 
     const finalFiltered = !q
       ? filteredByMode
       : filteredByMode.filter(
           (item) =>
-            item.hanzi.toLowerCase().includes(q) ||
-            item.pinyin.toLowerCase().includes(q) ||
-            item.pinyinToneless.toLowerCase().includes(q) ||
-            (item.meaning || '').toLowerCase().includes(q)
+            item._searchHanzi.includes(q) ||
+            item._searchPinyin.includes(q) ||
+            item._searchToneless.includes(q) ||
+            item._searchMeaning.includes(q)
         );
 
     return { filteredWordsList: finalFiltered, libraryLeechCount: leechCount };
-  }, [courses, customDecks, searchQuery, vocabFilterMode, librarySrsMap]);
+  }, [deduplicatedVocabCatalog, searchQuery, vocabFilterMode, librarySrsMap]);
+
+  const getCharEntryMastery = useCallback(
+    (entry) => {
+      if (!entry) return 0;
+      const sourceWords = Array.isArray(entry.sourceWords) ? entry.sourceWords : [];
+      if (sourceWords.length === 0) {
+        return getWordMasteryLevel(progress.mastery, { id: entry.char, hanzi: entry.char });
+      }
+      let maxLv = getWordMasteryLevel(progress.mastery, { id: entry.char, hanzi: entry.char });
+      for (let i = 0; i < sourceWords.length; i++) {
+        const lv = getWordMasteryLevel(progress.mastery, sourceWords[i]);
+        if (lv > maxLv) maxLv = lv;
+      }
+      return maxLv;
+    },
+    [progress.mastery]
+  );
 
   const characterMatrixList = useMemo(() => {
     const charMap = new window.Map();
@@ -3459,7 +3584,6 @@ export function LibraryView({
     (targetCourse?.lessons || []).forEach((lesson) => {
       (lesson.words || []).forEach((rawWord, wIdx) => {
         const word = normalizeWordEntry(rawWord, wIdx);
-        const wordMastery = getWordMasteryLevel(progress.mastery, word);
         const parsedSyllables = parsePinyinSyllablesWithTones(word.pinyin, word.hanzi);
         const chars = Array.from(word.hanzi).filter((c) => /[\u4e00-\u9fff]/.test(c));
 
@@ -3470,7 +3594,6 @@ export function LibraryView({
               char: ch,
               pinyinSyllables: [syllable],
               meanings: [(word.meaning || word.english).split(/[;/]/)[0].trim()],
-              mastery: wordMastery,
               sourceWords: [word]
             });
           } else {
@@ -3482,7 +3605,6 @@ export function LibraryView({
             if (!existing.meanings.includes(shortMeaning)) {
               existing.meanings.push(shortMeaning);
             }
-            existing.mastery = Math.max(existing.mastery, wordMastery);
             if (!existing.sourceWords.some((sw) => sw.hanzi === word.hanzi)) {
               existing.sourceWords.push(word);
             }
@@ -3492,14 +3614,13 @@ export function LibraryView({
     });
 
     return Array.from(charMap.values());
-  }, [activeCourse, courses, progress.mastery]);
+  }, [activeCourse, courses]);
 
-  const allLoadedCharactersMap = useMemo(() => {
+  const allLoadedCharactersBaseMap = useMemo(() => {
     const map = new window.Map();
 
     const registerWordChars = (rawWord, idx) => {
       const word = normalizeWordEntry(rawWord, idx);
-      const wordMastery = getWordMasteryLevel(progress.mastery, word);
       const parsedSyllables = parsePinyinSyllablesWithTones(word.pinyin, word.hanzi);
       const chars = Array.from(word.hanzi).filter((c) => /[\u4e00-\u9fff]/.test(c));
 
@@ -3517,13 +3638,11 @@ export function LibraryView({
             char: ch,
             pinyinSyllables: [syllable],
             meanings: [shortMeaning],
-            mastery: wordMastery,
             inUserCourses: true,
             sourceWords: [word]
           });
         } else {
           const existing = map.get(ch);
-          existing.mastery = Math.max(existing.mastery, wordMastery);
           if (!existing.pinyinSyllables.includes(syllable)) {
             existing.pinyinSyllables.push(syllable);
           }
@@ -3548,14 +3667,18 @@ export function LibraryView({
     });
 
     return map;
-  }, [courses, customDecks, progress.mastery]);
+  }, [courses, customDecks]);
 
   const handleInspectCharacter = useCallback(
     (charObjOrString) => {
       soundFX.playPop();
       const ch = typeof charObjOrString === 'string' ? charObjOrString : charObjOrString.char;
-      if (allLoadedCharactersMap.has(ch)) {
-        setSelectedCharEntry(allLoadedCharactersMap.get(ch));
+      if (allLoadedCharactersBaseMap.has(ch)) {
+        const baseEntry = allLoadedCharactersBaseMap.get(ch);
+        setSelectedCharEntry({
+          ...baseEntry,
+          mastery: getCharEntryMastery(baseEntry)
+        });
         return;
       }
       const known = KNOWN_CHARACTER_INFO[ch];
@@ -3587,7 +3710,7 @@ export function LibraryView({
         ]
       });
     },
-    [allLoadedCharactersMap, progress.mastery]
+    [allLoadedCharactersBaseMap, getCharEntryMastery, progress.mastery]
   );
 
   const groupedRadicalsCards = useMemo(() => {
@@ -3595,7 +3718,7 @@ export function LibraryView({
 
     return SEMANTIC_RADICALS_25.map((rad) => {
       const matchedFromCourses = [];
-      allLoadedCharactersMap.forEach((charEntry, ch) => {
+      allLoadedCharactersBaseMap.forEach((charEntry, ch) => {
         const knownRad = KNOWN_CHARACTER_INFO[ch]?.radical || '';
         const matchesKnownRadical = rad.variants.some((v) => knownRad.includes(v));
         const matchesCommonPool = rad.commonChars.includes(ch) || rad.variants.includes(ch);
@@ -3611,7 +3734,6 @@ export function LibraryView({
             char: ex.char,
             pinyinSyllables: [ex.pinyin],
             meanings: [ex.meaning],
-            mastery: getWordMasteryLevel(progress.mastery, { id: ex.char, hanzi: ex.char }),
             inUserCourses: false,
             sourceWords: [
               normalizeWordEntry({
@@ -3644,7 +3766,7 @@ export function LibraryView({
         radCard.displayPills.some((p) => p.char.includes(q))
       );
     });
-  }, [allLoadedCharactersMap, progress.mastery, radicalFilterMode, radicalSearch]);
+  }, [allLoadedCharactersBaseMap, radicalFilterMode, radicalSearch]);
 
   const getMasteryPillStyle = (lv = 0) => {
     const meta = getMasteryTierMeta(lv);
@@ -3660,7 +3782,7 @@ export function LibraryView({
           </span>
           <div className="flex items-center gap-2 shrink-0">
             <span className="text-[11px] font-bold text-slate-400 hidden sm:inline">
-              {allLoadedCharactersMap.size} Chars • 25 Radicals
+              {allLoadedCharactersBaseMap.size} Chars • 25 Radicals
             </span>
             <button
               type="button"
@@ -3777,8 +3899,8 @@ export function LibraryView({
           </div>
 
           <div className="grid grid-cols-3 sm:grid-cols-4 gap-2.5">
-            {characterMatrixList.map((entry) => {
-              const lv = entry.mastery;
+            {characterMatrixList.slice(0, charGridVisibleCount).map((entry) => {
+              const lv = getCharEntryMastery(entry);
               const tierMeta = getMasteryTierMeta(lv);
 
               return (
@@ -3787,7 +3909,7 @@ export function LibraryView({
                   type="button"
                   onClick={() => {
                     soundFX.playPop();
-                    setSelectedCharEntry(entry);
+                    setSelectedCharEntry({ ...entry, mastery: lv });
                   }}
                   className={`game-btn-3d p-2.5 rounded-2xl border-2 flex flex-col items-center justify-between transition-all relative ${tierMeta.tileClass}`}
                 >
@@ -3804,6 +3926,19 @@ export function LibraryView({
               );
             })}
           </div>
+
+          {characterMatrixList.length > charGridVisibleCount && (
+            <button
+              type="button"
+              onClick={() => {
+                soundFX.playPop();
+                setCharGridVisibleCount((prev) => prev + 60);
+              }}
+              className="game-btn-3d w-full py-2.5 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-700 text-xs font-extrabold text-amber-300"
+            >
+              Show 60 more ({characterMatrixList.length - charGridVisibleCount} left)
+            </button>
+          )}
         </div>
       )}
 
@@ -3931,30 +4066,53 @@ export function LibraryView({
                 </div>
 
                 <div className="flex items-center flex-wrap gap-1.5 pt-1 border-t border-slate-700/60">
-                  {rad.displayPills.map((pill) => (
+                  {(expandedRadicalIds[rad.id]
+                    ? rad.displayPills
+                    : rad.displayPills.slice(0, 16)
+                  ).map((pill) => {
+                    const pillMastery = getCharEntryMastery(pill);
+                    return (
+                      <button
+                        key={`${rad.id}_${pill.char}`}
+                        type="button"
+                        onClick={() => handleInspectCharacter(pill)}
+                        className={`game-btn-3d px-2.5 py-1 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all ${getMasteryPillStyle(
+                          pillMastery
+                        )}`}
+                      >
+                        <span className="font-hanzi text-sm font-black text-white">{pill.char}</span>
+                        <span className="text-[10px] text-rose-300">
+                          {KNOWN_CHARACTER_INFO[pill.char]?.pinyin || pill.pinyinSyllables?.[0]}
+                        </span>
+                        <span className="text-[9px] font-black px-1 rounded bg-black/30">
+                          Lv.{pillMastery}/10
+                        </span>
+                        {pill.inUserCourses && (
+                          <span
+                            title="Present in your loaded courses/decks"
+                            className="w-1.5 h-1.5 rounded-full bg-emerald-400"
+                          />
+                        )}
+                      </button>
+                    );
+                  })}
+                  {rad.displayPills.length > 16 && (
                     <button
-                      key={`${rad.id}_${pill.char}`}
                       type="button"
-                      onClick={() => handleInspectCharacter(pill)}
-                      className={`game-btn-3d px-2.5 py-1 rounded-xl border text-xs font-bold flex items-center gap-1.5 transition-all ${getMasteryPillStyle(
-                        pill.mastery
-                      )}`}
+                      onClick={() => {
+                        soundFX.playPop();
+                        setExpandedRadicalIds((prev) => ({
+                          ...prev,
+                          [rad.id]: !prev[rad.id]
+                        }));
+                      }}
+                      className="px-2.5 py-1 rounded-xl border border-amber-400/40 bg-amber-500/15 hover:bg-amber-500/25 text-[11px] font-black text-amber-200 transition-colors"
                     >
-                      <span className="font-hanzi text-sm font-black text-white">{pill.char}</span>
-                      <span className="text-[10px] text-rose-300">
-                        {KNOWN_CHARACTER_INFO[pill.char]?.pinyin || pill.pinyinSyllables?.[0]}
-                      </span>
-                      <span className="text-[9px] font-black px-1 rounded bg-black/30">
-                        Lv.{pill.mastery}/10
-                      </span>
-                      {pill.inUserCourses && (
-                        <span
-                          title="Present in your loaded courses/decks"
-                          className="w-1.5 h-1.5 rounded-full bg-emerald-400"
-                        />
-                      )}
+                      {expandedRadicalIds[rad.id]
+                        ? 'Show less'
+                        : `+${rad.displayPills.length - 16} more`}
                     </button>
-                  ))}
+                  )}
                 </div>
               </div>
             ))}
@@ -4059,10 +4217,10 @@ export function LibraryView({
                       Examples:
                     </span>
                     {stroke.examples.map((ex) => {
-                      const loadedEntry = allLoadedCharactersMap.get(ex.char);
-                      const lv =
-                        loadedEntry?.mastery ??
-                        getWordMasteryLevel(progress.mastery, { id: ex.char, hanzi: ex.char });
+                      const loadedEntry = allLoadedCharactersBaseMap.get(ex.char);
+                      const lv = loadedEntry
+                        ? getCharEntryMastery(loadedEntry)
+                        : getWordMasteryLevel(progress.mastery, { id: ex.char, hanzi: ex.char });
                       const inCourses = Boolean(loadedEntry);
                       return (
                         <button
@@ -4105,15 +4263,15 @@ export function LibraryView({
                 const seen = new Set();
 
                 struct.examples.forEach((ex) => {
-                  const loaded = allLoadedCharactersMap.get(ex.char);
+                  const loaded = allLoadedCharactersBaseMap.get(ex.char);
                   seen.add(ex.char);
                   pillChars.push({
                     char: ex.char,
                     pinyin: loaded?.pinyinSyllables?.[0] || ex.pinyin,
                     meaning: loaded?.meanings?.[0] || ex.meaning,
-                    mastery:
-                      loaded?.mastery ??
-                      getWordMasteryLevel(progress.mastery, { id: ex.char, hanzi: ex.char }),
+                    mastery: loaded
+                      ? getCharEntryMastery(loaded)
+                      : getWordMasteryLevel(progress.mastery, { id: ex.char, hanzi: ex.char }),
                     inUserCourses: Boolean(loaded)
                   });
                 });
@@ -4121,7 +4279,7 @@ export function LibraryView({
                 let extraAdded = 0;
                 (struct.extraPool || []).forEach((ch) => {
                   if (extraAdded >= 3 || seen.has(ch)) return;
-                  const loaded = allLoadedCharactersMap.get(ch);
+                  const loaded = allLoadedCharactersBaseMap.get(ch);
                   if (loaded) {
                     seen.add(ch);
                     extraAdded += 1;
@@ -4129,7 +4287,7 @@ export function LibraryView({
                       char: ch,
                       pinyin: KNOWN_CHARACTER_INFO[ch]?.pinyin || loaded.pinyinSyllables?.[0] || ch,
                       meaning: KNOWN_CHARACTER_INFO[ch]?.meaning || loaded.meanings?.[0] || '',
-                      mastery: loaded.mastery,
+                      mastery: getCharEntryMastery(loaded),
                       inUserCourses: true
                     });
                   }
@@ -4376,16 +4534,18 @@ export function LibraryView({
       {/* SECTION 1: BROWSE CUSTOM DECKS, COURSES & WORDS */}
       {librarySection === 'decks' && studioToolMode === 'none' && (
         <div className="space-y-4">
-          <div className="relative">
-            <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Search Hanzi, Pinyin, or English meaning..."
-              className="w-full bg-slate-800/90 border border-slate-700 focus:border-rose-500 rounded-2xl pl-10 pr-4 py-2.5 text-xs font-bold text-white placeholder:text-slate-500 outline-none"
-            />
-          </div>
+          {referenceTab !== 'corpus' && (
+            <div className="relative">
+              <Search className="w-4 h-4 text-slate-400 absolute left-3.5 top-1/2 -translate-y-1/2" />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Search Hanzi, Pinyin, or English meaning..."
+                className="w-full bg-slate-800/90 border border-slate-700 focus:border-rose-500 rounded-2xl pl-10 pr-4 py-2.5 text-xs font-bold text-white placeholder:text-slate-500 outline-none"
+              />
+            </div>
+          )}
 
           <div className="space-y-2.5">
             <div className="flex items-center justify-between">
@@ -4717,11 +4877,9 @@ export function LibraryView({
                   {(linguisticDataStatus?.lexiconCount || 0).toLocaleString()} Lexicon •{' '}
                   {(linguisticDataStatus?.corpusCount || annotatedCorpusList.length).toLocaleString()}{' '}
                   Corpus (
-                  {linguisticDataStatus?.corpusSource === 'remote' ||
-                  linguisticDataStatus?.source === 'remote'
+                  {linguisticDataStatus?.corpusSource === 'remote'
                     ? 'CDN'
-                    : linguisticDataStatus?.corpusSource === 'local' ||
-                      linguisticDataStatus?.source === 'local'
+                    : linguisticDataStatus?.corpusSource === 'local'
                     ? 'Local'
                     : 'Starter'}
                   )
@@ -5397,15 +5555,17 @@ export function LibraryView({
         </div>
       )}
 
-      {/* FLOATING "+ ADD WORD" BUTTON */}
-      <button
-        type="button"
-        onClick={() => setQuickAddOpen(true)}
-        className="fixed bottom-20 right-5 z-40 px-4 py-3.5 rounded-full bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-400 hover:to-red-500 text-white font-extrabold text-xs shadow-2xl shadow-rose-950 flex items-center gap-1.5 border border-rose-300/30 active:scale-95 transition-all"
-      >
-        <Plus className="w-4 h-4 stroke-[3px]" />
-        <span>+ Add Word</span>
-      </button>
+      {/* FLOATING "+ ADD WORD" BUTTON (DECKS TAB ONLY, ANCHORED TO MAX-W-MD CONTAINER) */}
+      {librarySection === 'decks' && (
+        <button
+          type="button"
+          onClick={() => setQuickAddOpen(true)}
+          className="fixed bottom-24 left-1/2 translate-x-[calc(min(50vw,224px)-100%-16px)] z-40 px-4 py-3.5 rounded-full bg-gradient-to-r from-rose-500 to-red-600 hover:from-rose-400 hover:to-red-500 text-white font-extrabold text-xs shadow-2xl shadow-rose-950 flex items-center gap-1.5 border border-rose-300/30 active:scale-95 transition-all"
+        >
+          <Plus className="w-4 h-4 stroke-[3px]" />
+          <span>+ Add Word</span>
+        </button>
+      )}
 
       {/* MODAL 1: QUICK ADD SINGLE WORD */}
       {quickAddOpen && (
@@ -5685,6 +5845,7 @@ export function ProfileView({
   courses,
   customDecks,
   currentLevel,
+  effectiveStreak,
   studyModesHubProps = {},
   linguisticDataStatus,
   isSyncingData = false,
@@ -5698,7 +5859,8 @@ export function ProfileView({
   confirmResetOpen,
   setConfirmResetOpen,
   onConfirmReset,
-  onLaunchWeakWordsReview
+  onLaunchWeakWordsReview,
+  triggerToast
 }) {
   const profileBackupInputRef = useRef(null);
   const [masteryVisibleCount, setMasteryVisibleCount] = useState(20);
@@ -5743,7 +5905,7 @@ export function ProfileView({
         const parsed = JSON.parse(String(event.target?.result || ''));
         onImportBackupData(parsed);
       } catch (err) {
-        // Handled by parent toast
+        triggerToast?.('Invalid Backup JSON', 'Could not parse backup file.');
       }
     };
     reader.readAsText(file);
@@ -5779,6 +5941,10 @@ export function ProfileView({
       ? Math.max(0, Number(progress.dailyStudySeconds?.seconds) || 0)
       : 0;
   const totalStudySeconds = Math.max(0, Number(progress.totalStudySeconds) || 0);
+  const displayStreak =
+    typeof effectiveStreak === 'number'
+      ? Math.max(0, effectiveStreak)
+      : Math.max(0, Number(progress.streak) || 0);
 
   return (
     <div className="p-4 space-y-4">
@@ -5843,8 +6009,8 @@ export function ProfileView({
           <div className="text-[10px] font-bold uppercase text-amber-300 mt-0.5">Accumulated XP</div>
         </div>
         <div className="rounded-[2px] bg-slate-900 border-2 border-rose-500/70 p-3.5 text-center">
-          <PixelFlameSprite active={progress.streak > 0} className="w-5 h-5 mx-auto" />
-          <div className="font-pixel-header text-base text-white mt-1.5">{progress.streak}</div>
+          <PixelFlameSprite active={displayStreak > 0} className="w-5 h-5 mx-auto" />
+          <div className="font-pixel-header text-base text-white mt-1.5">{displayStreak}</div>
           <div className="text-[10px] font-bold uppercase text-rose-300 mt-0.5">Daily Streak</div>
         </div>
       </div>
@@ -5877,7 +6043,7 @@ export function ProfileView({
             type="button"
             onClick={() =>
               onLaunchWeakWordsReview(
-                weakWordsList.length > 0 ? weakWordsList : discoveredWeakestRanked.slice(0, 10)
+                (weakWordsList.length > 0 ? weakWordsList : discoveredWeakestRanked).slice(0, 10)
               )
             }
             className="game-btn-3d w-full py-3 rounded-xl bg-gradient-to-r from-rose-500 to-amber-500 text-slate-950 font-black text-xs shadow-lg border-b-4 border-rose-800 flex items-center justify-center gap-2"
@@ -5886,9 +6052,11 @@ export function ProfileView({
             <span>
               Review{' '}
               {weakWordsList.length > 0
-                ? `${weakWordsList.length} Weakest Word${weakWordsList.length === 1 ? '' : 's'}`
+                ? `${Math.min(10, weakWordsList.length)} Weakest Word${
+                    Math.min(10, weakWordsList.length) === 1 ? '' : 's'
+                  }`
                 : `${Math.min(10, discoveredWeakestRanked.length)} Studied Word${
-                    discoveredWeakestRanked.length === 1 ? '' : 's'
+                    Math.min(10, discoveredWeakestRanked.length) === 1 ? '' : 's'
                   }`}{' '}
               Now
             </span>

@@ -56,7 +56,7 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
   ban: ['班', '', '板', '半'],
   ben: ['奔', '', '本', '笨'],
   bang: ['帮', '', '榜', '棒'],
-  beng: ['崩', '甭', '绷', '蹦'],
+  beng: ['崩', '甭', '', '蹦'],
   bi: ['逼', '鼻', '比', '必'],
   bie: ['憋', '别', '瘪', ''],
   biao: ['标', '', '表', '鳔'],
@@ -94,7 +94,7 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
   man: ['颟', '瞒', '满', '慢'],
   men: ['闷', '门', '', '焖'],
   mang: ['', '忙', '莽', ''],
-  meng: ['蒙', '盟', '猛', '梦'],
+  meng: ['', '盟', '猛', '梦'],
   mi: ['咪', '迷', '米', '密'],
   mie: ['咩', '', '', '灭'],
   miao: ['喵', '苗', '秒', '妙'],
@@ -102,7 +102,7 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
   mian: ['', '棉', '免', '面'],
   min: ['', '民', '敏', ''],
   ming: ['', '明', '酩', '命'],
-  mu: ['', '模', '母', '木'],
+  mu: ['', '', '母', '木'],
 
   // Labiodental: f
   fa: ['发', '罚', '法', '珐'],
@@ -119,7 +119,7 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
   da: ['搭', '答', '打', '大'],
   de: ['', '德', '', ''],
   dai: ['呆', '', '歹', '带'],
-  dei: ['', '', '得', ''],
+  dei: ['', '', '', ''],
   dao: ['刀', '', '岛', '到'],
   dou: ['都', '', '抖', '豆'],
   dan: ['单', '', '胆', '但'],
@@ -193,7 +193,7 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
 
   // Alveolar: l
   la: ['拉', '旯', '喇', '辣'],
-  le: ['勒', '', '', '乐'],
+  le: ['', '', '', '乐'],
   lai: ['', '来', '', '赖'],
   lei: ['勒', '雷', '垒', '累'],
   lao: ['捞', '劳', '老', '烙'],
@@ -242,7 +242,7 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
   guang: ['光', '', '广', '逛'],
 
   // Velar: k
-  ka: ['咖', '', '卡', '喀'],
+  ka: ['咖', '', '卡', ''],
   ke: ['科', '咳', '可', '课'],
   kai: ['开', '', '凯', '忾'],
   kei: ['剋', '', '', ''],
@@ -263,7 +263,7 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
   kuang: ['筐', '狂', '夼', '况'],
 
   // Velar: h
-  ha: ['哈', '蛤', '', ''],
+  ha: ['哈', '', '', ''],
   he: ['喝', '河', '', '贺'],
   hai: ['嗨', '孩', '海', '害'],
   hei: ['黑', '', '', ''],
@@ -272,7 +272,7 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
   han: ['酣', '寒', '喊', '汉'],
   hen: ['', '痕', '很', '恨'],
   hang: ['夯', '航', '', '沆'],
-  heng: ['哼', '恒', '', '横'],
+  heng: ['哼', '恒', '', ''],
   hong: ['烘', '红', '哄', '讧'],
   hu: ['呼', '湖', '虎', '护'],
   hua: ['花', '华', '', '话'],
@@ -336,8 +336,8 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
   zhe: ['遮', '折', '者', '这'],
   zhi: ['知', '直', '纸', '志'],
   zhai: ['摘', '宅', '窄', '债'],
-  zhei: ['', '', '', '这'],
-  zhao: ['招', '着', '找', '照'],
+  zhei: ['', '', '', ''],
+  zhao: ['招', '', '找', '照'],
   zhou: ['周', '轴', '肘', '昼'],
   zhan: ['沾', '', '展', '站'],
   zhen: ['真', '', '枕', '阵'],
@@ -375,13 +375,13 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
   chuang: ['窗', '床', '闯', '创'],
 
   // Retroflex: sh
-  sha: ['沙', '啥', '傻', '厦'],
+  sha: ['沙', '啥', '傻', '霎'],
   she: ['奢', '舌', '舍', '社'],
   shi: ['诗', '十', '史', '是'],
   shai: ['筛', '', '', '晒'],
   shei: ['', '谁', '', ''],
   shao: ['烧', '勺', '少', '绍'],
-  shou: ['收', '熟', '手', '受'],
+  shou: ['收', '', '手', '受'],
   shan: ['山', '', '闪', '扇'],
   shen: ['身', '神', '审', '慎'],
   shang: ['伤', '', '赏', '上'],
@@ -427,7 +427,7 @@ export const PINYIN_TONE_HANZI_MAP: Record<string, [string, string, string, stri
   zong: ['宗', '', '总', '纵'],
   zu: ['租', '足', '组', ''],
   zuo: ['', '昨', '左', '坐'],
-  zui: ['咀', '', '嘴', '最'],
+  zui: ['', '', '嘴', '最'],
   zuan: ['钻', '', '纂', '攥'],
   zun: ['尊', '', '撙', ''],
 

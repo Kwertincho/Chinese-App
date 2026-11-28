@@ -175,10 +175,10 @@ if (typeof window !== 'undefined' && 'speechSynthesis' in window) {
 export function speakMandarinGlobal(text, overrideRate = undefined, callbacks = {}) {
   const { onStart, onEnd, onError, onUnsupported, preferredVoiceURI } = callbacks;
 
-  // Resolve target rate: explicit numeric rate (1.0 or 0.65) -> boolean slow flag -> current global state
+  // Resolve target rate: explicit numeric rate (clamped [0.5, 1.5]) -> boolean slow flag -> current global state
   let resolvedRate = globalIsSlowMode ? SLOW_SPEECH_RATE : NORMAL_SPEECH_RATE;
-  if (typeof overrideRate === 'number' && !Number.isNaN(overrideRate)) {
-    resolvedRate = overrideRate <= 0.75 ? SLOW_SPEECH_RATE : NORMAL_SPEECH_RATE;
+  if (typeof overrideRate === 'number' && Number.isFinite(overrideRate)) {
+    resolvedRate = Math.min(1.5, Math.max(0.5, overrideRate));
   } else if (typeof overrideRate === 'boolean') {
     resolvedRate = overrideRate ? SLOW_SPEECH_RATE : NORMAL_SPEECH_RATE;
   }
@@ -330,6 +330,15 @@ export class SynthesizedSoundFX {
     } catch (e) {
       // Ignore
     }
+  }
+
+  // Compatibility aliases for success/error SFX callers
+  playSuccess(combo = 1) {
+    return this.playCorrect(combo);
+  }
+
+  playError() {
+    return this.playMistake();
   }
 
   // Subtle tactile pop when flipping cards or pressing nodes
